@@ -90,7 +90,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `scripts/check-spec.mjs docs/spec` exits 0 and reports every required heading present. Run `node scripts/check-spec.mjs docs/spec`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `ls docs/spec` at trunk and head. Trunk has no `docs/spec`. Gate that the head adds the five files and that `scripts/check-spec.mjs` exits 0. Save `p1-lane1.png`. Pass when the head lists five files and the checker exits 0.
 - [ ] Lane 2. Read `product.md`. Save `p1-lane2.png`. Pass when it names the one-sentence product and FR plus EN.
@@ -148,7 +148,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `crates/stt-core/src/lib.rs` gains a test that drives the state machine through hold, release, and cancel. Run `cargo test -p stt-core`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `cargo build` at trunk and head. Trunk has no workspace. Gate that the head builds and `stt-shell` runs. Save `p2-lane1.png`. Pass when the head build exits 0 and the binary prints a version.
 - [ ] Lane 2. Run `cargo test -p stt-core`. Save `p2-lane2.png`. Pass when the state machine test passes.
@@ -200,7 +200,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `scripts/check-spec.mjs docs/spec/asr.md` exits 0 and the file names a default. Run `node scripts/check-spec.mjs docs/spec/asr.md`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `ls docs/spec` at trunk and head. Trunk has no `asr.md`. Gate that the head adds it and names a default. Save `p3-lane1.png`. Pass when the head file exists and names a default engine.
 - [ ] Lane 2. Read the comparison table. Save `p3-lane2.png`. Pass when it covers all three candidates.
@@ -253,7 +253,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `scripts/check-spec.mjs docs/spec/os-integration.md` exits 0. Run `node scripts/check-spec.mjs docs/spec/os-integration.md`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `ls docs/spec` at trunk and head. Trunk has no `os-integration.md`. Gate that the head adds it. Save `p4-lane1.png`. Pass when the head file exists.
 - [ ] Lane 2. Read the macOS section. Save `p4-lane2.png`. Pass when it names an injection and a hotkey mechanism.
@@ -308,7 +308,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `scripts/check-spec.mjs docs/spec/overlay.md` exits 0 and the file names a chosen variant. Run `node scripts/check-spec.mjs docs/spec/overlay.md`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `ls docs/spec` at trunk and head. Trunk has no `overlay.md`. Gate that the head adds it and a chosen variant. Save `p5-lane1.png`. Pass when the head file exists and names a chosen variant.
 - [ ] Lane 2. Count the variants. Save `p5-lane2.png`. Pass when at least two variants exist.
@@ -362,7 +362,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] `scripts/check-spec.mjs docs/spec.md` exits 0 and the spec has no unresolved marker. Run `node scripts/check-spec.mjs docs/spec.md`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `muse-spark-1.3-max` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `ls docs` at trunk and head. Trunk has no `spec.md`. Gate that the head adds it and that the README builds. Save `p6-lane1.png`. Pass when the head file exists and `cargo build` exits 0.
 - [ ] Lane 2. Read the framework decision. Save `p6-lane2.png`. Pass when GPUI or gpui-ce is named with a reason.
