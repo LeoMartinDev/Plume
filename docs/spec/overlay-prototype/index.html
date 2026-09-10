@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stt-gpui overlay prototype (throwaway, PR-5)</title>
+<style>
+  :root {
+    --pill-bg: rgba(17, 24, 39, 0.92);
+    --pill-fg: #f3f4f6;
+    --pill-dim: #9ca3af;
+    --accent-rec: #ef4444;
+    --accent-stream: #34d399;
+    --accent-final: #fbbf24;
+    --accent-err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: linear-gradient(180deg, #e5e7eb 0%, #cbd5e1 60%, #94a3b8 100%);
+    color: #111827;
+    overflow: hidden;
+  }
+  body.static-mode { background: #d1d5db; }
+  .wall-label {
+    position: fixed; top: 18px; left: 0; right: 0;
+    text-align: center; color: #4b5563; font-size: 14px; letter-spacing: .02em;
+  }
+  body.static-mode .wall-label, body.static-mode .switcher { display: none; }
+
+  /* Switcher (hidden in screenshot mode). */
+  .switcher {
+    position: fixed; top: 52px; left: 0; right: 0;
+    display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+  }
+  .switcher fieldset {
+    border: 1px solid #9ca3af; border-radius: 10px; background: rgba(255,255,255,.75);
+    padding: 6px 10px; display: flex; gap: 6px; align-items: center;
+  }
+  .switcher legend { font-size: 11px; color: #4b5563; padding: 0 4px; }
+  .switcher button {
+    border: 1px solid #9ca3af; background: #fff; border-radius: 8px;
+    padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  .switcher button[aria-pressed="true"] { background: #111827; color: #fff; border-color: #111827; }
+  #fps-report { font-size: 12px; color: #065f46; min-height: 16px; text-align: center; }
+
+  /* Stage: the bubble always sits bottom-center. */
+  .stage {
+    position: fixed; left: 0; right: 0; bottom: 64px;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  body.static-mode .stage { bottom: 120px; }
+  .variant { display: none; }
+  .variant.active { display: block; }
+
+  /* Variant A: pill with waveform + partial text. */
+  .pill {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--pill-bg); color: var(--pill-fg);
+    border: 1px solid rgba(255,255,255,.14); border-radius: 999px;
+    padding: 12px 20px 12px 16px; min-width: 340px; max-width: 560px;
+    box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    backdrop-filter: blur(8px);
+  }
+  .pill .dot {
+    width: 12px; height: 12px; border-radius: 999px; flex: none;
+    background: var(--accent-rec);
+    will-change: transform, opacity;
+  }
+  .pill[data-state="streaming"] .dot { background: var(--accent-stream); }
+  .pill[data-state="finalizing"] .dot { background: var(--accent-final); }
+  .pill[data-state="error"] .dot { background: var(--accent-err); }
+  .pill .bars { display: flex; align-items: center; gap: 3px; height: 22px; flex: none; }
+  .pill .bars i {
+    width: 4px; border-radius: 2px; background: currentColor; opacity: .9;
+    height: 100%; transform: scaleY(.2); transform-origin: center;
+    will-change: transform;
+  }
+  .pill[data-state="recording"] .bars { color: var(--accent-rec); }
+  .pill[data-state="streaming"] .bars { color: var(--accent-stream); }
+  .pill[data-state="finalizing"] .bars { color: var(--accent-final); visibility: hidden; }
+  .pill .text { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill .text .dim { color: var(--pill-dim); }
+  .pill .timer { margin-left: auto; font-size: 12px; color: var(--pill-dim); font-variant-numeric: tabular-nums; flex: none; }
+
+  /* Variant B: ring, level-reactive, no text. */
+  .ring-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .ring {
+    width: 104px; height: 104px; border-radius: 999px;
+    background: var(--pill-bg);
+    border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .ring svg { position: absolute; inset: 6px; transform: rotate(-90deg); }
+  .ring .core {
+    width: 30px; height: 30px; border-radius: 999px; background: var(--accent-stream);
+    will-change: transform, opacity;
+  }
+  .ring[data-state="recording"] .core { background: var(--accent-rec); }
+  .ring[data-state="finalizing"] .core { background: var(--accent-final); }
+  .ring[data-state="error"] .core { background: var(--accent-err); }
+  .ring-caption { font-size: 12px; color: #374151; background: rgba(255,255,255,.8);
+    border-radius: 8px; padding: 3px 10px; }
+
+  /* Variant C: minimal caption, transparent. */
+  .caption {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 15px; color: #f9fafb;
+    text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    background: rgba(17,24,39,.55); border-radius: 10px; padding: 8px 14px;
+    backdrop-filter: blur(4px);
+  }
+  .caption .live {
+    font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    border: 1px solid currentColor; border-radius: 4px; padding: 1px 5px;
+    will-change: opacity;
+  }
+</style>
+</head>
+<body>
+<p class="wall-label">stt-gpui overlay prototype — throwaway (PR-5). Variants render bottom-center.</p>
+
+<div class="switcher">
+  <fieldset>
+    <legend>variant</legend>
+    <button data-variant="a" aria-pressed="true">A · pill</button>
+    <button data-variant="b" aria-pressed="false">B · ring</button>
+    <button data-variant="c" aria-pressed="false">C · minimal</button>
+  </fieldset>
+  <fieldset>
+    <legend>state</legend>
+    <button data-state="recording" aria-pressed="false">recording</button>
+    <button data-state="streaming" aria-pressed="true">streaming</button>
+    <button data-state="finalizing" aria-pressed="false">finalizing</button>
+    <button data-state="error" aria-pressed="false">error</button>
+  </fieldset>
+  <fieldset>
+    <legend>level source</legend>
+    <button data-source="sim" aria-pressed="true">simulated</button>
+    <button data-source="mic" aria-pressed="false">microphone</button>
+  </fieldset>
+</div>
+<p id="fps-report" role="status"></p>
+
+<div class="stage">
+  <!-- Variant A -->
+  <div class="variant active" id="variant-a">
+    <div class="pill" id="pill" data-state="streaming">
+      <span class="dot" id="pill-dot"></span>
+      <span class="bars" id="pill-bars" aria-hidden="true"></span>
+      <span class="text" id="pill-text">bonjour, ceci est une dic<span class="dim">tée…</span></span>
+      <span class="timer" id="pill-timer">00:07</span>
+    </div>
+  </div>
+  <!-- Variant B -->
+  <div class="variant" id="variant-b">
+    <div class="ring-wrap">
+      <div class="ring" id="ring" data-state="streaming">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="6"/>
+          <circle id="ring-arc" cx="50" cy="50" r="44" fill="none" stroke="#34d399"
+                  stroke-width="6" stroke-linecap="round" stroke-dasharray="276.5" stroke-dashoffset="90"/>
+        </svg>
+        <span class="core" id="ring-core"></span>
+      </div>
+      <span class="ring-caption" id="ring-caption">streaming · 00:07</span>
+    </div>
+  </div>
+  <!-- Variant C -->
+  <div class="variant" id="variant-c">
+    <div class="caption">
+      <span class="live" id="caption-live">LIVE</span>
+      <span id="caption-text">bonjour, ceci est une dictée…</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var params = new URLSearchParams(location.search);
+  var STATIC = params.get("static") === "1";
+  var FPS_MODE = params.get("fps") === "1";
+  var state = {
+    variant: params.get("variant") || "a",
+    session: params.get("state") || "streaming",
+    source: "sim",
+    level: 0.65,
+    staticLevel: 0.65,
+    t: 0
+  };
+  if (STATIC) { document.body.classList.add("static-mode"); }
+
+  // Build the 24 waveform bars once.
+  var bars = document.getElementById("pill-bars");
+  for (var i = 0; i < 24; i++) { bars.appendChild(document.createElement("i")); }
+  var barEls = bars.children;
+
+  var pill = document.getElementById("pill");
+  var pillDot = document.getElementById("pill-dot");
+  var ring = document.getElementById("ring");
+  var ringArc = document.getElementById("ring-arc");
+  var ringCore = document.getElementById("ring-core");
+  var captionLive = document.getElementById("caption-live");
+  var CIRC = 276.5;
+
+  function applyChrome() {
+    ["a", "b", "c"].forEach(function (v) {
+      document.getElementById("variant-" + v).classList.toggle("active", v === state.variant);
+    });
+    pill.dataset.state = state.session;
+    ring.dataset.state = state.session;
+    document.querySelectorAll("[data-variant]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.variant === state.variant));
+    });
+    document.querySelectorAll("[data-state]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.state === state.session));
+    });
+    document.querySelectorAll("[data-source]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.source === state.source));
+    });
+  }
+
+  document.querySelectorAll("[data-variant]").forEach(function (b) {
+    b.addEventListener("click", function () { state.variant = b.dataset.variant; applyChrome(); });
+  });
+  document.querySelectorAll("[data-state]").forEach(function (b) {
+    b.addEventListener("click", function () { state.session = b.dataset.state; applyChrome(); });
+  });
+  document.querySelectorAll("[data-source]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (b.dataset.source === "mic") { enableMic(); } else { state.source = "sim"; }
+      applyChrome();
+    });
+  });
+
+  // Microphone level (optional; simulated oscillator is the default).
+  var micStream = null, analyser = null, micBuf = null;
+  function enableMic() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      micStream = stream;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      var ctx = new Ctx();
+      var src = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      micBuf = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      state.source = "mic";
+      applyChrome();
+    }).catch(function () { state.source = "sim"; applyChrome(); });
+  }
+
+  function sampleLevel(dt) {
+    if (state.source === "mic" && analyser) {
+      analyser.getByteTimeDomainData(micBuf);
+      var sum = 0;
+      for (var i = 0; i < micBuf.length; i++) {
+        var v = (micBuf[i] - 128) / 128;
+        sum += v * v;
+      }
+      return Math.min(1, Math.sqrt(sum / micBuf.length) * 3.2);
+    }
+    // Simulated speech: layered sines with pauses. Deterministic in ?static=1.
+    if (STATIC) { return state.staticLevel; }
+    state.t += dt;
+    var t = state.t;
+    var gate = (Math.sin(t * 0.9) > -0.55) ? 1 : 0.06;
+    var wobble = 0.55 + 0.28 * Math.sin(t * 7.3) + 0.17 * Math.sin(t * 17.7 + 1.3);
+    return Math.max(0.03, Math.min(1, gate * wobble));
+  }
+
+  // Animation loop. Visual updates use transform/opacity only (compositor
+  // properties), plus one SVG stroke-dashoffset for the ring arc, so the
+  // loop holds 60 fps by construction on any compositor.
+  var fpsFrames = 0, fpsStart = 0, fpsDone = false;
+  var report = document.getElementById("fps-report");
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    state.level = sampleLevel(dt);
+    var lv = state.level;
+
+    if (state.variant === "a" || STATIC) {
+      var dotScale = state.session === "recording" ? 1 + 0.35 * Math.sin(now / 160) : 0.85 + 0.5 * lv;
+      pillDot.style.transform = "scale(" + dotScale.toFixed(3) + ")";
+      pillDot.style.opacity = state.session === "finalizing" ? "0.45" : "1";
+      for (var i = 0; i < barEls.length; i++) {
+        var ph = Math.sin(now / 210 + i * 0.55) * 0.5 + 0.5;
+        var h = 0.12 + 0.88 * lv * (0.35 + 0.65 * ph);
+        barEls[i].style.transform = "scaleY(" + h.toFixed(3) + ")";
+      }
+    }
+    if (state.variant === "b" || STATIC) {
+      ringArc.style.strokeDashoffset = (CIRC * (1 - 0.12 - 0.76 * lv)).toFixed(1);
+      var core = state.session === "finalizing" ? 0.8 : 0.7 + 0.6 * lv;
+      ringCore.style.transform = "scale(" + core.toFixed(3) + ")";
+    }
+    if (state.variant === "c" || STATIC) {
+      captionLive.style.opacity = (0.45 + 0.55 * lv).toFixed(3);
+    }
+
+    if (FPS_MODE && !fpsDone) {
+      if (!fpsStart) { fpsStart = now; }
+      fpsFrames++;
+      if (now - fpsStart >= 2000) {
+        var fps = (fpsFrames * 1000 / (now - fpsStart)).toFixed(1);
+        report.textContent = "fps-report frames=" + fpsFrames + " fps=" + fps;
+        fpsDone = true;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  applyChrome();
+  // In static screenshot mode, paint one deterministic frame now so
+  // --screenshot captures the settled state even with virtual time.
+  if (STATIC) {
+    state.level = state.staticLevel;
+    pillDot.style.transform = "scale(1.100)";
+    for (var b = 0; b < barEls.length; b++) {
+      var ph2 = Math.sin(b * 0.55) * 0.5 + 0.5;
+      barEls[b].style.transform = "scaleY(" + (0.12 + 0.88 * 0.65 * (0.35 + 0.65 * ph2)).toFixed(3) + ")";
+    }
+    ringArc.style.strokeDashoffset = (CIRC * (1 - 0.12 - 0.76 * 0.65)).toFixed(1);
+    ringCore.style.transform = "scale(1.090)";
+    captionLive.style.opacity = "0.810";
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
