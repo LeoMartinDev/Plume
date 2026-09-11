@@ -48,6 +48,12 @@ fn check_fixture(name: &str) {
     );
 }
 
+// FLEURS fr_fr validation offset 191 id 1587, byte-identical audio. The
+// dataset raw ends with a period. The INT4 streaming model withholds
+// end-of-stream punctuation (measured over 4158 French rows plus a
+// doubled-clip mechanism experiment: mid-stream periods appear, the final
+// one never triggers). The literal below pins actual model behavior. If a
+// future model emits the period, update the literal consciously.
 #[test]
 fn french_bonjour_matches_checked_in_transcript() {
     check_fixture("fr-bonjour");
