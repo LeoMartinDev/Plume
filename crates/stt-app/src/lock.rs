@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::prefs::data_root;
+use crate::dirs::AppDirs;
 
 #[derive(Debug)]
 pub struct AppLock {
@@ -13,7 +13,7 @@ pub struct AlreadyRunning(pub u32);
 
 impl AppLock {
     pub fn acquire() -> Result<AppLock, AlreadyRunning> {
-        acquire_at(&data_root().join("lock"))
+        acquire_at(&AppDirs::resolve().lock_path())
     }
 }
 

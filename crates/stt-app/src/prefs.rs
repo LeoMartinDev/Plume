@@ -28,9 +28,8 @@ impl PackId {
         }
     }
 
-    /// `$XDG_DATA_HOME/stt/packs/<id>/` on Unix, `%LOCALAPPDATA%\stt\packs\<id>\` on Windows.
     pub fn data_dir(self) -> PathBuf {
-        data_root().join("packs").join(self.as_str())
+        crate::dirs::AppDirs::resolve().pack_dir(self)
     }
 }
 
@@ -92,7 +91,7 @@ struct Wire {
 }
 
 pub fn prefs_path() -> PathBuf {
-    config_root().join("prefs.toml")
+    crate::dirs::AppDirs::resolve().prefs_path()
 }
 
 pub fn load() -> PrefsLoad {
@@ -166,39 +165,6 @@ fn unique_bad_path(path: &Path) -> PathBuf {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     path.with_extension(format!("toml.bad.{secs}"))
-}
-
-fn config_root() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("stt");
-        }
-    }
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("stt");
-    }
-    home_dir().join(".config/stt")
-}
-
-pub(crate) fn data_root() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(local).join("stt");
-        }
-    }
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(xdg).join("stt");
-    }
-    home_dir().join(".local/share/stt")
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]

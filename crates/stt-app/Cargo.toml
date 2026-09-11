@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+dirs = "6"
 gpui = "=0.2.2"
 serde = { version = "1", features = ["derive"] }
 stt-engine = { path = "../stt-engine" }
