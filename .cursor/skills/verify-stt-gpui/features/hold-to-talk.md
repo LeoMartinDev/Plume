@@ -35,3 +35,4 @@ Preconditions:
 - Do not screenshot a desktop and call it a hold session.
 - Do not send `Ctrl+Space` to the terminal running the harness and call that a global hotkey.
 - A green `control-stt-gpui session` run proves wiring, not a live hold. A missing mic still blocks the pass.
+- v1 rejects `Fn` at startup. The hold default on this host is `Ctrl+Space`.

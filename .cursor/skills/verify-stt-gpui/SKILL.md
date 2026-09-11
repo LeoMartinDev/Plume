@@ -49,7 +49,7 @@ Pass only when every line is `ok` and all of these hold:
 - `overlay=present` when `crates/stt-overlay/Cargo.toml` exists, otherwise `overlay=absent`
 - `hotkey=present` when `crates/stt-hotkey/Cargo.toml` exists, otherwise `hotkey=absent`
 
-`overlay=present` means the bubble crate is in this checkout. It does not mean hold-to-talk works. Drive [overlay-bubble](features/overlay-bubble.md) for the window. `hotkey=present` means the hotkey library ships. It does not mean a shortcut is registered. Neither flag means a live session exists: do not drive hold-to-talk, toggle, cancel, or cleanup as if one did. Those feature files say how to probe the gap. They are not passes.
+`overlay=present` means the bubble crate is in this checkout. It does not mean hold-to-talk works. Drive [overlay-bubble](features/overlay-bubble.md) for the idle window. `hotkey=present` means the hotkey library ships. It does not mean a shortcut is registered. Neither flag means a live session exists. Drive [hold-to-talk](features/hold-to-talk.md) with `control-stt-gpui session` for wiring. A live hold still needs a model pack, a display, a mic, and a human holding the chord. Toggle and cleanup stay unshipped.
 
 Never drive an instance this run did not launch.
 
