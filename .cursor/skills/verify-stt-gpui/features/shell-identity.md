@@ -5,7 +5,7 @@ Shell identity is the live user-facing program. Running `stt-shell` prints the c
 ## Sub-features
 
 - `shell-run` prints `stt-shell <version>` and exits `0`.
-- `shell-flags` ignore extra arguments and still print the same version line.
+- `shell-flags` prints the same version line for `--help`. Unknown commands exit `2` with usage.
 - `shell-match-toml` uses the version from `crates/stt-shell/Cargo.toml`, not a hardcoded string.
 
 ## How to get to it (user POV)

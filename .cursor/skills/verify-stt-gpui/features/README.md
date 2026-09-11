@@ -14,7 +14,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Driving conventions
 
 - Start every recipe from the baseline state unless its preconditions say otherwise.
-- The only live entry point is running `stt-shell`. There is no window, prompt, or subcommand.
+- The live entry points are running `stt-shell` bare and the `transcribe` subcommand. There is no window or prompt.
 - Treat every command as literal. Keep quoted names and flags unchanged.
 - Run the binary through `control-stt-gpui cli`.
 - Put the helper on `PATH` with `export PATH="$PWD/.cursor/skills/verify-stt-gpui/scripts:$PATH"` or use the repository-relative path.
@@ -43,7 +43,8 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 ## Features
 
-- [Shell identity](./shell-identity.md) covers the live CLI. This is the only path that can pass today.
+- [Shell identity](./shell-identity.md) covers CLI identity.
+- [Transcribe a file](./transcribe-file.md) covers local file transcription. Passes with `STT_MODEL_DIR` set.
 - [Hold-to-talk](./hold-to-talk.md) covers the specified dictation hold gesture. Unreachable until an overlay and hotkey exist.
 - [Toggle mode](./toggle-mode.md) covers long dictation without a held key. Unreachable until a toggle shortcut exists.
 - [Cancel a session](./cancel-session.md) covers Esc discarding in-flight text. Unreachable until a session overlay exists.
