@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+stt-core = { path = "../stt-core" }
+stt-engine = { path = "../stt-engine" }
