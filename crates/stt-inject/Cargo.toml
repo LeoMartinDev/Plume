@@ -1,0 +1,18 @@
+[package]
+name = "stt-inject"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stt-core = { path = "../stt-core" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xtest", "dl-libxcb"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
