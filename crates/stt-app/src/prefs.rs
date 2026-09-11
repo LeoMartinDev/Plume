@@ -33,12 +33,50 @@ impl PackId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scheme {
+    Light,
+    Dark,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppearancePref {
+    Fixed(Scheme),
+    Auto,
+}
+
+impl AppearancePref {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed(Scheme::Light) => "light",
+            Self::Fixed(Scheme::Dark) => "dark",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub fn element_id(self) -> &'static str {
+        match self {
+            Self::Fixed(Scheme::Light) => "appearance-light",
+            Self::Fixed(Scheme::Dark) => "appearance-dark",
+            Self::Auto => "appearance-auto",
+        }
+    }
+
+    pub fn resolve(self, os: Scheme) -> Scheme {
+        match self {
+            Self::Fixed(scheme) => scheme,
+            Self::Auto => os,
+        }
+    }
+}
+
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
     hold: String,
     cancel: String,
     pub pack: PackId,
+    appearance: AppearancePref,
 }
 
 impl Prefs {
@@ -47,6 +85,7 @@ impl Prefs {
             hold: "Ctrl+Space".to_string(),
             cancel: "Esc".to_string(),
             pack: PackId::Light,
+            appearance: AppearancePref::Auto,
         }
     }
 
@@ -56,6 +95,14 @@ impl Prefs {
 
     pub fn cancel(&self) -> &str {
         &self.cancel
+    }
+
+    pub fn appearance(&self) -> AppearancePref {
+        self.appearance
+    }
+
+    pub fn set_appearance(&mut self, pref: AppearancePref) {
+        self.appearance = pref;
     }
 }
 
@@ -83,11 +130,22 @@ impl std::fmt::Display for PrefsError {
 
 impl std::error::Error for PrefsError {}
 
-#[derive(Deserialize, Serialize)]
-struct Wire {
+#[derive(Deserialize)]
+struct WireIn {
     hold: String,
     cancel: String,
     pack: String,
+    // A typed field would fail deserialize and quarantine hold/cancel/pack.
+    #[serde(default)]
+    appearance: Option<toml::Value>,
+}
+
+#[derive(Serialize)]
+struct WireOut {
+    hold: String,
+    cancel: String,
+    pack: String,
+    appearance: &'static str,
 }
 
 pub fn prefs_path() -> PathBuf {
@@ -119,10 +177,11 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(PrefsError::Io)?;
     }
-    let wire = Wire {
+    let wire = WireOut {
         hold: prefs.hold.clone(),
         cancel: prefs.cancel.clone(),
         pack: prefs.pack.as_str().to_string(),
+        appearance: prefs.appearance().as_str(),
     };
     let body = toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))?;
     let tmp = path.with_extension("toml.tmp");
@@ -131,8 +190,20 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
     Ok(())
 }
 
+fn appearance_from_wire(value: Option<&toml::Value>) -> AppearancePref {
+    match value {
+        Some(toml::Value::String(raw)) => match raw.as_str() {
+            "light" => AppearancePref::Fixed(Scheme::Light),
+            "dark" => AppearancePref::Fixed(Scheme::Dark),
+            "auto" => AppearancePref::Auto,
+            _ => AppearancePref::Auto,
+        },
+        _ => AppearancePref::Auto,
+    }
+}
+
 fn parse_wire(raw: &str) -> Result<Prefs, String> {
-    let wire: Wire = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
+    let wire: WireIn = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
     let pack = PackId::parse(&wire.pack)
         .ok_or_else(|| format!("prefs pack {} is not light, medium, or large", wire.pack))?;
     stt_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
@@ -141,6 +212,7 @@ fn parse_wire(raw: &str) -> Result<Prefs, String> {
         hold: wire.hold,
         cancel: wire.cancel,
         pack,
+        appearance: appearance_from_wire(wire.appearance.as_ref()),
     })
 }
 
@@ -192,6 +264,7 @@ mod tests {
             PrefsLoad::Fresh(prefs) => {
                 assert_eq!(prefs.hold(), "Ctrl+Space");
                 assert_eq!(prefs.pack, PackId::Light);
+                assert_eq!(prefs.appearance(), AppearancePref::Auto);
             }
             _ => panic!("missing file must be Fresh"),
         }
@@ -239,5 +312,113 @@ mod tests {
             _ => panic!("Fn hold must quarantine"),
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn missing_appearance_key_is_loaded_auto() {
+        let path = temp_prefs("no-appearance");
+        std::fs::write(
+            &path,
+            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\n",
+        )
+        .unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(prefs) => {
+                assert_eq!(prefs.appearance(), AppearancePref::Auto);
+                assert_eq!(prefs.pack, PackId::Light);
+                assert_eq!(prefs.hold(), "Ctrl+Space");
+            }
+            _ => panic!("file without appearance must be Loaded"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn neon_appearance_is_loaded_auto_and_does_not_quarantine() {
+        let path = temp_prefs("neon");
+        std::fs::write(
+            &path,
+            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = \"neon\"\n",
+        )
+        .unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(prefs) => {
+                assert_eq!(prefs.appearance(), AppearancePref::Auto);
+                assert_eq!(prefs.hold(), "Ctrl+Space");
+            }
+            _ => panic!("unknown appearance must be Loaded"),
+        }
+        assert!(!path.with_extension("toml.bad").exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn integer_appearance_is_loaded_auto_and_does_not_quarantine() {
+        let path = temp_prefs("int-appearance");
+        std::fs::write(
+            &path,
+            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = 1\n",
+        )
+        .unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(prefs) => {
+                assert_eq!(prefs.appearance(), AppearancePref::Auto);
+                assert_eq!(prefs.hold(), "Ctrl+Space");
+            }
+            _ => panic!("integer appearance must be Loaded"),
+        }
+        assert!(!path.with_extension("toml.bad").exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn appearance_light_is_not_pack_light() {
+        let path = temp_prefs("both-light");
+        std::fs::write(
+            &path,
+            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = \"light\"\n",
+        )
+        .unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(prefs) => {
+                assert_eq!(prefs.appearance(), AppearancePref::Fixed(Scheme::Light));
+                assert_eq!(prefs.pack, PackId::Light);
+                assert_ne!(prefs.appearance().element_id(), prefs.pack.as_str());
+            }
+            _ => panic!("appearance light must be Loaded"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn save_dark_then_auto_round_trips() {
+        let path = temp_prefs("appearance-round");
+        let mut prefs = Prefs::default_fresh();
+        prefs.set_appearance(AppearancePref::Fixed(Scheme::Dark));
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => {
+                assert_eq!(loaded.appearance(), AppearancePref::Fixed(Scheme::Dark));
+            }
+            _ => panic!("saved Dark must load"),
+        }
+        prefs.set_appearance(AppearancePref::Auto);
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => {
+                assert_eq!(loaded.appearance(), AppearancePref::Auto);
+            }
+            _ => panic!("saved Auto must load"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn fixed_resolve_ignores_os_auto_takes_os() {
+        assert_eq!(
+            AppearancePref::Fixed(Scheme::Light).resolve(Scheme::Dark),
+            Scheme::Light
+        );
+        assert_eq!(AppearancePref::Auto.resolve(Scheme::Dark), Scheme::Dark);
     }
 }
