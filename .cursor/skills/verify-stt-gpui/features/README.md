@@ -19,7 +19,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Treat every command as literal. Keep quoted names and flags unchanged.
 - Run the shell through `control-stt-gpui cli`.
 - Put the helper on `PATH` with `export PATH="$PWD/.cursor/skills/verify-stt-gpui/scripts:$PATH"` or use the repository-relative path.
-- Hold-to-talk and Esc-cancel ship in `stt-session` on Linux (no Esc-cancel on Windows in v1). A live pass needs a model pack, a display, a mic, and a held chord. Toggle and cleanup are specified but unshipped. Probe each path, then report unreachable pieces. Do not pass a live gesture through `cargo test`.
+- Hold-to-talk and Esc-cancel ship in `stt-app` after a proven pack, and in `stt-session` when `STT_MODEL_DIR` is set. Linux only for Esc-cancel in v1. A live pass needs a pack, a display, a mic, and a held chord. Toggle and cleanup stay unshipped. A version line is not hold-to-talk. Do not pass a live gesture through `cargo test`.
 
 ## Proof and skip reporting
 

@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::chords::ChordSpec;
 
 /// Hold chord, cancel chord, and model pack directory from the environment.
+#[derive(Debug)]
 pub struct Config {
     pub(crate) hold: ChordSpec,
     pub(crate) cancel: ChordSpec,
@@ -16,8 +17,8 @@ pub enum ConfigError {
 }
 
 impl Config {
-    /// Sole entry boundary. Reads `STT_HOLD` (default `Ctrl+Space`),
-    /// `STT_CANCEL` (default `Esc`), `STT_MODEL_DIR` (required).
+    /// Env boundary for the stt-session binary. Reads `STT_HOLD` (default
+    /// `Ctrl+Space`), `STT_CANCEL` (default `Esc`), `STT_MODEL_DIR` (required).
     /// Rejects `Fn` on every OS: X11 refuses it, Windows swallows it.
     pub fn from_env() -> Result<Self, ConfigError> {
         let hold = chord_from_env("STT_HOLD", "Ctrl+Space")?;
@@ -30,6 +31,29 @@ impl Config {
             cancel,
             model_dir,
         })
+    }
+
+    /// Boundary used by stt-app after it reads prefs.toml.
+    /// `hold` and `cancel` go through ChordSpec::parse, which still rejects Fn.
+    /// `model_dir` is a PackId dest, not a user-typed path.
+    pub fn from_prefs(hold: &str, cancel: &str, model_dir: PathBuf) -> Result<Self, ConfigError> {
+        let hold = ChordSpec::parse(hold).map_err(|reason| ConfigError::InvalidChord {
+            var: "hold",
+            reason,
+        })?;
+        let cancel = ChordSpec::parse(cancel).map_err(|reason| ConfigError::InvalidChord {
+            var: "cancel",
+            reason,
+        })?;
+        Ok(Config {
+            hold,
+            cancel,
+            model_dir,
+        })
+    }
+
+    pub fn model_dir(&self) -> &Path {
+        &self.model_dir
     }
 }
 
@@ -65,3 +89,28 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_prefs_accepts_defaults() {
+        let config = Config::from_prefs("Ctrl+Space", "Esc", PathBuf::from("/tmp/pack")).unwrap();
+        assert_eq!(config.model_dir(), Path::new("/tmp/pack"));
+        assert_eq!(config.hold.as_str(), "Ctrl+Space");
+        assert_eq!(config.cancel.as_str(), "Esc");
+    }
+
+    #[test]
+    fn from_prefs_rejects_fn() {
+        let err = Config::from_prefs("Fn+Space", "Esc", PathBuf::from("/tmp/pack")).unwrap_err();
+        match err {
+            ConfigError::InvalidChord { var, reason } => {
+                assert_eq!(var, "hold");
+                assert!(reason.contains("Fn"), "{reason}");
+            }
+            other => panic!("expected InvalidChord, got {other}"),
+        }
+    }
+}

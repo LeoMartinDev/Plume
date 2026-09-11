@@ -1,0 +1,13 @@
+[package]
+name = "stt-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gpui = "=0.2.2"
+serde = { version = "1", features = ["derive"] }
+stt-engine = { path = "../stt-engine" }
+stt-overlay = { path = "../stt-overlay" }
+stt-session = { path = "../stt-session" }
+toml = "0.8"
+ureq = "3"

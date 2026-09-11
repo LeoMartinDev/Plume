@@ -2,19 +2,14 @@ mod capture;
 mod chords;
 mod config;
 mod drive;
+mod ready;
 mod target;
-
-use std::sync::mpsc;
 
 use stt_core::BoxError;
 use stt_engine::{Engine, ModelDir};
-use stt_inject::NativeInjector;
-
-use crate::chords::Chord;
-use crate::drive::{BubbleSink, Idle};
-use crate::target::Target;
 
 pub use config::{Config, ConfigError};
+pub use ready::{start, LiveSession, Ready};
 
 /// Startup failure with its process exit code: 4 for a missing or invalid
 /// model pack (matches transcribe), 1 for injector, hotkey, or thread setup.
@@ -50,28 +45,12 @@ impl std::error::Error for StartupError {
     }
 }
 
-/// Spawn the compositor worker, then run the GPUI overlay on the caller
-/// thread, which must be main. Load the model, engine, injector, and hold
-/// chord before the window opens. Returns when the overlay window closes.
+/// stt-session binary only. Opens the engine on this thread, start(), run_with().
+/// Owns Application::run. stt-app never calls this.
 pub fn run(config: Config) -> Result<(), StartupError> {
-    let dir = ModelDir::open(&config.model_dir).map_err(StartupError::model)?;
+    let dir = ModelDir::open(config.model_dir()).map_err(StartupError::model)?;
     let engine = Engine::open(dir).map_err(StartupError::model)?;
-    let injector = NativeInjector::connect().map_err(StartupError::backend)?;
-    let hold = Chord::bind(&config.hold).map_err(|err| {
-        StartupError::backend(format!("hold chord {}: {err}", config.hold.as_str()).into())
-    })?;
-    let (bubble_tx, bubble_rx) = mpsc::channel();
-    let worker = Idle::new(
-        hold,
-        config.cancel,
-        engine,
-        Target::new(injector),
-        BubbleSink::new(bubble_tx),
-    );
-    std::thread::Builder::new()
-        .name("stt-compositor".to_string())
-        .spawn(|| worker.run())
-        .map_err(|err| StartupError::backend(err.into()))?;
-    stt_overlay::run_with(bubble_rx);
+    let live = start(Ready::from_open(config, engine))?;
+    stt_overlay::run_with(live.bubbles);
     Ok(())
 }

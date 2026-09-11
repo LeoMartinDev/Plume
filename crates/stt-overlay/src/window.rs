@@ -55,16 +55,18 @@ fn bottom_center_bounds(window_size: Size<Pixels>, cx: &App) -> Bounds<Pixels> {
     }
 }
 
-fn force_x11_when_display_is_set() {
+/// Unset WAYLAND_DISPLAY and ZED_HEADLESS when DISPLAY is set.
+/// Call before Application::new. Idempotent.
+pub fn prepare_display() {
     let has_x11 = std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty());
     if !has_x11 {
         return;
     }
     // gpui 0.2.2 picks Wayland whenever WAYLAND_DISPLAY is set, even on WSLg
     // where the working path is X11.
-    // SAFETY: this runs on the OS main thread before gpui starts. The compositor
-    // worker may already exist; it does not read WAYLAND_DISPLAY or ZED_HEADLESS
-    // after Chord::bind and NativeInjector::connect.
+    // SAFETY: this runs on the OS main thread before gpui starts. The env
+    // compositor path may already have spawned Idle; that worker does not
+    // read WAYLAND_DISPLAY or ZED_HEADLESS after Chord::bind.
     unsafe {
         std::env::remove_var("WAYLAND_DISPLAY");
         std::env::remove_var("ZED_HEADLESS");
@@ -72,7 +74,7 @@ fn force_x11_when_display_is_set() {
 }
 
 pub fn run() {
-    force_x11_when_display_is_set();
+    prepare_display();
     Application::new().run(|cx: &mut App| {
         open_popup(cx);
         print_opened_line();
@@ -81,34 +83,40 @@ pub fn run() {
 }
 
 pub fn run_with(rx: mpsc::Receiver<Bubble>) {
-    force_x11_when_display_is_set();
+    prepare_display();
     Application::new().run(|cx: &mut App| {
-        let handle = open_popup(cx);
+        attach(cx, rx);
         print_opened_line();
         cx.activate(true);
-        cx.spawn(async move |cx: &mut AsyncApp| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(16))
-                .await;
-            let mut latest = None;
-            loop {
-                match rx.try_recv() {
-                    Ok(bubble) => latest = Some(bubble),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => return,
-                }
-            }
-            if let Some(bubble) = latest {
-                let _ = cx.update(|cx| {
-                    let _ = handle.update(cx, |view: &mut BubbleView, _window, cx| {
-                        view.bubble = bubble;
-                        cx.notify();
-                    });
-                });
-            }
-        })
-        .detach();
     });
+}
+
+/// PopUp plus 16 ms poller inside an application that is already running.
+/// Title stays WINDOW_TITLE. kind PopUp, focus false.
+pub fn attach(cx: &mut App, rx: mpsc::Receiver<Bubble>) {
+    let handle = open_popup(cx);
+    cx.spawn(async move |cx: &mut AsyncApp| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(16))
+            .await;
+        let mut latest = None;
+        loop {
+            match rx.try_recv() {
+                Ok(bubble) => latest = Some(bubble),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+        if let Some(bubble) = latest {
+            let _ = cx.update(|cx| {
+                let _ = handle.update(cx, |view: &mut BubbleView, _window, cx| {
+                    view.bubble = bubble;
+                    cx.notify();
+                });
+            });
+        }
+    })
+    .detach();
 }
 
 fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {

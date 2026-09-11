@@ -6,29 +6,29 @@ use stt_core::BoxError;
 
 use crate::decode::{Mel, Vocab, CACHE_MEL, CHUNK_MEL};
 
-const REQUIRED: [&str; 9] = [
-    "encoder.onnx",
-    "encoder.onnx.data",
-    "decoder.onnx",
-    "decoder.onnx.data",
-    "joint.onnx",
-    "joint.onnx.data",
-    "silero_vad.onnx",
-    "tokenizer.json",
-    "vocab.txt",
-];
-
 pub struct ModelDir {
     path: PathBuf,
 }
 
 impl ModelDir {
+    pub const REQUIRED_FILES: [&'static str; 9] = [
+        "encoder.onnx",
+        "encoder.onnx.data",
+        "decoder.onnx",
+        "decoder.onnx.data",
+        "joint.onnx",
+        "joint.onnx.data",
+        "silero_vad.onnx",
+        "tokenizer.json",
+        "vocab.txt",
+    ];
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self, BoxError> {
         let path = path.as_ref();
         if !path.is_dir() {
             return Err(format!("model dir {} is not a directory", path.display()).into());
         }
-        for name in REQUIRED {
+        for name in Self::REQUIRED_FILES {
             if !path.join(name).is_file() {
                 return Err(format!("model dir {} is missing {name}", path.display()).into());
             }
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn engine_open_rejects_unparsable_graphs() {
         let dir = pack_dir("fake");
-        for name in REQUIRED {
+        for name in ModelDir::REQUIRED_FILES {
             std::fs::write(dir.join(name), "not an onnx graph").unwrap();
         }
         match Engine::open(ModelDir::open(&dir).unwrap()) {
