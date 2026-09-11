@@ -1,6 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
+mod dictation;
+
+pub use dictation::{Dictation, Edit, Step};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioChunk {
     pub samples: Vec<f32>,
