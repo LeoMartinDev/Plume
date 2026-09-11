@@ -71,6 +71,13 @@ impl CancelGuard {
         #[cfg(windows)]
         {
             let _ = spec;
+            use std::sync::Once;
+            static LOG: Once = Once::new();
+            LOG.call_once(|| {
+                eprintln!(
+                    "stt-session: Esc cancel is unavailable on Windows (one keyboard hook per process)"
+                );
+            });
             Ok(CancelGuard {})
         }
         #[cfg(not(windows))]
@@ -91,5 +98,23 @@ impl CancelGuard {
         {
             matches!(self.hotkey.next_event(), Some(HotkeyEvent::Pressed))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rejects_empty_and_fn() {
+        assert!(ChordSpec::parse("").is_err());
+        assert!(ChordSpec::parse("   ").is_err());
+        assert!(ChordSpec::parse("Fn").is_err());
+        assert!(ChordSpec::parse("Ctrl+Fn").is_err());
+        assert_eq!(
+            ChordSpec::parse("Ctrl+Space").unwrap().as_str(),
+            "Ctrl+Space"
+        );
+        assert_eq!(ChordSpec::parse("Esc").unwrap().as_str(), "Esc");
     }
 }

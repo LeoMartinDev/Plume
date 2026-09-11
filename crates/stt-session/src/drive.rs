@@ -371,7 +371,11 @@ mod tests {
         assert_eq!(target.inserted(), "HELLO");
         assert_eq!(
             target.injector().ops(),
-            &["insert:hello", "replace:hello->hello", "replace:hello->HELLO"]
+            &[
+                "insert:hello",
+                "replace:hello->hello",
+                "replace:hello->HELLO"
+            ]
         );
     }
 
@@ -420,10 +424,7 @@ mod tests {
         assert!(matches!(folded, Fold::Continue));
         let outcome = drive_cancel(&mut dictation, &mut target);
         assert!(matches!(outcome, Outcome::Cancelled), "got: {outcome:?}");
-        assert_eq!(
-            target.injector().ops(),
-            &["insert:bonj", "replace:bonj->"]
-        );
+        assert_eq!(target.injector().ops(), &["insert:bonj", "replace:bonj->"]);
         let late = dictation.on_hypothesis(partial("bonjour")).unwrap();
         assert_eq!(late.edit, None);
         assert_eq!(late.transcript, None);

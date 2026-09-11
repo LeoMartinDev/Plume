@@ -16,10 +16,10 @@ impl AudioGate {
     }
 }
 
-/// The mic side of the gate. One sender is shared between the compositor's
-/// handle and the pump thread's clone, so `close` (or `Drop`) from either
-/// side ends the audio iterator. Idempotent by construction: send-after-close
-/// just fails and the pump exits.
+/// Shared sender for the gate. `close` takes the sender even while clones
+/// remain. Dropping the last clone drops the sender and ends the iterator.
+/// There is no `Drop` impl that takes the sender: a clone drop would EOF
+/// the engine while the mic thread still holds a clone.
 #[derive(Clone)]
 pub(crate) struct AudioPump {
     shared: Arc<Mutex<Option<mpsc::Sender<AudioChunk>>>>,
@@ -35,14 +35,6 @@ impl AudioPump {
         match slot.as_ref() {
             Some(tx) => tx.send(chunk).is_ok(),
             None => false,
-        }
-    }
-}
-
-impl Drop for AudioPump {
-    fn drop(&mut self) {
-        if let Ok(mut slot) = self.shared.lock() {
-            slot.take();
         }
     }
 }
@@ -119,5 +111,15 @@ mod tests {
         let (gate, pump) = open_pair();
         drop(pump);
         assert!(gate.into_audio_stream().next().is_none());
+    }
+
+    #[test]
+    fn dropping_a_clone_does_not_end_the_gate() {
+        let (gate, pump) = open_pair();
+        drop(pump.clone());
+        assert!(pump.send(chunk(1.0)));
+        pump.close();
+        let got: Vec<AudioChunk> = gate.into_audio_stream().collect();
+        assert_eq!(got, vec![chunk(1.0)]);
     }
 }

@@ -80,7 +80,9 @@ impl<I: TextInjector> Target<I> {
 pub(crate) enum TargetError {
     /// The app moved under us (or an earlier inject silently failed).
     /// Fatal for this session: cancel, retract what we can, settle.
-    Desync { expected_suffix: String },
+    Desync {
+        expected_suffix: String,
+    },
     Inject(BoxError),
 }
 
@@ -88,7 +90,10 @@ impl std::fmt::Display for TargetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TargetError::Desync { expected_suffix } => {
-                write!(f, "target desync: {expected_suffix:?} is not a suffix of inserted text")
+                write!(
+                    f,
+                    "target desync: {expected_suffix:?} is not a suffix of inserted text"
+                )
             }
             TargetError::Inject(err) => write!(f, "inject failed: {err}"),
         }

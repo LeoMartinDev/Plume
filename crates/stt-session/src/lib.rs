@@ -50,14 +50,13 @@ impl std::error::Error for StartupError {
     }
 }
 
-/// Uninhabited: `run` never returns `Ok`.
-pub enum Never {}
-
 /// Own the whole topology. Spawns the compositor worker, then runs the
 /// GPUI overlay on the CALLER's thread (must be main). Startup order is
 /// load-bearing: model -> engine -> injector -> hold chord; the window
 /// opens LAST so a broken backend fails on stderr, not in a dead bubble.
-pub fn run(config: Config) -> Result<Never, StartupError> {
+/// Returns when the overlay window closes. The process then exits and
+/// takes the worker with it.
+pub fn run(config: Config) -> Result<(), StartupError> {
     let dir = ModelDir::open(&config.model_dir).map_err(StartupError::model)?;
     let engine = Engine::open(dir).map_err(StartupError::model)?;
     let injector = NativeInjector::connect().map_err(StartupError::backend)?;
@@ -77,5 +76,5 @@ pub fn run(config: Config) -> Result<Never, StartupError> {
         .spawn(|| worker.run())
         .map_err(|err| StartupError::backend(err.into()))?;
     stt_overlay::run_with(bubble_rx);
-    std::process::exit(0);
+    Ok(())
 }

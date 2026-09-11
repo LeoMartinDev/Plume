@@ -3,11 +3,8 @@ fn main() {
         eprintln!("stt-session: invalid config: {err}");
         std::process::exit(err.exit_code());
     });
-    match stt_session::run(config) {
-        Ok(never) => match never {},
-        Err(err) => {
-            eprintln!("stt-session: startup failed: {err}");
-            std::process::exit(err.exit_code());
-        }
+    if let Err(err) = stt_session::run(config) {
+        eprintln!("stt-session: startup failed: {err}");
+        std::process::exit(err.exit_code());
     }
 }
