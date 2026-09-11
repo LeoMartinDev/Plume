@@ -2,7 +2,7 @@ mod window;
 
 use stt_core::{Dictation, Session, SessionState};
 
-pub use window::{run, WINDOW_TITLE};
+pub use window::{run, run_with, WINDOW_TITLE};
 
 /// Latest partial and session phase shown in the overlay bubble.
 ///

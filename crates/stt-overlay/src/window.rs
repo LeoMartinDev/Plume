@@ -1,8 +1,10 @@
 use std::io::Write;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use gpui::{
-    div, point, prelude::*, px, rgb, size, App, Application, Bounds, Context, Pixels, Size,
-    TitlebarOptions, Window, WindowBounds, WindowKind, WindowOptions,
+    div, point, prelude::*, px, rgb, size, App, Application, AsyncApp, Bounds, Context, Pixels,
+    Size, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 use stt_core::Dictation;
 
@@ -71,34 +73,73 @@ fn force_x11_when_display_is_set() {
 pub fn run() {
     force_x11_when_display_is_set();
     Application::new().run(|cx: &mut App| {
-        let window_size = size(px(420.), px(56.));
-        let bounds = bottom_center_bounds(window_size, cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(WINDOW_TITLE.into()),
-                    ..Default::default()
-                }),
-                app_id: Some("stt-overlay".into()),
-                kind: WindowKind::PopUp,
-                focus: false,
-                is_resizable: false,
-                is_minimizable: false,
-                ..Default::default()
-            },
-            |_window, cx| {
-                cx.new(|_cx| BubbleView {
-                    bubble: Bubble::from_dictation(&Dictation::new()),
-                })
-            },
-        )
-        .expect("open overlay window");
-        eprintln!(
-            "stt-overlay: window opened title={WINDOW_TITLE} display={}",
-            std::env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into())
-        );
-        let _ = std::io::stderr().flush();
+        open_popup(cx);
+        print_opened_line();
         cx.activate(true);
     });
+}
+
+pub fn run_with(rx: mpsc::Receiver<Bubble>) {
+    force_x11_when_display_is_set();
+    Application::new().run(|cx: &mut App| {
+        let handle = open_popup(cx);
+        print_opened_line();
+        cx.activate(true);
+        cx.spawn(async move |cx: &mut AsyncApp| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
+            let mut latest = None;
+            loop {
+                match rx.try_recv() {
+                    Ok(bubble) => latest = Some(bubble),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => return,
+                }
+            }
+            if let Some(bubble) = latest {
+                let _ = cx.update(|cx| {
+                    let _ = handle.update(cx, |view: &mut BubbleView, _window, cx| {
+                        view.bubble = bubble;
+                        cx.notify();
+                    });
+                });
+            }
+        })
+        .detach();
+    });
+}
+
+fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {
+    let window_size = size(px(420.), px(56.));
+    let bounds = bottom_center_bounds(window_size, cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(WINDOW_TITLE.into()),
+                ..Default::default()
+            }),
+            app_id: Some("stt-overlay".into()),
+            kind: WindowKind::PopUp,
+            focus: false,
+            is_resizable: false,
+            is_minimizable: false,
+            ..Default::default()
+        },
+        |_window, cx| {
+            cx.new(|_cx| BubbleView {
+                bubble: Bubble::from_dictation(&Dictation::new()),
+            })
+        },
+    )
+    .expect("open overlay window")
+}
+
+fn print_opened_line() {
+    eprintln!(
+        "stt-overlay: window opened title={WINDOW_TITLE} display={}",
+        std::env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into())
+    );
+    let _ = std::io::stderr().flush();
 }
