@@ -12,7 +12,7 @@ Hold-to-talk is the default dictation gesture. The user holds a global shortcut,
 ## How to get to it (user POV)
 
 - Click into the app that should receive the text.
-- Hold the global shortcut. The default is `Fn` where the OS reports it, or `Ctrl+Space` elsewhere.
+- Hold the global shortcut. The default is `Ctrl+Space`.
 - Speak, then release the shortcut.
 
 ## Driving it with control-stt-gpui
