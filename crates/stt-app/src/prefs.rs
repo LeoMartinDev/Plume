@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Light is pinned. Medium and Large stay visible until a snapshot opens.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,14 +130,35 @@ impl std::fmt::Display for PrefsError {
 
 impl std::error::Error for PrefsError {}
 
+struct AppearanceWire(AppearancePref);
+
+impl Default for AppearanceWire {
+    fn default() -> Self {
+        Self(AppearancePref::Auto)
+    }
+}
+
+impl<'de> Deserialize<'de> for AppearanceWire {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = toml::Value::deserialize(deserializer)?;
+        Ok(Self(match value {
+            toml::Value::String(raw) => match raw.as_str() {
+                "light" => AppearancePref::Fixed(Scheme::Light),
+                "dark" => AppearancePref::Fixed(Scheme::Dark),
+                _ => AppearancePref::Auto,
+            },
+            _ => AppearancePref::Auto,
+        }))
+    }
+}
+
 #[derive(Deserialize)]
 struct WireIn {
     hold: String,
     cancel: String,
     pack: String,
-    // A typed field would fail deserialize and quarantine hold/cancel/pack.
     #[serde(default)]
-    appearance: Option<toml::Value>,
+    appearance: AppearanceWire,
 }
 
 #[derive(Serialize)]
@@ -190,18 +211,6 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
     Ok(())
 }
 
-fn appearance_from_wire(value: Option<&toml::Value>) -> AppearancePref {
-    match value {
-        Some(toml::Value::String(raw)) => match raw.as_str() {
-            "light" => AppearancePref::Fixed(Scheme::Light),
-            "dark" => AppearancePref::Fixed(Scheme::Dark),
-            "auto" => AppearancePref::Auto,
-            _ => AppearancePref::Auto,
-        },
-        _ => AppearancePref::Auto,
-    }
-}
-
 fn parse_wire(raw: &str) -> Result<Prefs, String> {
     let wire: WireIn = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
     let pack = PackId::parse(&wire.pack)
@@ -212,7 +221,7 @@ fn parse_wire(raw: &str) -> Result<Prefs, String> {
         hold: wire.hold,
         cancel: wire.cancel,
         pack,
-        appearance: appearance_from_wire(wire.appearance.as_ref()),
+        appearance: wire.appearance.0,
     })
 }
 
