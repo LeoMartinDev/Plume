@@ -19,11 +19,12 @@ Toggle mode is long dictation without a held key. One press of the toggle shortc
 
 Preconditions:
 
-- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=absent` on this checkout.
+- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present` on this checkout.
 - The overlay window exists. It is not wired to a toggle shortcut.
+- The `stt-hotkey`, `stt-audio`, and `stt-inject` crates ship as libraries. No binary registers a shortcut or opens the mic.
 
 - **Probe the binary.** Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. The process exits. It does not wait for a second key press.
-- **Report.** Mark `toggle-mode` unreachable. Unmet preconditions are `toggle-hotkey-not-shipped` and `overlay-not-wired-to-session`. Keep the transcript as the probe, not as a pass.
+- **Report.** Mark `toggle-mode` unreachable. Unmet preconditions are `no-session-binary` and `overlay-not-wired-to-session`. Keep the transcript as the probe, not as a pass.
 
 ## Gotchas
 

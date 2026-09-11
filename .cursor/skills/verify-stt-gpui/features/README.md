@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Work from the repository root of stt-gpui.
 - Set `STT_GPUI_VERIFY_RUN_ID` to a unique value when more than one verification run might overlap.
 - Run `control-stt-gpui launch` so `stt-shell` is built into `/tmp/stt-gpui-verify-$RUN_ID/target`.
-- Run `control-stt-gpui doctor` and require `surface=cli`, `overlay=present`, `hotkey=absent`, and stdout `stt-shell <version>` matching `crates/stt-shell/Cargo.toml`.
+- Run `control-stt-gpui doctor` and require `surface=cli`, `overlay=present`, `hotkey=present`, and stdout `stt-shell <version>` matching `crates/stt-shell/Cargo.toml`.
 - Never drive a binary that was not built by this launch, except `stt-overlay` built into that same run target by `control-stt-gpui overlay`.
 - Never treat workspace `target/debug/stt-shell` as the instance under test.
 
@@ -19,7 +19,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Treat every command as literal. Keep quoted names and flags unchanged.
 - Run the shell through `control-stt-gpui cli`.
 - Put the helper on `PATH` with `export PATH="$PWD/.cursor/skills/verify-stt-gpui/scripts:$PATH"` or use the repository-relative path.
-- Hold-to-talk, toggle, Esc-cancel, and cleanup from `docs/spec/ux-flow.md` are specified and unshipped. Probe them, then report unreachable. Do not pass them through `cargo test`.
+- Hold-to-talk, toggle, Esc-cancel, and cleanup from `docs/spec/ux-flow.md` are specified but unwired: the hotkey, mic, and injector crates ship and no session binary wires them. Probe them, then report unreachable. Do not pass them through `cargo test`.
 
 ## Proof and skip reporting
 
@@ -27,7 +27,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - CLI proof includes the command, stdout, stderr, and exit code under `/tmp/stt-gpui-verify-artifacts/$RUN_ID/`.
 - Overlay proof includes the cargo-test transcript and, when `DISPLAY` is set, `xwininfo-name.txt`. When `DISPLAY` is unset, keep `skip.txt` and do not call that a window pass.
 - A version line is identity proof for `shell-identity` only.
-- The same version line on hold-to-talk, toggle, cancel, or cleanup is evidence the path is absent.
+- The same version line on hold-to-talk, toggle, cancel, or cleanup is evidence the path is unwired.
 - Record the feature ID and entry point used with every artifact.
 - Report an unreachable path with the attempted command and the unmet precondition.
 - Do not report a skipped entry point as verified through a different path.
@@ -48,7 +48,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Shell identity](./shell-identity.md) covers CLI identity.
 - [Transcribe a file](./transcribe-file.md) covers local file transcription. Passes with `STT_MODEL_DIR` set.
 - [Overlay bubble](./overlay-bubble.md) covers the GPUI window and the scripted Dictation bubble model.
-- [Hold-to-talk](./hold-to-talk.md) covers the specified dictation hold gesture. Unreachable until a hotkey exists and the overlay is wired to a live session.
-- [Toggle mode](./toggle-mode.md) covers long dictation without a held key. Unreachable until a toggle shortcut exists.
+- [Hold-to-talk](./hold-to-talk.md) covers the specified dictation hold gesture. Unreachable: no session binary wires the hotkey, mic, engine, injector, and overlay.
+- [Toggle mode](./toggle-mode.md) covers long dictation without a held key. Unreachable: no session binary wires a toggle shortcut.
 - [Cancel a session](./cancel-session.md) covers Esc discarding in-flight text. Unreachable until a session overlay is wired to Esc.
 - [Cleanup pass](./cleanup-pass.md) covers the optional local LLM rewrite. Unreachable until settings and the cleanup pass exist.

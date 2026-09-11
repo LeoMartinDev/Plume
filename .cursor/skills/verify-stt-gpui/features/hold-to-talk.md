@@ -19,13 +19,14 @@ Hold-to-talk is the default dictation gesture. The user holds a global shortcut,
 
 Preconditions:
 
-- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=absent` on this checkout.
+- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present` on this checkout.
 - The overlay window exists. It is not wired to a hold shortcut or a microphone.
+- The `stt-hotkey`, `stt-audio`, and `stt-inject` crates ship as libraries. No binary registers a shortcut or opens the mic.
 - Do not start this recipe expecting a live session.
 
 - **Probe the binary.** Try to start a session from the CLI. Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. No recording starts.
 - **Probe flags.** Run `control-stt-gpui cli -- --help`. The same version line. There is no hold, record, or dictate subcommand.
-- **Report.** Mark `hold-to-talk` unreachable. Unmet preconditions are `hotkey-not-shipped` and `overlay-not-wired-to-session`. Keep the transcripts as the probe, not as a pass.
+- **Report.** Mark `hold-to-talk` unreachable. Unmet preconditions are `no-session-binary` and `overlay-not-wired-to-session`. Keep the transcripts as the probe, not as a pass.
 
 ## Gotchas
 
@@ -33,4 +34,4 @@ Preconditions:
 - `control-stt-gpui overlay` proves the bubble window. That is not hold-to-talk.
 - Do not screenshot a desktop and call it a hold session.
 - Do not send `Ctrl+Space` to the terminal running the harness and call that a global hotkey.
-- When doctor later reports `hotkey=present`, this file is stale. Run `/maintain-verification-skill` before claiming a pass.
+- When a session binary lands, this file is stale. Run `/maintain-verification-skill` before claiming a pass.

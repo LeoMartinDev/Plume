@@ -17,7 +17,7 @@ Cancel discards an in-flight dictation. Pressing `Esc` while a session runs ends
 
 Preconditions:
 
-- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=absent`.
+- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present`.
 - No live session is running. The overlay is not wired to Esc.
 
 - **Probe the binary.** Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. There is no session to cancel.

@@ -86,6 +86,14 @@ overlay_from_crate() {
   fi
 }
 
+hotkey_from_crate() {
+  if [[ -f "$REPO_ROOT/crates/stt-hotkey/Cargo.toml" ]]; then
+    printf 'present\n'
+  else
+    printf 'absent\n'
+  fi
+}
+
 cmd_launch() {
   local run_id
   if [[ -n "${STT_GPUI_VERIFY_RUN_ID:-}" ]]; then
@@ -94,7 +102,7 @@ cmd_launch() {
     run_id=$(date +%Y%m%dT%H%M%S)-$$
   fi
 
-  local run_dir target artifacts binary version overlay
+  local run_dir target artifacts binary version overlay hotkey
   run_dir=$(run_dir_for "$run_id")
   target=$run_dir/target
   artifacts=$ARTIFACTS_ROOT/$run_id
@@ -102,6 +110,7 @@ cmd_launch() {
 
   version=$(expected_version)
   overlay=$(overlay_from_crate)
+  hotkey=$(hotkey_from_crate)
 
   echo "building stt-shell into $target"
   CARGO_TARGET_DIR=$target cargo build -p stt-shell --manifest-path "$REPO_ROOT/Cargo.toml"
@@ -131,7 +140,7 @@ VERSION=$version
 ARTIFACTS=$artifacts
 SURFACE=cli
 OVERLAY=$overlay
-HOTKEY=absent
+HOTKEY=$hotkey
 EOF
 
   printf '%s\n' "$run_id" >"$CURRENT_FILE"
@@ -142,6 +151,7 @@ EOF
   echo "artifacts=$artifacts"
   echo "surface=cli"
   echo "overlay=$overlay"
+  echo "hotkey=$hotkey"
 }
 
 cmd_doctor() {
@@ -177,9 +187,11 @@ cmd_doctor() {
   [[ "$actual_code" -eq 0 ]] || die "binary exited $actual_code"
   [[ "$stdout_text" == "stt-shell $expected" ]] || die "stdout was $(printf '%q' "$stdout_text"), expected stt-shell $expected"
 
-  local expected_overlay
+  local expected_overlay expected_hotkey
   expected_overlay=$(overlay_from_crate)
   [[ "$OVERLAY" == "$expected_overlay" ]] || die "state overlay $OVERLAY does not match crate $expected_overlay"
+  expected_hotkey=$(hotkey_from_crate)
+  [[ "$HOTKEY" == "$expected_hotkey" ]] || die "state hotkey $HOTKEY does not match crate $expected_hotkey"
 
   echo "ok cargo=$(command -v cargo)"
   echo "ok rustc=$(command -v rustc)"

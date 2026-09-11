@@ -9,7 +9,7 @@ stt-gpui is a desktop push-to-talk dictation app. Hold a global shortcut, speak,
 
 `stt-shell` is the short-lived CLI. It prints `stt-shell <version>` from `crates/stt-shell/Cargo.toml` and exits. `stt-overlay` is a GPUI bubble window at the bottom center of the screen. It shows the latest partial and a `SessionState` marker. This checkout does not wire a microphone, global hotkey, or text injector. `stt-core` is a library. Do not treat `cargo test` as a user path for the shell or for hold-to-talk.
 
-The planned live surface is that bubble, driven by hold-to-talk and toggle shortcuts, with Esc to cancel and an optional local LLM cleanup pass. Those flows live in `docs/spec/ux-flow.md`. Doctor reports `overlay=present` when `crates/stt-overlay` exists. Drive the overlay feature file for the window. Until doctor also reports `hotkey=present`, hold-to-talk, toggle, cancel-from-Esc, and cleanup stay unreachable. Report the unmet precondition. Do not invent selectors, screenshots of pixels, or a hold-to-talk pass via unit tests.
+The planned live surface is that bubble, driven by hold-to-talk and toggle shortcuts, with Esc to cancel and an optional local LLM cleanup pass. Those flows live in `docs/spec/ux-flow.md`. Doctor reports `overlay=present` when `crates/stt-overlay` exists, and `hotkey=present` when `crates/stt-hotkey` exists. Either flag means the crate ships, not that a session runs: no binary wires the hotkey, mic, engine, injector, and overlay into a session yet, so hold-to-talk, toggle, cancel-from-Esc, and cleanup stay unreachable. Report the unmet precondition. Do not invent selectors, screenshots of pixels, or a hold-to-talk pass via unit tests.
 
 ## Launch
 
@@ -47,9 +47,9 @@ Pass only when every line is `ok` and all of these hold:
 - exit code is `0`
 - `surface=cli`
 - `overlay=present` when `crates/stt-overlay/Cargo.toml` exists, otherwise `overlay=absent`
-- `hotkey=absent`
+- `hotkey=present` when `crates/stt-hotkey/Cargo.toml` exists, otherwise `hotkey=absent`
 
-`overlay=present` means the bubble crate is in this checkout. It does not mean hold-to-talk works. Drive [overlay-bubble](features/overlay-bubble.md) for the window. If `hotkey` is `absent`, do not drive hold-to-talk, toggle, cancel, or cleanup as if a live session existed. Those feature files say how to probe the gap. They are not passes.
+`overlay=present` means the bubble crate is in this checkout. It does not mean hold-to-talk works. Drive [overlay-bubble](features/overlay-bubble.md) for the window. `hotkey=present` means the hotkey library ships. It does not mean a shortcut is registered. Neither flag means a live session exists: do not drive hold-to-talk, toggle, cancel, or cleanup as if one did. Those feature files say how to probe the gap. They are not passes.
 
 Never drive an instance this run did not launch.
 
@@ -101,7 +101,7 @@ Standards:
 - A version line without the matching `Cargo.toml` version is not identity proof. Doctor already checks the toml. The drive transcript must still show the same line.
 - `--help` is not a help command. Observe that it still prints the version. Do not treat that as documentation.
 - Mocks are not in play. The binary has no network. Local-only is currently "the process printed and exited." Watch for network only when a later engine or updater lands.
-- Hotkey, injection, and settings are specified and unshipped. A probe that prints the version line and exits is evidence those paths are absent. It is not evidence they work.
+- Hotkey, mic, and injection ship as libraries (`stt-hotkey`, `stt-audio`, `stt-inject`) with X11 loopback tests, but no binary wires them into a session. Settings is specified and unshipped. A probe that prints the version line and exits is evidence those paths are unwired. It is not evidence they work.
 - Window pixels are not proof on this host. Presence plus state is the proof.
 
 Record the feature id and the entry point on every artifact you keep (copy or rename under a feature subdirectory if the default stamp is too generic).

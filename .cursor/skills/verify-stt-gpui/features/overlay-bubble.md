@@ -19,7 +19,7 @@ The overlay bubble is a GPUI window at the bottom center of the screen. One text
 
 Preconditions:
 
-- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=absent`.
+- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present`.
 - Launch already built `stt-shell` into `/tmp/stt-gpui-verify-$RUN_ID/`. Overlay builds into that same target directory.
 - Unset `WAYLAND_DISPLAY` and `ZED_HEADLESS` so gpui 0.2.2 uses X11 when `DISPLAY` is set. The overlay command does this.
 - Linux CI needs the `libxkbcommon-x11-dev` package so rustc can link `-lxkbcommon-x11`. Do not commit a local `.so` symlink.
