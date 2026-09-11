@@ -1,0 +1,13 @@
+[package]
+name = "stt-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stt-core = { path = "../stt-core" }
+ort = "=2.0.0-rc.13"
+hound = "3.5"
+rustfft = "6"
+
+[dev-dependencies]
+stt-core = { path = "../stt-core" }
