@@ -217,7 +217,6 @@ fn pack_row(
     selected: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    let dest = id.data_dir();
     let border = if selected {
         rgb(0xd4a017)
     } else if enabled {
@@ -277,10 +276,4 @@ fn pack_row(
                 ),
         )
         .child(div().text_xs().text_color(rgb(0x8a8378)).child(detail))
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x6e685e))
-                .child(dest.display().to_string()),
-        )
 }
