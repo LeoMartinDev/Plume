@@ -15,7 +15,7 @@ pub const SETTINGS_TITLE: &str = "stt";
 
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
 
-const APPEARANCE_SEGMENTS: [(AppearancePref, &'static str); 3] = [
+const APPEARANCE_SEGMENTS: [(AppearancePref, &str); 3] = [
     (AppearancePref::Fixed(Scheme::Light), "Light"),
     (AppearancePref::Fixed(Scheme::Dark), "Dark"),
     (AppearancePref::Auto, "Auto"),
