@@ -4,6 +4,7 @@ use std::fmt;
 mod chord;
 mod macos;
 mod shortcut;
+#[cfg(any(test, target_os = "linux"))]
 mod wayland;
 mod windows;
 

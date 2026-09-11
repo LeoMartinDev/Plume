@@ -111,14 +111,14 @@ mod backend {
             let hook_thread = thread::spawn(move || unsafe {
                 let module = GetModuleHandleW(std::ptr::null());
                 let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_proc), module, 0);
-                if hook == 0 {
+                if hook.is_null() {
                     let _ = ready_tx.send(Err(HotkeyError::Os(
                         "SetWindowsHookExW(WH_KEYBOARD_LL) failed".to_string(),
                     )));
                     return;
                 }
                 let thread_id = GetCurrentThreadId();
-                let _ = ready_tx.send(Ok((thread_id, hook)));
+                let _ = ready_tx.send(Ok(thread_id));
                 let mut msg = std::mem::zeroed::<MSG>();
                 while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                     TranslateMessage(&msg);
@@ -127,7 +127,7 @@ mod backend {
                 let _ = UnhookWindowsHookEx(hook);
             });
             match ready_rx.recv() {
-                Ok(Ok((thread_id, _hook))) => Ok(WindowsHotkey {
+                Ok(Ok(thread_id)) => Ok(WindowsHotkey {
                     events: rx,
                     thread_id,
                     hook_thread: Some(hook_thread),
@@ -157,7 +157,7 @@ mod backend {
                 }
             }
         }
-        CallNextHookEx(0, n_code, w_param, l_param)
+        CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
     }
 
     impl GlobalHotkey for WindowsHotkey {

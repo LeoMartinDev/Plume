@@ -26,10 +26,12 @@ struct Down {
 }
 
 #[derive(Debug)]
+#[cfg(any(test, target_os = "linux"))]
 pub(crate) struct RepeatFilter {
     held: bool,
 }
 
+#[cfg(any(test, target_os = "linux"))]
 impl RepeatFilter {
     pub(crate) fn new() -> Self {
         RepeatFilter { held: false }
