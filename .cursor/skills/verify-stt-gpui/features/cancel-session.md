@@ -18,14 +18,15 @@ Cancel discards an in-flight dictation. Pressing `Esc` while a session runs ends
 Preconditions:
 
 - `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present`.
-- No live session is running. The overlay is not wired to Esc.
+- The session binary arms `Esc` only while a session runs. v1 has no Esc-cancel on Windows.
+- A live cancel proof needs a running session: model pack, display, mic, and a held chord.
 
-- **Probe the binary.** Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. There is no session to cancel.
-- **Report.** Mark `cancel-session` unreachable. Unmet precondition is `no-running-session`. Keep the transcript as the probe, not as a pass.
+- **Wiring.** Run `control-stt-gpui session`. Exit code `0`. The cancel fold test retracts scripted partials with no leak. That is the model proof. It is not an Esc key proof.
+- **Report.** Without a live session to discard, mark `cancel-session` with the missing piece (`needs-live-session`, `no-model-pack`, `no-display`, `no-mic`). Keep the transcript as the probe, not as a pass.
 
 ## Gotchas
 
 - Sending `Esc` to the harness terminal cancels nothing in a target app.
 - `Session::cancel` in unit tests is not the Esc key.
 - `overlay-cancel-swallow` in the overlay feature is the scripted model. It is not an Esc key proof.
-- Cancel cannot pass until hold-to-talk or toggle can start a session you then discard.
+- Cancel cannot pass until hold-to-talk can start a session you then discard. Toggle is unshipped.

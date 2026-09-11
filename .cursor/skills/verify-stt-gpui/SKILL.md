@@ -7,9 +7,9 @@ description: Drive stt-gpui, a local desktop dictation app. Prove the stt-shell 
 
 stt-gpui is a desktop push-to-talk dictation app. Hold a global shortcut, speak, and text streams into the focused app. Audio never leaves the machine.
 
-`stt-shell` is the short-lived CLI. It prints `stt-shell <version>` from `crates/stt-shell/Cargo.toml` and exits. `stt-overlay` is a GPUI bubble window at the bottom center of the screen. It shows the latest partial and a `SessionState` marker. This checkout does not wire a microphone, global hotkey, or text injector. `stt-core` is a library. Do not treat `cargo test` as a user path for the shell or for hold-to-talk.
+`stt-shell` is the short-lived CLI. It prints `stt-shell <version>` from `crates/stt-shell/Cargo.toml` and exits. `stt-overlay` is a GPUI bubble window at the bottom center of the screen. It shows the latest partial and a `SessionState` marker. `stt-session` is the resident session binary. It wires the hold hotkey, mic, engine, injector, and overlay bubble into hold-to-talk with Esc to cancel. A live session needs `STT_MODEL_DIR` with a complete model pack, an X11 `DISPLAY`, a mic, and a held chord. `stt-core` is a library. Do not treat `cargo test` as a user path for the shell or for hold-to-talk.
 
-The planned live surface is that bubble, driven by hold-to-talk and toggle shortcuts, with Esc to cancel and an optional local LLM cleanup pass. Those flows live in `docs/spec/ux-flow.md`. Doctor reports `overlay=present` when `crates/stt-overlay` exists, and `hotkey=present` when `crates/stt-hotkey` exists. Either flag means the crate ships, not that a session runs: no binary wires the hotkey, mic, engine, injector, and overlay into a session yet, so hold-to-talk, toggle, cancel-from-Esc, and cleanup stay unreachable. Report the unmet precondition. Do not invent selectors, screenshots of pixels, or a hold-to-talk pass via unit tests.
+The planned live surface is that bubble, driven by hold-to-talk and toggle shortcuts, with Esc to cancel and an optional local LLM cleanup pass. Those flows live in `docs/spec/ux-flow.md`. Doctor reports `overlay=present` when `crates/stt-overlay` exists, and `hotkey=present` when `crates/stt-hotkey` exists. Either flag means the crate ships, not that a session runs. `stt-session` wires hold-to-talk and Esc-cancel on Linux (v1 has no Esc-cancel on Windows). Toggle and cleanup stay unshipped. A live hold-to-talk pass needs a model pack, a display, a mic, and a real key hold: without all four, report the unmet precondition. Do not invent selectors, screenshots of pixels, or a hold-to-talk pass via unit tests.
 
 ## Launch
 
@@ -70,7 +70,7 @@ control-stt-gpui cli -- --help
 
 `cli` forwards extra arguments after an optional `--`. Today `stt-shell` ignores flags. `--help` still prints the version line and exits `0`. Assert that line. Do not expect usage text.
 
-The overlay bubble is a separate program. Drive it with `control-stt-gpui overlay`, not with `cli`. Do not bolt screenshots onto the CLI recipe.
+The overlay bubble is a separate program. Drive it with `control-stt-gpui overlay`, not with `cli`. Do not bolt screenshots onto the CLI recipe. The session binary has its own drive: `control-stt-gpui session` builds `stt-session`, runs its gate/ledger/fold tests, and probes startup exit codes. It never starts a live session.
 
 There is no ARIA tree, no prompt, and no route. Stable CLI handles are the stdout line `stt-shell <version>` and the process exit code. Stable overlay handles are the window title `stt-overlay` from `xwininfo -name` and the bubble model assertions in `cargo test -p stt-overlay`. Do not click coordinates. Do not send keys to a window. Do not use `ffmpeg` x11grab. Those frames are black on WSLg.
 
@@ -101,7 +101,7 @@ Standards:
 - A version line without the matching `Cargo.toml` version is not identity proof. Doctor already checks the toml. The drive transcript must still show the same line.
 - `--help` is not a help command. Observe that it still prints the version. Do not treat that as documentation.
 - Mocks are not in play. The binary has no network. Local-only is currently "the process printed and exited." Watch for network only when a later engine or updater lands.
-- Hotkey, mic, and injection ship as libraries (`stt-hotkey`, `stt-audio`, `stt-inject`) with X11 loopback tests, but no binary wires them into a session. Settings is specified and unshipped. A probe that prints the version line and exits is evidence those paths are unwired. It is not evidence they work.
+- Hotkey, mic, injection, engine, and overlay ship as libraries. `stt-session` wires them into hold-to-talk. `control-stt-gpui session` proves that wiring headlessly: crate tests plus startup probes for exit 4 without a model pack and exit 2 for a bad chord. That is not a live hold-to-talk pass. Settings, toggle, and cleanup are specified and unshipped.
 - Window pixels are not proof on this host. Presence plus state is the proof.
 
 Record the feature id and the entry point on every artifact you keep (copy or rename under a feature subdirectory if the default stamp is too generic).
@@ -128,6 +128,7 @@ Do not delete workspace `target/` as part of verification cleanup.
 .cursor/skills/verify-stt-gpui/scripts/control-stt-gpui cli
 .cursor/skills/verify-stt-gpui/scripts/control-stt-gpui cli -- --help
 .cursor/skills/verify-stt-gpui/scripts/control-stt-gpui overlay
+.cursor/skills/verify-stt-gpui/scripts/control-stt-gpui session
 .cursor/skills/verify-stt-gpui/scripts/control-stt-gpui cleanup
 ```
 

@@ -21,10 +21,10 @@ Preconditions:
 
 - `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present` on this checkout.
 - The overlay window exists. It is not wired to a toggle shortcut.
-- The `stt-hotkey`, `stt-audio`, and `stt-inject` crates ship as libraries. No binary registers a shortcut or opens the mic.
+- The session binary registers the hold chord only. No toggle shortcut exists in v1.
 
-- **Probe the binary.** Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. The process exits. It does not wait for a second key press.
-- **Report.** Mark `toggle-mode` unreachable. Unmet preconditions are `no-session-binary` and `overlay-not-wired-to-session`. Keep the transcript as the probe, not as a pass.
+- **Probe the session binary.** Run `control-stt-gpui session`. Exit code `0`. The wiring proof covers hold-to-talk only. No toggle path exists to drive.
+- **Report.** Mark `toggle-mode` unreachable. Unmet precondition is `toggle-not-shipped`. Keep the transcript as the probe, not as a pass.
 
 ## Gotchas
 

@@ -25,6 +25,7 @@ Commands:
   cli [-- <args>]
              Run the built stt-shell binary. Extra args are forwarded.
   overlay    Build stt-overlay, run bubble model tests, prove the X11 window.
+  session    Build stt-session, run compositor tests, probe startup exits.
   cleanup    Remove the run directory. Leaves evidence on disk.
 
 Environment:
@@ -400,6 +401,138 @@ cmd_overlay() {
   return 0
 }
 
+cmd_session() {
+  local run_id
+  run_id=$(run_id_from_env_or_current)
+  load_state "$run_id"
+  [[ -f "$REPO_ROOT/crates/stt-session/Cargo.toml" ]] || die "missing $REPO_ROOT/crates/stt-session/Cargo.toml"
+
+  mkdir -p "$ARTIFACTS"
+  local stamp art out err meta combined bin
+  stamp=$(date +%Y%m%dT%H%M%S)-$$
+  art=$ARTIFACTS/session-$stamp
+  mkdir -p "$art"
+  out=$art/cargo-test.stdout.txt
+  err=$art/cargo-test.stderr.txt
+  meta=$art/meta.txt
+  combined=$art/transcript.txt
+
+  # Host-local link path for -lxkbcommon-x11 where the dev package is absent.
+  # Never committed; CI installs libxkbcommon-x11-dev instead.
+  if [[ -f "$HOME/.local/lib/stt-build/libxkbcommon-x11.so" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -L $HOME/.local/lib/stt-build"
+  fi
+
+  echo "building and testing stt-session in $TARGET_DIR"
+  local code
+  set +e
+  CARGO_TARGET_DIR=$TARGET_DIR cargo test -p stt-session --manifest-path "$REPO_ROOT/Cargo.toml" -- --nocapture >"$out" 2>"$err"
+  code=$?
+  set -e
+
+  {
+    echo "command: CARGO_TARGET_DIR=$TARGET_DIR cargo test -p stt-session"
+    echo "exit: $code"
+  } >"$meta"
+
+  if [[ "$code" -ne 0 ]]; then
+    {
+      echo "\$ cargo test -p stt-session"
+      echo "--- stdout ---"
+      cat "$out"
+      echo "--- stderr ---"
+      cat "$err"
+      echo "--- exit $code ---"
+    } >"$combined"
+    echo "exit=$code"
+    echo "transcript_path=$combined"
+    return "$code"
+  fi
+
+  bin=$TARGET_DIR/debug/stt-session
+  if [[ ! -x "$bin" && -x "$TARGET_DIR/debug/stt-session.exe" ]]; then
+    bin=$TARGET_DIR/debug/stt-session.exe
+  fi
+  if [[ ! -x "$bin" ]]; then
+    echo "building stt-session binary in $TARGET_DIR"
+    set +e
+    CARGO_TARGET_DIR=$TARGET_DIR cargo build -p stt-session --manifest-path "$REPO_ROOT/Cargo.toml" >"$art/cargo-build.stdout.txt" 2>"$art/cargo-build.stderr.txt"
+    code=$?
+    set -e
+    echo "build_exit: $code" >>"$meta"
+    if [[ "$code" -ne 0 ]]; then
+      {
+        echo "\$ cargo build -p stt-session"
+        echo "--- stdout ---"
+        cat "$art/cargo-build.stdout.txt"
+        echo "--- stderr ---"
+        cat "$art/cargo-build.stderr.txt"
+        echo "--- exit $code ---"
+      } >"$combined"
+      echo "exit=$code"
+      echo "transcript_path=$combined"
+      return "$code"
+    fi
+    bin=$TARGET_DIR/debug/stt-session
+    if [[ ! -x "$bin" && -x "$TARGET_DIR/debug/stt-session.exe" ]]; then
+      bin=$TARGET_DIR/debug/stt-session.exe
+    fi
+  fi
+  [[ -x "$bin" ]] || die "session binary missing at $TARGET_DIR/debug/stt-session"
+
+  local failures=0
+  session_probe() {
+    local name=$1 want=$2 token=$3
+    shift 3
+    local pout=$art/probe-$name.stdout.txt perr=$art/probe-$name.stderr.txt
+    set +e
+    "$@" >"$pout" 2>"$perr"
+    local got=$?
+    set -e
+    echo "probe=$name exit=$got want=$want" >>"$meta"
+    if [[ "$got" != "$want" ]]; then
+      echo "probe $name exited $got, want $want" >&2
+      failures=$((failures + 1))
+    fi
+    if ! grep -q "$token" "$perr"; then
+      echo "probe $name stderr is missing $token" >&2
+      failures=$((failures + 1))
+    fi
+  }
+
+  session_probe no-model 4 "STT_MODEL_DIR" env -u STT_MODEL_DIR "$bin"
+  session_probe fn-chord 2 "Fn" env -u STT_MODEL_DIR STT_HOLD=Fn "$bin"
+  session_probe bad-pack 4 "not a directory" env STT_MODEL_DIR="$art/no-such-pack" "$bin"
+
+  {
+    echo "model_dir=${STT_MODEL_DIR-<unset>}"
+    echo "display=${DISPLAY-<unset>}"
+    echo "note: a live session also needs a mic and a held chord; this command never starts one"
+  } >"$art/live-preconditions.txt"
+
+  {
+    echo "\$ cargo test -p stt-session"
+    echo "--- stdout ---"
+    cat "$out"
+    echo "--- stderr ---"
+    cat "$err"
+    echo "--- probes ---"
+    grep "probe=" "$meta"
+    echo "--- exit 0 ---"
+  } >"$combined"
+
+  if [[ "$failures" -ne 0 ]]; then
+    echo "exit=1"
+    echo "transcript_path=$combined"
+    return 1
+  fi
+
+  echo "exit=0"
+  echo "transcript_path=$combined"
+  echo "artifacts=$art"
+  return 0
+}
+
 cmd_cleanup() {
   local run_id
   if [[ -n "${STT_GPUI_VERIFY_RUN_ID:-}" ]]; then
@@ -442,6 +575,7 @@ main() {
       cmd_cli "$@"
       ;;
     overlay) cmd_overlay "$@" ;;
+    session) cmd_session "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
     --help|-h|help|"") usage ;;
     *)

@@ -20,13 +20,13 @@ Hold-to-talk is the default dictation gesture. The user holds a global shortcut,
 Preconditions:
 
 - `control-stt-gpui doctor` reports `overlay=present` and `hotkey=present` on this checkout.
-- The overlay window exists. It is not wired to a hold shortcut or a microphone.
-- The `stt-hotkey`, `stt-audio`, and `stt-inject` crates ship as libraries. No binary registers a shortcut or opens the mic.
-- Do not start this recipe expecting a live session.
+- `crates/stt-session/Cargo.toml` exists. The session binary wires the hold chord, mic, engine, injector, and bubble.
+- A live pass additionally needs `STT_MODEL_DIR` with a complete pack, a `DISPLAY`, a working mic, and a held chord.
+- Agent runs cannot hold a key. Without a human driver, report `needs-human-hold` and stop before the live recipe.
 
-- **Probe the binary.** Try to start a session from the CLI. Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. No recording starts.
-- **Probe flags.** Run `control-stt-gpui cli -- --help`. The same version line. There is no hold, record, or dictate subcommand.
-- **Report.** Mark `hold-to-talk` unreachable. Unmet preconditions are `no-session-binary` and `overlay-not-wired-to-session`. Keep the transcripts as the probe, not as a pass.
+- **Wiring.** Run `control-stt-gpui session`. Exit code `0`. The cargo-test transcript covers the audio gate, the target ledger, and scripted hold/partial/final/cancel folds. Startup probes assert exit `4` without `STT_MODEL_DIR`, exit `2` for `STT_HOLD=Fn`, and exit `4` for a missing pack dir. This is the wiring proof. It is not a live hold pass.
+- **Live (human only).** Run `STT_MODEL_DIR=<pack> cargo run -p stt-session`. Hold `Ctrl+Space`, speak, release. Words stream into the focused app and refine in place. The bubble mirrors the session state. Do not claim this pass unless you actually drove it.
+- **Report.** Without every live precondition, mark `hold-to-talk` with the missing piece (`no-model-pack`, `no-display`, `no-mic`, `needs-human-hold`). Keep the transcripts as the probe, not as a pass.
 
 ## Gotchas
 
@@ -34,4 +34,4 @@ Preconditions:
 - `control-stt-gpui overlay` proves the bubble window. That is not hold-to-talk.
 - Do not screenshot a desktop and call it a hold session.
 - Do not send `Ctrl+Space` to the terminal running the harness and call that a global hotkey.
-- When a session binary lands, this file is stale. Run `/maintain-verification-skill` before claiming a pass.
+- A green `control-stt-gpui session` run proves wiring, not a live hold. A missing mic still blocks the pass.

@@ -19,7 +19,7 @@ The cleanup pass is an optional local LLM rewrite of the final transcript. It st
 Preconditions:
 
 - `control-stt-gpui doctor` reports `overlay=present`.
-- This checkout has no settings UI and no cleanup pass.
+- This checkout has no settings UI and no cleanup pass. The session binary runs a no-op postpass.
 
 - **Probe the binary.** Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. There is no settings command and no rewrite.
 - **Probe flags.** Run `control-stt-gpui cli -- --help`. Still the version line. No `settings` or `cleanup` flag.

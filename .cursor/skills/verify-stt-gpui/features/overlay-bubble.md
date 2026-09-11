@@ -1,6 +1,6 @@
 # Overlay bubble
 
-The overlay bubble is a GPUI window at the bottom center of the screen. One text line shows the latest partial. One marker mirrors `SessionState`: idle, recording, streaming, finalizing, or cancelled. This checkout opens that window from the `stt-overlay` binary. It does not start a microphone, bind a hotkey, or inject text.
+The overlay bubble is a GPUI window at the bottom center of the screen. One text line shows the latest partial. One marker mirrors `SessionState`: idle, recording, streaming, finalizing, or cancelled. This checkout opens that window from the `stt-overlay` binary. It does not start a microphone, bind a hotkey, or inject text. The session binary feeds the same window live bubbles through `run_with`. The idle binary stays unwired.
 
 ## Sub-features
 
@@ -33,5 +33,5 @@ Preconditions:
 - `ffmpeg` x11grab frames are black on WSLg. Presence plus state is the proof.
 - gpui prefers Wayland when `WAYLAND_DISPLAY` is set. Leave it unset for this probe so the X11 path is exercised.
 - `stt-shell` printing a version line is not the bubble.
-- Hold-to-talk is still unreachable. This window is not wired to a session loop.
+- Hold-to-talk needs the session binary. This idle window is not wired to a session loop.
 - A leftover window titled `stt-overlay` fails the presence test on purpose. Kill it first.
