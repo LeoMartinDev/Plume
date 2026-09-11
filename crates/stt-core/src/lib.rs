@@ -27,7 +27,7 @@ pub type BoxError = Box<dyn Error + Send + Sync>;
 
 /// Pull-based streams keep stt-core dependency-free. Mic capture feeds the
 /// input through a channel's iterator; the engine yields hypotheses the same
-/// way. An async stream can replace both aliases when a real engine lands.
+/// way.
 pub type AudioStream = Box<dyn Iterator<Item = AudioChunk> + Send>;
 pub type HypothesisStream = Box<dyn Iterator<Item = Result<Hypothesis, BoxError>> + Send>;
 
@@ -92,15 +92,23 @@ impl PartialTranscript {
     }
 }
 
-/// The user released or toggled off and partial hypotheses exist to refine.
+/// The user released or toggled off and a latest partial exists to refine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finalizing {
-    partials: Vec<PartialHypothesis>,
+    latest: PartialTranscript,
 }
 
 impl Finalizing {
-    pub fn partials(&self) -> &[PartialHypothesis] {
-        &self.partials
+    pub fn latest(&self) -> &PartialTranscript {
+        &self.latest
+    }
+
+    pub fn on_partial(self, hypothesis: PartialHypothesis) -> Self {
+        Finalizing {
+            latest: PartialTranscript {
+                text: hypothesis.text,
+            },
+        }
     }
 
     /// The engine returned the final transcript. The session ends in `Idle`
@@ -109,7 +117,7 @@ impl Finalizing {
         (Session::Idle, transcript)
     }
 
-    /// Esc during finalization drops the partials without injecting text.
+    /// Esc during finalization drops the latest partial without injecting text.
     pub fn cancel(self) -> Cancelled {
         Cancelled
     }
@@ -133,6 +141,11 @@ impl Recording {
             },
             held: true,
         }
+    }
+
+    /// Short utterance. Engine emitted Final before any Partial.
+    pub fn on_final(self, transcript: Transcript) -> (Session, Transcript) {
+        (Session::Idle, transcript)
     }
 
     /// Release before any hypothesis. Nothing to refine, nothing to inject.
@@ -167,13 +180,11 @@ impl Streaming {
         self
     }
 
-    /// Release ends capture and moves the session to `Finalizing` with the
-    /// hypotheses heard so far.
+    /// Release ends capture and moves the session to `Finalizing`, keeping
+    /// the same latest partial.
     pub fn release(self) -> Finalizing {
         Finalizing {
-            partials: vec![PartialHypothesis {
-                text: self.latest.text,
-            }],
+            latest: self.latest,
         }
     }
 
@@ -269,13 +280,25 @@ mod tests {
         let streaming = streaming.on_partial(partial("bonjour"));
         assert_eq!(streaming.latest().text(), "bonjour");
 
-        // Release: streaming -> finalizing with the partials carried over.
         let finalizing = streaming.release();
-        assert_eq!(finalizing.partials(), &[partial("bonjour")]);
+        assert_eq!(finalizing.latest().text(), "bonjour");
 
         // Esc during finalization: -> cancelled, partials dropped.
         let cancelled = finalizing.cancel();
         assert_eq!(cancelled, Cancelled);
+    }
+
+    #[test]
+    fn recording_on_final_returns_idle_with_the_transcript() {
+        let session = Session::new().hold();
+        let Session::Recording(recording) = session else {
+            panic!("hold from idle must start recording");
+        };
+        let (session, transcript) = recording.on_final(Transcript {
+            text: "Bonjour.".to_string(),
+        });
+        assert_eq!(session.state(), SessionState::Idle);
+        assert_eq!(transcript.text, "Bonjour.");
     }
 
     #[test]
