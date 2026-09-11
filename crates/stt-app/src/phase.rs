@@ -16,6 +16,24 @@ pub enum AppPhase {
     },
 }
 
+impl AppPhase {
+    pub fn prefs(&self) -> &Prefs {
+        match self {
+            Self::Onboarding { prefs, .. } | Self::Live { prefs } | Self::Refused { prefs, .. } => {
+                prefs
+            }
+        }
+    }
+
+    pub fn prefs_mut(&mut self) -> &mut Prefs {
+        match self {
+            Self::Onboarding { prefs, .. } | Self::Live { prefs } | Self::Refused { prefs, .. } => {
+                prefs
+            }
+        }
+    }
+}
+
 pub enum OnboardStatus {
     Idle,
     Fetching { last: Progress },
