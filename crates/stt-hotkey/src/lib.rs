@@ -13,6 +13,11 @@ mod x11;
 
 pub use stt_core::{BoxError, GlobalHotkey, HotkeyEvent};
 
+/// Grammar check without an OS handle: parse-only, for config validation.
+pub fn validate_shortcut(raw: &str) -> Result<(), HotkeyError> {
+    shortcut::Shortcut::parse(raw).map(|_| ())
+}
+
 #[derive(Debug)]
 pub enum HotkeyError {
     Unsupported(&'static str),

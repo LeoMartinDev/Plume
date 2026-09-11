@@ -1,0 +1,12 @@
+[package]
+name = "stt-session"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+stt-core = { path = "../stt-core" }
+stt-engine = { path = "../stt-engine" }
+stt-audio = { path = "../stt-audio" }
+stt-hotkey = { path = "../stt-hotkey" }
+stt-inject = { path = "../stt-inject" }
+stt-overlay = { path = "../stt-overlay" }
