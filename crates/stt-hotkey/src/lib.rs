@@ -13,11 +13,6 @@ mod x11;
 
 pub use stt_core::{BoxError, GlobalHotkey, HotkeyEvent};
 
-/// Grammar check without an OS handle: parse-only, for config validation.
-pub fn validate_shortcut(raw: &str) -> Result<(), HotkeyError> {
-    shortcut::Shortcut::parse(raw).map(|_| ())
-}
-
 #[derive(Debug)]
 pub enum HotkeyError {
     Unsupported(&'static str),
@@ -46,6 +41,13 @@ pub enum PlatformHotkey {
     Macos(macos::MacosHotkey),
     #[cfg(windows)]
     Windows(windows::WindowsHotkey),
+}
+
+/// Check a shortcut string against the `register` grammar without grabbing
+/// anything. Config boundaries call this so a bad chord fails before any OS
+/// handle exists.
+pub fn validate_shortcut(raw: &str) -> Result<(), HotkeyError> {
+    shortcut::Shortcut::parse(raw).map(|_| ())
 }
 
 pub fn global_hotkey() -> Result<PlatformHotkey, BoxError> {

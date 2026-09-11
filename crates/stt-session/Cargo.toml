@@ -7,6 +7,6 @@ edition = "2021"
 stt-core = { path = "../stt-core" }
 stt-engine = { path = "../stt-engine" }
 stt-audio = { path = "../stt-audio" }
-stt-hotkey = { path = "../stt-hotkey" }
 stt-inject = { path = "../stt-inject" }
+stt-hotkey = { path = "../stt-hotkey" }
 stt-overlay = { path = "../stt-overlay" }

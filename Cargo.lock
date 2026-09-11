@@ -5601,6 +5601,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stt-session"
+version = "0.1.0"
+dependencies = [
+ "stt-audio",
+ "stt-core",
+ "stt-engine",
+ "stt-hotkey",
+ "stt-inject",
+ "stt-overlay",
+]
+
+[[package]]
 name = "stt-shell"
 version = "0.1.0"
 dependencies = [

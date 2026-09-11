@@ -3,32 +3,39 @@ use std::sync::{mpsc, Arc, Mutex};
 use stt_audio::Mic;
 use stt_core::{AudioChunk, AudioStream};
 
-pub struct AudioGate {
+/// The engine's audio input for one session. Wraps the receiver side of a
+/// closeable channel as the `AudioStream` the engine expects. Yields
+/// `None` exactly when the pump closes: EOF the engine turns into `Final`.
+pub(crate) struct AudioGate {
     rx: mpsc::Receiver<AudioChunk>,
 }
 
 impl AudioGate {
-    pub fn into_audio_stream(self) -> AudioStream {
+    pub(crate) fn into_audio_stream(self) -> AudioStream {
         Box::new(self.rx.into_iter())
     }
 }
 
+/// The mic side of the gate. One sender is shared between the compositor's
+/// handle and the pump thread's clone, so `close` (or `Drop`) from either
+/// side ends the audio iterator. Idempotent by construction: send-after-close
+/// just fails and the pump exits.
 #[derive(Clone)]
-pub struct AudioPump {
+pub(crate) struct AudioPump {
     shared: Arc<Mutex<Option<mpsc::Sender<AudioChunk>>>>,
 }
 
 impl AudioPump {
-    pub(crate) fn send(&self, chunk: AudioChunk) -> bool {
-        let tx = self.shared.lock().expect("pump slot").clone();
-        match tx {
+    pub(crate) fn close(self) {
+        self.shared.lock().unwrap().take();
+    }
+
+    fn send(&self, chunk: AudioChunk) -> bool {
+        let slot = self.shared.lock().unwrap();
+        match slot.as_ref() {
             Some(tx) => tx.send(chunk).is_ok(),
             None => false,
         }
-    }
-
-    pub fn close(self) {
-        self.shared.lock().expect("pump slot").take();
     }
 }
 
@@ -40,29 +47,39 @@ impl Drop for AudioPump {
     }
 }
 
-pub fn open_gate() -> (AudioGate, AudioPump) {
-    let (tx, rx) = mpsc::channel();
-    (
-        AudioGate { rx },
-        AudioPump {
-            shared: Arc::new(Mutex::new(Some(tx))),
-        },
-    )
+/// Open both halves. The `Mic` moves into the pump thread (it is a
+/// blocking `recv` iterator; it can never live on the polling thread).
+pub(crate) fn open_gate(mic: Mic) -> (AudioGate, AudioPump, MicPump) {
+    let (gate, pump) = open_pair();
+    let mic_pump = MicPump {
+        mic,
+        pump: pump.clone(),
+    };
+    (gate, pump, mic_pump)
 }
 
-pub struct MicPump {
+fn open_pair() -> (AudioGate, AudioPump) {
+    let (tx, rx) = mpsc::channel();
+    let pump = AudioPump {
+        shared: Arc::new(Mutex::new(Some(tx))),
+    };
+    (AudioGate { rx }, pump)
+}
+
+/// Owns the mic until the scope spawns it. Exists so the pump thread's
+/// closure is one obvious line, not an inline future-leak.
+pub(crate) struct MicPump {
     mic: Mic,
     pump: AudioPump,
 }
 
 impl MicPump {
-    pub fn new(mic: Mic, pump: AudioPump) -> Self {
-        Self { mic, pump }
-    }
-
-    pub fn run(self) {
-        for chunk in self.mic {
-            if !self.pump.send(chunk) {
+    /// Pump body: forward until the mic ends or the gate closes.
+    /// Runs on its own thread inside the session scope.
+    pub(crate) fn run(self) {
+        let Self { mic, pump } = self;
+        for chunk in mic {
+            if !pump.send(chunk) {
                 break;
             }
         }
@@ -73,35 +90,34 @@ impl MicPump {
 mod tests {
     use super::*;
 
-    fn chunk(sample: f32) -> AudioChunk {
+    fn chunk(first: f32) -> AudioChunk {
         AudioChunk {
-            samples: vec![sample],
+            samples: vec![first, first + 1.0],
             sample_rate: 16_000,
         }
     }
 
     #[test]
-    fn closing_the_pump_yields_eof_after_queued_chunks() {
-        let (gate, pump) = open_gate();
-        let first = chunk(0.1);
-        let second = chunk(0.2);
-        assert!(pump.send(first.clone()));
-        assert!(pump.send(second.clone()));
+    fn closing_the_pump_ends_the_gate_after_queued_chunks() {
+        let (gate, pump) = open_pair();
+        let feeder = pump.clone();
+        let handle = std::thread::spawn(move || {
+            assert!(feeder.send(chunk(1.0)));
+            assert!(feeder.send(chunk(3.0)));
+            assert!(feeder.send(chunk(5.0)));
+        });
+        handle.join().unwrap();
+        let stale = pump.clone();
         pump.close();
-        let mut stream = gate.into_audio_stream();
-        assert_eq!(stream.next(), Some(first));
-        assert_eq!(stream.next(), Some(second));
-        assert_eq!(stream.next(), None);
+        assert!(!stale.send(chunk(7.0)));
+        let got: Vec<AudioChunk> = gate.into_audio_stream().collect();
+        assert_eq!(got, vec![chunk(1.0), chunk(3.0), chunk(5.0)]);
     }
 
     #[test]
-    fn dropping_the_pump_is_eof_and_send_after_close_fails() {
-        let (gate, pump) = open_gate();
-        let clone = pump.clone();
+    fn dropping_the_pump_ends_the_gate() {
+        let (gate, pump) = open_pair();
         drop(pump);
-        assert!(!clone.send(chunk(0.5)));
-        drop(clone);
-        let mut stream = gate.into_audio_stream();
-        assert_eq!(stream.next(), None);
+        assert!(gate.into_audio_stream().next().is_none());
     }
 }
