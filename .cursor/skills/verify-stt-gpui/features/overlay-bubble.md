@@ -31,7 +31,7 @@ Preconditions:
 ## Gotchas
 
 - `ffmpeg` x11grab frames are black on WSLg. Presence plus state is the proof.
-- gpui prefers Wayland when `WAYLAND_DISPLAY` is set. Leave it unset for this probe, matching `/tmp/gpui-probe/prove.sh`.
+- gpui prefers Wayland when `WAYLAND_DISPLAY` is set. Leave it unset for this probe so the X11 path is exercised.
 - `stt-shell` printing a version line is not the bubble.
 - Hold-to-talk is still unreachable. This window is not wired to a session loop.
 - A leftover window titled `stt-overlay` fails the presence test on purpose. Kill it first.
