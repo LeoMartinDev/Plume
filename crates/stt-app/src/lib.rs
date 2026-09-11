@@ -15,7 +15,11 @@ use crate::download::{DownloadEvent, PackStatus};
 use crate::lock::{AlreadyRunning, AppLock};
 use crate::phase::{AppPhase, OnboardStatus};
 use crate::prefs::{Prefs, PrefsLoad};
-use crate::settings::{open_settings, settings_window_set_phase};
+use crate::settings::{
+    open_settings, settings_window_prefs, settings_window_set_phase,
+    settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
+    settings_window_show_refused,
+};
 
 /// Product entry. Settings window first. Compositor starts after a proven pack.
 pub fn product_main() {
@@ -94,7 +98,7 @@ fn spawn_reconcile(cx: &mut App, prefs: Prefs, fetch_if_incomplete: bool) {
             }
         }
     });
-    drain_download(cx, prefs, rx);
+    drain_download(cx, rx);
 }
 
 enum DrainPoll {
@@ -113,7 +117,7 @@ fn poll_download(rx: &mpsc::Receiver<DownloadEvent>) -> DrainPoll {
     }
 }
 
-fn drain_download(cx: &mut App, prefs: Prefs, rx: mpsc::Receiver<DownloadEvent>) {
+fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
     cx.spawn(async move |cx| {
         log_line("stt-app: drain started");
         loop {
@@ -128,28 +132,11 @@ fn drain_download(cx: &mut App, prefs: Prefs, rx: mpsc::Receiver<DownloadEvent>)
                 log_line(format!("stt-app: drain events={}", batch.len()));
             }
             for event in batch {
-                let prefs = prefs.clone();
                 if cx
                     .update(|cx| match event {
-                        DownloadEvent::Progress(last) => settings_window_set_phase(
-                            cx,
-                            AppPhase::Onboarding {
-                                prefs,
-                                status: OnboardStatus::Fetching { last },
-                                warning: None,
-                            },
-                        ),
-                        DownloadEvent::Proven(engine) => go_live(cx, prefs, engine),
-                        DownloadEvent::Failed(err) => settings_window_set_phase(
-                            cx,
-                            AppPhase::Onboarding {
-                                prefs,
-                                status: OnboardStatus::Failed {
-                                    reason: err.to_string(),
-                                },
-                                warning: None,
-                            },
-                        ),
+                        DownloadEvent::Progress(last) => settings_window_show_progress(cx, last),
+                        DownloadEvent::Proven(engine) => go_live(cx, engine),
+                        DownloadEvent::Failed(err) => settings_window_show_fetch_failed(cx, err),
                     })
                     .is_err()
                 {
@@ -169,19 +156,13 @@ fn log_line(msg: impl std::fmt::Display) {
     let _ = std::io::Write::flush(&mut std::io::stderr());
 }
 
-fn go_live(cx: &mut App, prefs: Prefs, engine: Engine) {
+fn go_live(cx: &mut App, engine: Engine) {
     log_line("stt-app: go_live");
+    let Some(prefs) = settings_window_prefs(cx) else {
+        return;
+    };
     if let Err(err) = prefs::save(&prefs) {
-        settings_window_set_phase(
-            cx,
-            AppPhase::Onboarding {
-                prefs,
-                status: OnboardStatus::Failed {
-                    reason: err.to_string(),
-                },
-                warning: None,
-            },
-        );
+        settings_window_show_fetch_failed(cx, err);
         return;
     }
     let config = match stt_session::Config::from_prefs(
@@ -191,16 +172,7 @@ fn go_live(cx: &mut App, prefs: Prefs, engine: Engine) {
     ) {
         Ok(config) => config,
         Err(err) => {
-            settings_window_set_phase(
-                cx,
-                AppPhase::Onboarding {
-                    prefs,
-                    status: OnboardStatus::Failed {
-                        reason: err.to_string(),
-                    },
-                    warning: None,
-                },
-            );
+            settings_window_show_fetch_failed(cx, err);
             return;
         }
     };
@@ -209,17 +181,11 @@ fn go_live(cx: &mut App, prefs: Prefs, engine: Engine) {
         Ok(live) => {
             log_line("stt-app: compositor started");
             stt_overlay::attach(cx, live.bubbles);
-            settings_window_set_phase(cx, AppPhase::Live { prefs });
+            settings_window_show_live(cx);
         }
         Err(err) => {
             log_line(format!("stt-app: compositor refused: {err}"));
-            settings_window_set_phase(
-                cx,
-                AppPhase::Refused {
-                    prefs,
-                    reason: err.to_string(),
-                },
-            );
+            settings_window_show_refused(cx, err.to_string());
         }
     }
 }
