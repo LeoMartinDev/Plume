@@ -182,3 +182,6 @@ mod tests {
         assert_eq!(char_to_keysym('\u{7}'), None);
     }
 }
+
+#[cfg(test)]
+mod loopback;
