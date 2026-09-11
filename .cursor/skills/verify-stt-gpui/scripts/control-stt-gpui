@@ -41,6 +41,12 @@ die() {
   exit 1
 }
 
+link_xkbcommon_x11() {
+  if [[ -f "$HOME/.local/lib/stt-build/libxkbcommon-x11.so" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -L $HOME/.local/lib/stt-build"
+  fi
+}
+
 run_id_from_env_or_current() {
   if [[ -n "${STT_GPUI_VERIFY_RUN_ID:-}" ]]; then
     printf '%s\n' "$STT_GPUI_VERIFY_RUN_ID"
@@ -273,6 +279,7 @@ cmd_overlay() {
 
   unset WAYLAND_DISPLAY || true
   unset ZED_HEADLESS || true
+  link_xkbcommon_x11
 
   echo "building and testing stt-overlay in $TARGET_DIR"
   local code
@@ -417,11 +424,7 @@ cmd_session() {
   meta=$art/meta.txt
   combined=$art/transcript.txt
 
-  # Host-local link path for -lxkbcommon-x11 where the dev package is absent.
-  # Never committed; CI installs libxkbcommon-x11-dev instead.
-  if [[ -f "$HOME/.local/lib/stt-build/libxkbcommon-x11.so" ]]; then
-    export RUSTFLAGS="${RUSTFLAGS:-} -L $HOME/.local/lib/stt-build"
-  fi
+  link_xkbcommon_x11
 
   echo "building and testing stt-session in $TARGET_DIR"
   local code

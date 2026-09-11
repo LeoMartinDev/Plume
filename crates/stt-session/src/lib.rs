@@ -50,12 +50,9 @@ impl std::error::Error for StartupError {
     }
 }
 
-/// Own the whole topology. Spawns the compositor worker, then runs the
-/// GPUI overlay on the CALLER's thread (must be main). Startup order is
-/// load-bearing: model -> engine -> injector -> hold chord; the window
-/// opens LAST so a broken backend fails on stderr, not in a dead bubble.
-/// Returns when the overlay window closes. The process then exits and
-/// takes the worker with it.
+/// Spawn the compositor worker, then run the GPUI overlay on the caller
+/// thread, which must be main. Load the model, engine, injector, and hold
+/// chord before the window opens. Returns when the overlay window closes.
 pub fn run(config: Config) -> Result<(), StartupError> {
     let dir = ModelDir::open(&config.model_dir).map_err(StartupError::model)?;
     let engine = Engine::open(dir).map_err(StartupError::model)?;

@@ -61,9 +61,10 @@ fn force_x11_when_display_is_set() {
         return;
     }
     // gpui 0.2.2 picks Wayland whenever WAYLAND_DISPLAY is set, even on WSLg
-    // where the working path is X11. Callers also unset these; this is the
-    // last line of defense before Application::new.
-    // SAFETY: run() calls this from main before gpui starts threads.
+    // where the working path is X11.
+    // SAFETY: this runs on the OS main thread before gpui starts. The compositor
+    // worker may already exist; it does not read WAYLAND_DISPLAY or ZED_HEADLESS
+    // after Chord::bind and NativeInjector::connect.
     unsafe {
         std::env::remove_var("WAYLAND_DISPLAY");
         std::env::remove_var("ZED_HEADLESS");

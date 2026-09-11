@@ -9,15 +9,8 @@ use crate::capture::{self, AudioPump};
 use crate::chords::{CancelGuard, Chord, ChordSpec};
 use crate::target::{Target, TargetError};
 
-/// Chord poll quantum while live. Hotkey handles are non-blocking;
-/// hypotheses arrive over a channel with the same timeout so one loop
-/// watches keys and engine together with no async runtime.
 pub(crate) const POLL_QUANTUM: Duration = Duration::from_millis(5);
 
-/// A rendered bubble pushed to the GPUI thread. The projection happens
-/// HERE (`Bubble::from_dictation`), at the send boundary: the window
-/// thread receives values, never a `Dictation` reference, so the overlay
-/// cannot become a second state machine even by accident.
 pub(crate) struct BubbleSink {
     tx: mpsc::Sender<Bubble>,
 }
@@ -32,9 +25,6 @@ impl BubbleSink {
     }
 }
 
-/// Cleanup-LLM extension point (v1: `NoopPostpass`). Runs between the
-/// final transcript and the last inject as `replace_last(raw, cleaned)`.
-/// Local-only like everything else; settings UI decides enablement later.
 pub(crate) trait Postpass {
     fn clean(&self, transcript: &str) -> String;
 }
@@ -47,15 +37,11 @@ impl Postpass for NoopPostpass {
     }
 }
 
-/// How a session ended. `Cancelled` carries no text by construction:
-/// the partials died with the consumed `Dictation`.
 #[derive(Debug)]
 pub(crate) enum Outcome {
     Committed(String),
     EmptyRelease,
     Cancelled,
-    /// Engine or injector failed mid-session. Already-injected text was
-    /// retracted best-effort; the error is reported, never injected.
     Aborted(String),
 }
 
@@ -64,9 +50,6 @@ enum Fold {
     Done(Outcome),
 }
 
-/// The hypothesis->`Dictation`->`Target` fold the live loop performs, one
-/// hypothesis at a time. The `#[cfg(test)]` seams drive this same fold
-/// with scripted hypotheses, so tests exercise the exact worker logic.
 fn fold_hypothesis<I: TextInjector, P: Postpass>(
     dictation: &mut Dictation,
     target: &mut Target<I>,
@@ -75,8 +58,6 @@ fn fold_hypothesis<I: TextInjector, P: Postpass>(
 ) -> Fold {
     let step = match dictation.on_hypothesis(hyp) {
         Ok(step) => step,
-        // on_hypothesis only fails while Idle; after hold that means the key
-        // went up before any partial arrived, so this is an empty release.
         Err(_) => return Fold::Done(Outcome::EmptyRelease),
     };
     if let Some(edit) = &step.edit {
@@ -109,9 +90,6 @@ fn describe_target_error(err: &TargetError) -> String {
     format!("target: {err}")
 }
 
-/// Idle compositor: owns every persistent handle (hold chord, engine,
-/// injector ledger, bubble sink). `run` never returns; each session is a
-/// fresh `Dictation` plus a fresh thread scope inside `session_once`.
 pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     hold: Chord,
     cancel_spec: ChordSpec,
@@ -139,10 +117,6 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
 }
 
 impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
-    /// Idle loop. The hold chord is the ONLY thing polled here, so hold
-    /// outside Idle is not a checked no-op but an unrepresentable event:
-    /// while live, `Pressed` is never read (only the hold's `Released`,
-    /// the cancel guard, and hypotheses).
     pub(crate) fn run(mut self) -> ! {
         loop {
             match self.hold.next_event() {
@@ -165,10 +139,6 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
         }
     }
 
-    /// One live session: exactly one `Dictation`, one engine `stream`
-    /// call, one mic, one cancel guard. All four die here. The scope
-    /// joins both worker threads before returning, so no hypothesis,
-    /// chunk, or grab outlives the session. Next session starts clean.
     fn session_once(&mut self) -> Outcome {
         let mut dictation = Dictation::new();
         dictation.hold();
@@ -207,9 +177,6 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
         outcome
     }
 
-    /// The live poll: keys and hypotheses in one loop. Consumes the pump
-    /// (closing the gate -> EOF -> engine `Final`) on release AND on
-    /// cancel, and on every terminal outcome. The gate has no third state.
     fn live_loop(
         hold: &mut Chord,
         target: &mut Target<I>,
@@ -271,9 +238,6 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
     }
 }
 
-/// Pure-ish test seam: the hypothesis->`Dictation`->`Target` folding the
-/// live loop performs, minus threads and keys. Unit-testable with a
-/// scripted `Vec<Hypothesis>` and a recording injector.
 #[cfg(test)]
 pub(crate) fn drive_hypotheses<I: TextInjector, P: Postpass>(
     dictation: &mut Dictation,
@@ -290,7 +254,6 @@ pub(crate) fn drive_hypotheses<I: TextInjector, P: Postpass>(
     Outcome::Aborted("hypotheses ended without a final transcript".to_string())
 }
 
-/// Cancel path as a testable unit: consume, retract, report. No text out.
 #[cfg(test)]
 pub(crate) fn drive_cancel<I: TextInjector>(
     dictation: &mut Dictation,

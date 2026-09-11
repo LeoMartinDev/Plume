@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use crate::chords::ChordSpec;
 
-/// Validated startup configuration. No strings-that-are-chords and no
-/// unset model dir escape this module.
+/// Hold chord, cancel chord, and model pack directory from the environment.
 pub struct Config {
     pub(crate) hold: ChordSpec,
     pub(crate) cancel: ChordSpec,

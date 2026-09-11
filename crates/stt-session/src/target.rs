@@ -1,12 +1,7 @@
 use stt_core::{BoxError, Edit, TextInjector};
 
-/// Owns the answer to "what did we put in the focused app?" so cancel
-/// can retract it without asking `Dictation` (which deliberately drops
-/// the partial on cancel). Per-actor state: the injector's ledger is the
-/// merge point, not a second copy of session state.
 pub(crate) struct Target<I: TextInjector> {
     injector: I,
-    /// Exact text currently attributed to this session in the target app.
     inserted: String,
 }
 
@@ -18,9 +13,6 @@ impl<I: TextInjector> Target<I> {
         }
     }
 
-    /// Apply one `Step.edit`, updating the ledger. `Insert` appends;
-    /// `Replace{old, new}` requires `inserted` to end with `old` and
-    /// swaps the suffix. A mismatch is a fatal desync, not a guess.
     pub(crate) fn apply_edit(&mut self, edit: &Edit) -> Result<(), TargetError> {
         match edit {
             Edit::Insert(text) => {
@@ -43,11 +35,6 @@ impl<I: TextInjector> Target<I> {
         Ok(())
     }
 
-    /// Best-effort retract for the cancel path: backspace exactly what
-    /// this session inserted. Implemented as `replace_last(inserted, "")`
-    /// so no injector change is needed. Where the target app disallows it,
-    /// the backspaces land nowhere: that IS the spec's "where the target
-    /// app allows it".
     pub(crate) fn retract(&mut self) -> Result<(), BoxError> {
         if self.inserted.is_empty() {
             return Ok(());
@@ -56,14 +43,11 @@ impl<I: TextInjector> Target<I> {
         self.injector.replace_last(&inserted, "")
     }
 
-    /// The ledger, for tests.
     #[cfg(test)]
     pub(crate) fn inserted(&self) -> &str {
         &self.inserted
     }
 
-    /// Forget the ledger between sessions. Called exactly once per
-    /// settle; a session never inherits another session's text.
     pub(crate) fn reset(&mut self) {
         self.inserted.clear();
     }
@@ -78,11 +62,7 @@ impl<I: TextInjector> Target<I> {
 
 #[derive(Debug)]
 pub(crate) enum TargetError {
-    /// The app moved under us (or an earlier inject silently failed).
-    /// Fatal for this session: cancel, retract what we can, settle.
-    Desync {
-        expected_suffix: String,
-    },
+    Desync { expected_suffix: String },
     Inject(BoxError),
 }
 
