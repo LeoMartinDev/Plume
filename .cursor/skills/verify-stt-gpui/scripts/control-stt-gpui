@@ -24,6 +24,7 @@ Commands:
   doctor     Read-only health check for the launched instance.
   cli [-- <args>]
              Run the built stt-shell binary. Extra args are forwarded.
+  overlay    Build stt-overlay, run bubble model tests, prove the X11 window.
   cleanup    Remove the run directory. Leaves evidence on disk.
 
 Environment:
@@ -77,6 +78,14 @@ expected_version() {
   printf '%s\n' "$version"
 }
 
+overlay_from_crate() {
+  if [[ -f "$REPO_ROOT/crates/stt-overlay/Cargo.toml" ]]; then
+    printf 'present\n'
+  else
+    printf 'absent\n'
+  fi
+}
+
 cmd_launch() {
   local run_id
   if [[ -n "${STT_GPUI_VERIFY_RUN_ID:-}" ]]; then
@@ -85,13 +94,14 @@ cmd_launch() {
     run_id=$(date +%Y%m%dT%H%M%S)-$$
   fi
 
-  local run_dir target artifacts binary version
+  local run_dir target artifacts binary version overlay
   run_dir=$(run_dir_for "$run_id")
   target=$run_dir/target
   artifacts=$ARTIFACTS_ROOT/$run_id
   mkdir -p "$target" "$artifacts" "$run_dir"
 
   version=$(expected_version)
+  overlay=$(overlay_from_crate)
 
   echo "building stt-shell into $target"
   CARGO_TARGET_DIR=$target cargo build -p stt-shell --manifest-path "$REPO_ROOT/Cargo.toml"
@@ -120,7 +130,7 @@ BINARY=$binary
 VERSION=$version
 ARTIFACTS=$artifacts
 SURFACE=cli
-OVERLAY=absent
+OVERLAY=$overlay
 HOTKEY=absent
 EOF
 
@@ -131,7 +141,7 @@ EOF
   echo "version=$version"
   echo "artifacts=$artifacts"
   echo "surface=cli"
-  echo "overlay=absent"
+  echo "overlay=$overlay"
 }
 
 cmd_doctor() {
@@ -166,6 +176,10 @@ cmd_doctor() {
 
   [[ "$actual_code" -eq 0 ]] || die "binary exited $actual_code"
   [[ "$stdout_text" == "stt-shell $expected" ]] || die "stdout was $(printf '%q' "$stdout_text"), expected stt-shell $expected"
+
+  local expected_overlay
+  expected_overlay=$(overlay_from_crate)
+  [[ "$OVERLAY" == "$expected_overlay" ]] || die "state overlay $OVERLAY does not match crate $expected_overlay"
 
   echo "ok cargo=$(command -v cargo)"
   echo "ok rustc=$(command -v rustc)"
@@ -227,6 +241,153 @@ cmd_cli() {
   return "$code"
 }
 
+cmd_overlay() {
+  local run_id
+  run_id=$(run_id_from_env_or_current)
+  load_state "$run_id"
+  [[ -f "$REPO_ROOT/crates/stt-overlay/Cargo.toml" ]] || die "missing $REPO_ROOT/crates/stt-overlay/Cargo.toml"
+  [[ "$OVERLAY" == "present" ]] || die "state overlay=$OVERLAY. Relaunch after adding crates/stt-overlay."
+
+  mkdir -p "$ARTIFACTS"
+  local stamp art out err meta combined bin
+  stamp=$(date +%Y%m%dT%H%M%S)-$$
+  art=$ARTIFACTS/overlay-$stamp
+  mkdir -p "$art"
+  out=$art/cargo-test.stdout.txt
+  err=$art/cargo-test.stderr.txt
+  meta=$art/meta.txt
+  combined=$art/transcript.txt
+
+  unset WAYLAND_DISPLAY || true
+  unset ZED_HEADLESS || true
+
+  echo "building and testing stt-overlay in $TARGET_DIR"
+  local code
+  set +e
+  CARGO_TARGET_DIR=$TARGET_DIR cargo test -p stt-overlay --manifest-path "$REPO_ROOT/Cargo.toml" -- --nocapture >"$out" 2>"$err"
+  code=$?
+  set -e
+
+  {
+    echo "command: CARGO_TARGET_DIR=$TARGET_DIR cargo test -p stt-overlay"
+    echo "exit: $code"
+    echo "display: ${DISPLAY-<unset>}"
+    echo "wayland_display: unset"
+  } >"$meta"
+
+  if [[ "$code" -ne 0 ]]; then
+    {
+      echo "\$ cargo test -p stt-overlay"
+      echo "--- stdout ---"
+      cat "$out"
+      echo "--- stderr ---"
+      cat "$err"
+      echo "--- exit $code ---"
+    } >"$combined"
+    echo "exit=$code"
+    echo "transcript_path=$combined"
+    echo "--- stdout ---"
+    cat "$out"
+    echo "--- stderr ---"
+    cat "$err"
+    return "$code"
+  fi
+
+  bin=$TARGET_DIR/debug/stt-overlay
+  if [[ ! -x "$bin" && -x "$TARGET_DIR/debug/stt-overlay.exe" ]]; then
+    bin=$TARGET_DIR/debug/stt-overlay.exe
+  fi
+  [[ -x "$bin" ]] || die "overlay binary missing at $TARGET_DIR/debug/stt-overlay"
+
+  if [[ -z "${DISPLAY:-}" ]]; then
+    echo "skip: no X11 DISPLAY; overlay window presence not proven" | tee "$art/skip.txt"
+    {
+      echo "\$ cargo test -p stt-overlay"
+      echo "--- stdout ---"
+      cat "$out"
+      echo "--- stderr ---"
+      cat "$err"
+      echo "--- skip: no X11 DISPLAY ---"
+      echo "--- exit 0 ---"
+    } >"$combined"
+    echo "exit=0"
+    echo "transcript_path=$combined"
+    echo "artifacts=$art"
+    return 0
+  fi
+
+  DISPLAY="$DISPLAY" xwininfo -name stt-overlay >"$art/xwininfo-before.txt" 2>&1 || true
+  : >"$art/overlay.stdout.txt"
+  : >"$art/overlay.stderr.txt"
+  DISPLAY="$DISPLAY" "$bin" >"$art/overlay.stdout.txt" 2>"$art/overlay.stderr.txt" &
+  local pid=$!
+  echo "$pid" >"$art/overlay.pid"
+
+  local opened=0
+  local i
+  for i in $(seq 1 40); do
+    if grep -q 'stt-overlay: window opened' "$art/overlay.stderr.txt" 2>/dev/null; then
+      opened=1
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
+
+  local xwin_code
+  set +e
+  DISPLAY="$DISPLAY" xwininfo -name stt-overlay >"$art/xwininfo-name.txt" 2>&1
+  xwin_code=$?
+  set -e
+
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    sleep 0.5
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+
+  {
+    echo "log_opened=$opened"
+    echo "xwininfo_exit=$xwin_code"
+    echo "pid=$pid"
+  } >>"$meta"
+
+  {
+    echo "\$ cargo test -p stt-overlay"
+    echo "--- stdout ---"
+    cat "$out"
+    echo "--- stderr ---"
+    cat "$err"
+    echo "--- xwininfo -name stt-overlay ---"
+    cat "$art/xwininfo-name.txt"
+    echo "--- overlay stderr ---"
+    cat "$art/overlay.stderr.txt"
+    echo "--- exit 0 ---"
+  } >"$combined"
+
+  if [[ "$xwin_code" -ne 0 ]] || ! grep -q 'Map State: IsViewable' "$art/xwininfo-name.txt"; then
+    echo "error: overlay window not mapped" >&2
+    echo "exit=1"
+    echo "transcript_path=$combined"
+    echo "--- xwininfo ---"
+    cat "$art/xwininfo-name.txt"
+    echo "--- overlay stderr ---"
+    cat "$art/overlay.stderr.txt"
+    return 1
+  fi
+
+  echo "exit=0"
+  echo "transcript_path=$combined"
+  echo "xwininfo_path=$art/xwininfo-name.txt"
+  echo "artifacts=$art"
+  echo "--- xwininfo ---"
+  cat "$art/xwininfo-name.txt"
+  return 0
+}
+
 cmd_cleanup() {
   local run_id
   if [[ -n "${STT_GPUI_VERIFY_RUN_ID:-}" ]]; then
@@ -268,6 +429,7 @@ main() {
       fi
       cmd_cli "$@"
       ;;
+    overlay) cmd_overlay "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
     --help|-h|help|"") usage ;;
     *)

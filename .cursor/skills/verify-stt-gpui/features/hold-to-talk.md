@@ -19,16 +19,18 @@ Hold-to-talk is the default dictation gesture. The user holds a global shortcut,
 
 Preconditions:
 
-- `control-stt-gpui doctor` reports `overlay=absent` and `hotkey=absent` on this checkout.
-- Do not start this recipe expecting a bubble.
+- `control-stt-gpui doctor` reports `overlay=present` and `hotkey=absent` on this checkout.
+- The overlay window exists. It is not wired to a hold shortcut or a microphone.
+- Do not start this recipe expecting a live session.
 
-- **Probe the binary.** Try to start a session from the only program that exists. Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. No overlay appears. No recording starts.
+- **Probe the binary.** Try to start a session from the CLI. Run `control-stt-gpui cli`. Exit code `0`. Stdout is the version line. No recording starts.
 - **Probe flags.** Run `control-stt-gpui cli -- --help`. The same version line. There is no hold, record, or dictate subcommand.
-- **Report.** Mark `hold-to-talk` unreachable. Unmet preconditions are `overlay-not-shipped` and `hotkey-not-shipped`. Keep the transcripts as the probe, not as a pass.
+- **Report.** Mark `hold-to-talk` unreachable. Unmet preconditions are `hotkey-not-shipped` and `overlay-not-wired-to-session`. Keep the transcripts as the probe, not as a pass.
 
 ## Gotchas
 
 - `cargo test -p stt-core` exercises a library state machine. That is not hold-to-talk.
-- Do not screenshot a desktop and call it the bubble.
+- `control-stt-gpui overlay` proves the bubble window. That is not hold-to-talk.
+- Do not screenshot a desktop and call it a hold session.
 - Do not send `Ctrl+Space` to the terminal running the harness and call that a global hotkey.
-- When doctor later reports `overlay=present`, this file is stale. Run `/maintain-verification-skill` before claiming a pass.
+- When doctor later reports `hotkey=present`, this file is stale. Run `/maintain-verification-skill` before claiming a pass.
