@@ -88,7 +88,7 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
                         is_selected,
                         |el| {
                             el.bg(tokens.elevated)
-                                .text_color(tokens.accent)
+                                .text_color(tokens.text)
                                 .font_weight(FontWeight::MEDIUM)
                         },
                         |el| {
