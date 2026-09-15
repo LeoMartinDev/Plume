@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, App, ClickEvent, Context, ElementId, FontWeight, IntoElement, RenderOnce,
-    SharedString, Window,
+    div, prelude::*, px, AnyElement, App, ClickEvent, Context, ElementId, FontWeight, IntoElement,
+    RenderOnce, SharedString, Window,
 };
 
 use crate::tokens::Tokens;
@@ -105,6 +105,56 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
 }
 
 #[derive(IntoElement)]
+pub struct ListGroup {
+    tokens: Tokens,
+    children: Vec<AnyElement>,
+}
+
+impl ListGroup {
+    pub fn new(tokens: Tokens) -> Self {
+        ListGroup {
+            tokens,
+            children: Vec::new(),
+        }
+    }
+}
+
+impl ParentElement for ListGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements);
+    }
+}
+
+impl RenderOnce for ListGroup {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let tokens = self.tokens;
+        let mut items = Vec::new();
+        for (i, child) in self.children.into_iter().enumerate() {
+            if i > 0 {
+                items.push(
+                    div()
+                        .w_full()
+                        .h(px(1.))
+                        .bg(tokens.hairline)
+                        .into_any_element(),
+                );
+            }
+            items.push(child);
+        }
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .rounded_md()
+            .overflow_hidden()
+            .border_1()
+            .border_color(tokens.hairline)
+            .bg(tokens.elevated)
+            .children(items)
+    }
+}
+
+#[derive(IntoElement)]
 pub struct InsetRow {
     tokens: Tokens,
     id: ElementId,
@@ -159,10 +209,7 @@ impl RenderOnce for InsetRow {
             .id(self.id)
             .w_full()
             .px_3()
-            .py_3()
-            .rounded_md()
-            .border_1()
-            .border_color(self.tokens.hairline)
+            .py_2()
             .flex()
             .flex_col()
             .gap_1()
@@ -179,7 +226,12 @@ impl RenderOnce for InsetRow {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(div().text_color(self.tokens.text).child(self.title))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(self.tokens.text)
+                            .child(self.title),
+                    )
                     .child(
                         div()
                             .text_xs()

@@ -6,7 +6,7 @@ use gpui::{
     div, prelude::*, px, size, App, Bounds, Context, SharedString, Subscription, TitlebarOptions,
     Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
-use stt_ui::{AccentButton, InsetRow, Palette, Segment, Segmented, Tokens};
+use stt_ui::{AccentButton, InsetRow, ListGroup, Palette, Segment, Segmented, Tokens};
 
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::{AppearancePref, PackId, Prefs, Scheme};
@@ -236,32 +236,35 @@ impl Render for SettingsView {
             )
             .child(appearance_group(prefs.appearance(), tokens, cx))
             .child(
-                InsetRow::new(tokens, PackId::Light.as_str(), "Nemotron 0.6B INT4")
-                    .meta("pinned")
-                    .detail("About 800 MB.")
-                    .selected(prefs.pack == PackId::Light)
-                    .on_click(cx, |this, cx| match &this.phase {
-                        AppPhase::Live { .. }
-                        | AppPhase::Onboarding {
-                            status: OnboardStatus::Fetching { .. },
-                            ..
-                        } => {}
-                        AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
-                            let mut prefs = this.phase.prefs().clone();
-                            prefs.pack = PackId::Light;
-                            crate::begin_pack(cx, prefs);
-                        }
-                    }),
-            )
-            .child(
-                InsetRow::new(tokens, PackId::Medium.as_str(), "Medium")
-                    .meta("not pinned")
-                    .detail("Visible until a snapshot survives Engine::open."),
-            )
-            .child(
-                InsetRow::new(tokens, PackId::Large.as_str(), "Large")
-                    .meta("not pinned")
-                    .detail("Visible until a snapshot survives Engine::open."),
+                ListGroup::new(tokens)
+                    .child(
+                        InsetRow::new(tokens, PackId::Light.as_str(), "Nemotron 0.6B INT4")
+                            .meta("pinned")
+                            .detail("About 800 MB.")
+                            .selected(prefs.pack == PackId::Light)
+                            .on_click(cx, |this, cx| match &this.phase {
+                                AppPhase::Live { .. }
+                                | AppPhase::Onboarding {
+                                    status: OnboardStatus::Fetching { .. },
+                                    ..
+                                } => {}
+                                AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
+                                    let mut prefs = this.phase.prefs().clone();
+                                    prefs.pack = PackId::Light;
+                                    crate::begin_pack(cx, prefs);
+                                }
+                            }),
+                    )
+                    .child(
+                        InsetRow::new(tokens, PackId::Medium.as_str(), "Medium")
+                            .meta("not pinned")
+                            .detail("Visible until a snapshot survives Engine::open."),
+                    )
+                    .child(
+                        InsetRow::new(tokens, PackId::Large.as_str(), "Large")
+                            .meta("not pinned")
+                            .detail("Visible until a snapshot survives Engine::open."),
+                    ),
             )
             .child(
                 div()
