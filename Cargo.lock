@@ -5592,6 +5592,7 @@ dependencies = [
  "stt-engine",
  "stt-overlay",
  "stt-session",
+ "stt-ui",
  "toml 0.8.23",
  "ureq",
 ]
@@ -5645,6 +5646,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "stt-core",
+ "stt-ui",
 ]
 
 [[package]]
@@ -5665,6 +5667,13 @@ version = "0.1.0"
 dependencies = [
  "stt-core",
  "stt-engine",
+]
+
+[[package]]
+name = "stt-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]

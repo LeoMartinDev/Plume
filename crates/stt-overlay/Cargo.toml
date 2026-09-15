@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 stt-core = { path = "../stt-core" }
+stt-ui = { path = "../stt-ui" }
 gpui = "=0.2.2"
