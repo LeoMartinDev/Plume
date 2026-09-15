@@ -3,10 +3,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui::{
-    div, point, prelude::*, px, rgb, size, App, Application, AsyncApp, Bounds, Context, Pixels,
-    Size, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    point, prelude::*, px, size, App, Application, AsyncApp, Bounds, Context, Pixels, Size,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 use stt_core::Dictation;
+use stt_ui::{BubbleFrame, Palette, Tokens};
 
 use crate::Bubble;
 
@@ -17,23 +18,13 @@ struct BubbleView {
 }
 
 impl Render for BubbleView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .size_full()
-            .bg(rgb(0x1e1e1e))
-            .text_color(rgb(0xf2f2f2))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x9cdcfe))
-                    .child(self.bubble.state().to_string()),
-            )
-            .child(div().text_sm().child(self.bubble.text().to_string()))
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let tokens = Tokens::new(Palette::from_window(window));
+        BubbleFrame::new(
+            tokens,
+            self.bubble.state().to_string(),
+            self.bubble.text().to_string(),
+        )
     }
 }
 
