@@ -68,39 +68,41 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let tokens = self.tokens;
         let selected = self.selected;
-        div()
-            .flex()
-            .flex_row()
-            .rounded_md()
-            .overflow_hidden()
-            .border_1()
-            .border_color(tokens.hairline)
-            .bg(tokens.fill)
-            .children(self.segments.into_iter().map(move |segment| {
-                let is_selected = segment.value == selected;
-                div()
-                    .id(segment.id)
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .when_else(
-                        is_selected,
-                        |el| {
-                            el.bg(tokens.elevated)
-                                .text_color(tokens.text)
-                                .font_weight(FontWeight::MEDIUM)
-                        },
-                        |el| {
-                            el.text_color(tokens.text)
-                                .hover(|style| style.bg(tokens.fill_hover))
-                                .active(|style| style.bg(tokens.fill))
-                        },
-                    )
-                    .when_some(segment.on_click, |el, on_click| {
-                        el.cursor_pointer().on_click(on_click)
-                    })
-                    .child(segment.label)
-            }))
+        div().flex().flex_row().child(
+            div()
+                .flex()
+                .flex_row()
+                .rounded_md()
+                .overflow_hidden()
+                .border_1()
+                .border_color(tokens.hairline)
+                .bg(tokens.fill)
+                .children(self.segments.into_iter().map(move |segment| {
+                    let is_selected = segment.value == selected;
+                    div()
+                        .id(segment.id)
+                        .px_2()
+                        .py_1()
+                        .text_sm()
+                        .when_else(
+                            is_selected,
+                            |el| {
+                                el.bg(tokens.elevated)
+                                    .text_color(tokens.text)
+                                    .font_weight(FontWeight::MEDIUM)
+                            },
+                            |el| {
+                                el.text_color(tokens.text)
+                                    .hover(|style| style.bg(tokens.fill_hover))
+                                    .active(|style| style.bg(tokens.fill))
+                            },
+                        )
+                        .when_some(segment.on_click, |el, on_click| {
+                            el.cursor_pointer().on_click(on_click)
+                        })
+                        .child(segment.label)
+                })),
+        )
     }
 }
 
