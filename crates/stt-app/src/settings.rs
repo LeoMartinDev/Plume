@@ -76,7 +76,7 @@ impl SettingsView {
 }
 
 pub fn open_settings(cx: &mut App, phase: AppPhase) {
-    let bounds = Bounds::centered(None, size(px(520.), px(560.)), cx);
+    let bounds = Bounds::centered(None, size(px(520.), px(640.)), cx);
     let handle = cx
         .open_window(
             WindowOptions {

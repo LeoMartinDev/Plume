@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, rgb, Div, Rgba, Window, WindowAppearance};
+use gpui::{div, prelude::*, rgb, Div, Rgba, Stateful, Window, WindowAppearance};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Palette {
@@ -63,11 +63,13 @@ impl Tokens {
         }
     }
 
-    pub fn page(self) -> Div {
+    pub fn page(self) -> Stateful<Div> {
         div()
+            .id("settings-page")
             .flex()
             .flex_col()
             .size_full()
+            .overflow_y_scroll()
             .bg(self.canvas)
             .text_color(self.text)
             .px_6()
