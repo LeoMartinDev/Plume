@@ -3,10 +3,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Bounds, Context, Rgba, SharedString, Subscription,
-    TitlebarOptions, Window, WindowAppearance, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions,
+    div, prelude::*, px, size, App, Bounds, Context, SharedString, Subscription, TitlebarOptions,
+    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
+use stt_ui::{AccentButton, InsetRow, Palette, Segment, Segmented, Tokens};
 
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::{AppearancePref, PackId, Prefs, Scheme};
@@ -20,50 +20,6 @@ const APPEARANCE_SEGMENTS: [(AppearancePref, &str); 3] = [
     (AppearancePref::Fixed(Scheme::Dark), "Dark"),
     (AppearancePref::Auto, "Auto"),
 ];
-
-#[derive(Clone, Copy)]
-struct Theme {
-    canvas: Rgba,
-    text: Rgba,
-    muted: Rgba,
-    hairline: Rgba,
-    fill: Rgba,
-    accent: Rgba,
-}
-
-impl Theme {
-    fn resolve(pref: AppearancePref, os: WindowAppearance) -> Self {
-        Self::for_scheme(pref.resolve(scheme_from_window(os)))
-    }
-
-    fn for_scheme(scheme: Scheme) -> Self {
-        match scheme {
-            Scheme::Light => Theme {
-                canvas: rgb(0xffffff),
-                text: rgb(0x141414),
-                muted: rgb(0x6b6b6b),
-                hairline: rgb(0xe5e5e5),
-                fill: rgb(0xf0f0f0),
-                accent: rgb(0x3b6dff),
-            },
-            Scheme::Dark => Theme {
-                canvas: rgb(0x141414),
-                text: rgb(0xededed),
-                muted: rgb(0x8a8a8a),
-                hairline: rgb(0x2a2a2a),
-                fill: rgb(0x1e1e1e),
-                accent: rgb(0x3b6dff),
-            },
-        }
-    }
-}
-
-fn scheme_from_window(os: WindowAppearance) -> Scheme {
-    match os {
-        WindowAppearance::Light | WindowAppearance::VibrantLight => Scheme::Light,
-        WindowAppearance::Dark | WindowAppearance::VibrantDark => Scheme::Dark,
-    }
-}
 
 pub struct SettingsView {
     phase: AppPhase,
@@ -219,7 +175,11 @@ fn print_opened_line() {
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prefs = self.phase.prefs().clone();
-        let theme = Theme::resolve(prefs.appearance(), window.appearance());
+        let tokens = Tokens::new(match prefs.appearance() {
+            AppearancePref::Fixed(Scheme::Light) => Palette::Light,
+            AppearancePref::Fixed(Scheme::Dark) => Palette::Dark,
+            AppearancePref::Auto => Palette::from_window(window),
+        });
         let warning = match &self.phase {
             AppPhase::Onboarding { warning, .. } => warning.clone(),
             AppPhase::Refused { reason, .. } => Some(reason.clone()),
@@ -242,26 +202,19 @@ impl Render for SettingsView {
             ),
         };
 
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(theme.canvas)
-            .text_color(theme.text)
-            .px_6()
-            .py_5()
-            .gap_4()
+        tokens
+            .page()
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_sm().text_color(theme.muted).child("stt"))
+                    .child(div().text_sm().text_color(tokens.muted).child("stt"))
                     .child(div().text_xl().child("Dictation on this machine"))
                     .child(
                         div()
                             .text_sm()
-                            .text_color(theme.muted)
+                            .text_color(tokens.muted)
                             .child("Audio never leaves the computer."),
                     ),
             )
@@ -270,45 +223,46 @@ impl Render for SettingsView {
                     .px_3()
                     .py_2()
                     .border_1()
-                    .border_color(theme.hairline)
-                    .text_color(theme.muted)
+                    .border_color(tokens.hairline)
+                    .text_color(tokens.muted)
                     .text_sm()
                     .child(text)
             }))
-            .child(div().text_sm().text_color(theme.muted).child(status_line))
+            .child(div().text_sm().text_color(tokens.muted).child(status_line))
             .children(
                 self.save_error
                     .clone()
-                    .map(|text| div().text_sm().text_color(theme.muted).child(text)),
+                    .map(|text| div().text_sm().text_color(tokens.muted).child(text)),
             )
-            .child(appearance_group(prefs.appearance(), theme, cx))
-            .child(pack_row(
-                PackId::Light,
-                "Nemotron 0.6B INT4",
-                "About 800 MB.",
-                true,
-                prefs.pack == PackId::Light,
-                theme,
-                cx,
-            ))
-            .child(pack_row(
-                PackId::Medium,
-                "Medium",
-                "Visible until a snapshot survives Engine::open.",
-                false,
-                false,
-                theme,
-                cx,
-            ))
-            .child(pack_row(
-                PackId::Large,
-                "Large",
-                "Visible until a snapshot survives Engine::open.",
-                false,
-                false,
-                theme,
-                cx,
-            ))
+            .child(appearance_group(prefs.appearance(), tokens, cx))
+            .child(
+                InsetRow::new(tokens, PackId::Light.as_str(), "Nemotron 0.6B INT4")
+                    .meta("pinned")
+                    .detail("About 800 MB.")
+                    .selected(prefs.pack == PackId::Light)
+                    .on_click(cx, |this, cx| match &this.phase {
+                        AppPhase::Live { .. }
+                        | AppPhase::Onboarding {
+                            status: OnboardStatus::Fetching { .. },
+                            ..
+                        } => {}
+                        AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
+                            let mut prefs = this.phase.prefs().clone();
+                            prefs.pack = PackId::Light;
+                            crate::begin_pack(cx, prefs);
+                        }
+                    }),
+            )
+            .child(
+                InsetRow::new(tokens, PackId::Medium.as_str(), "Medium")
+                    .meta("not pinned")
+                    .detail("Visible until a snapshot survives Engine::open."),
+            )
+            .child(
+                InsetRow::new(tokens, PackId::Large.as_str(), "Large")
+                    .meta("not pinned")
+                    .detail("Visible until a snapshot survives Engine::open."),
+            )
             .child(
                 div()
                     .flex()
@@ -320,7 +274,7 @@ impl Render for SettingsView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(theme.muted)
+                            .text_color(tokens.muted)
                             .child("Pack and chords apply the next time you open the app."),
                     ),
             )
@@ -328,30 +282,21 @@ impl Render for SettingsView {
                 el.child(
                     div()
                         .text_xs()
-                        .text_color(theme.muted)
+                        .text_color(tokens.muted)
                         .child("Esc cancel does not fire on Windows. One hook is used for hold."),
                 )
             })
             .children(matches!(self.phase, AppPhase::Refused { .. }).then(|| {
-                div()
-                    .id("retry")
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .bg(theme.accent)
-                    .text_color(theme.text)
-                    .cursor_pointer()
-                    .child("Retry")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if matches!(this.phase, AppPhase::Refused { .. }) {
-                            crate::begin_pack(cx, this.phase.prefs().clone());
-                        }
-                    }))
+                AccentButton::new(tokens, "retry", "Retry", cx, |this, cx| {
+                    if matches!(this.phase, AppPhase::Refused { .. }) {
+                        crate::begin_pack(cx, this.phase.prefs().clone());
+                    }
+                })
             }))
             .child(
                 div()
                     .text_xs()
-                    .text_color(theme.muted)
+                    .text_color(tokens.muted)
                     .child("Closing this window quits."),
             )
     }
@@ -359,103 +304,26 @@ impl Render for SettingsView {
 
 fn appearance_group(
     selected: AppearancePref,
-    theme: Theme,
+    tokens: Tokens,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .gap_2()
-        .child(div().text_sm().text_color(theme.muted).child("Appearance"))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .border_1()
-                .border_color(theme.hairline)
-                .rounded_md()
-                .children(APPEARANCE_SEGMENTS.into_iter().map(|(pref, label)| {
-                    appearance_segment(pref, label, selected == pref, theme, cx)
-                })),
-        )
+        .child(div().text_sm().text_color(tokens.muted).child("Appearance"))
+        .child(Segmented::new(
+            tokens,
+            selected,
+            APPEARANCE_SEGMENTS.into_iter().map(|(pref, label)| {
+                Segment::new(pref, pref.element_id(), label)
+                    .on_click(cx, move |this, cx| this.commit_appearance(pref, cx))
+            }),
+        ))
         .child(
             div()
                 .text_xs()
-                .text_color(theme.muted)
+                .text_color(tokens.muted)
                 .child("Auto follows the system appearance."),
         )
-}
-
-fn appearance_segment(
-    pref: AppearancePref,
-    label: &'static str,
-    selected: bool,
-    theme: Theme,
-    cx: &mut Context<SettingsView>,
-) -> impl IntoElement {
-    div()
-        .id(pref.element_id())
-        .flex_1()
-        .px_3()
-        .py_2()
-        .cursor_pointer()
-        .bg(if selected { theme.fill } else { theme.canvas })
-        .text_color(if selected { theme.accent } else { theme.text })
-        .child(label)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.commit_appearance(pref, cx);
-        }))
-}
-
-fn pack_row(
-    id: PackId,
-    title: &'static str,
-    detail: &'static str,
-    enabled: bool,
-    selected: bool,
-    theme: Theme,
-    cx: &mut Context<SettingsView>,
-) -> impl IntoElement {
-    div()
-        .id(id.as_str())
-        .w_full()
-        .px_3()
-        .py_3()
-        .border_1()
-        .border_color(theme.hairline)
-        .bg(if selected { theme.fill } else { theme.canvas })
-        .flex()
-        .flex_col()
-        .gap_1()
-        .when(enabled, |el| el.cursor_pointer())
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if !enabled {
-                return;
-            }
-            match &this.phase {
-                AppPhase::Live { .. }
-                | AppPhase::Onboarding {
-                    status: OnboardStatus::Fetching { .. },
-                    ..
-                } => {}
-                AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
-                    let mut prefs = this.phase.prefs().clone();
-                    prefs.pack = id;
-                    crate::begin_pack(cx, prefs);
-                }
-            }
-        }))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .child(div().child(title))
-                .child(div().text_xs().text_color(theme.muted).child(if enabled {
-                    "pinned"
-                } else {
-                    "not pinned"
-                })),
-        )
-        .child(div().text_xs().text_color(theme.muted).child(detail))
 }

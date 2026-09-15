@@ -5592,6 +5592,7 @@ dependencies = [
  "stt-engine",
  "stt-overlay",
  "stt-session",
+ "stt-ui",
  "toml 0.8.23",
  "ureq",
 ]
