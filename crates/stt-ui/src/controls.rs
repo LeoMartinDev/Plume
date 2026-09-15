@@ -71,7 +71,6 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
         div()
             .flex()
             .flex_row()
-            .w_full()
             .rounded_md()
             .overflow_hidden()
             .border_1()
@@ -81,9 +80,9 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
                 let is_selected = segment.value == selected;
                 div()
                     .id(segment.id)
-                    .flex_1()
-                    .px_3()
-                    .py_2()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
                     .when_else(
                         is_selected,
                         |el| {
