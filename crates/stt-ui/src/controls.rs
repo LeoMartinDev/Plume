@@ -74,6 +74,8 @@ impl<T: PartialEq + 'static> RenderOnce for Segmented<T> {
             .w_full()
             .rounded_md()
             .overflow_hidden()
+            .border_1()
+            .border_color(tokens.hairline)
             .bg(tokens.fill)
             .children(self.segments.into_iter().map(move |segment| {
                 let is_selected = segment.value == selected;
@@ -154,18 +156,14 @@ impl InsetRow {
 
 impl RenderOnce for InsetRow {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let interactive = self.on_click.is_some();
-        let title_color = if interactive {
-            self.tokens.text
-        } else {
-            self.tokens.muted
-        };
         div()
             .id(self.id)
             .w_full()
             .px_3()
             .py_3()
             .rounded_md()
+            .border_1()
+            .border_color(self.tokens.hairline)
             .flex()
             .flex_col()
             .gap_1()
@@ -182,7 +180,7 @@ impl RenderOnce for InsetRow {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(div().text_color(title_color).child(self.title))
+                    .child(div().text_color(self.tokens.text).child(self.title))
                     .child(
                         div()
                             .text_xs()
