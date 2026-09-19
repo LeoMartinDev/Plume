@@ -107,7 +107,6 @@ impl Prefs {
         self.appearance = pref;
     }
 
-    /// Same gate as `parse_wire`. Assigns only after `Ok` so a rejected chord never lands in memory.
     pub fn try_set_hold(&mut self, hold: &str) -> Result<(), stt_session::ConfigError> {
         stt_session::Config::from_prefs(hold, self.cancel(), PathBuf::from("/"))?;
         if self.hold != hold {

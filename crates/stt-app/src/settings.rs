@@ -451,7 +451,6 @@ fn hold_hero(
                         .cursor_pointer()
                         .hover(|style| style.bg(tokens.fill_hover))
                         .on_click(cx.listener(|this, _ev, window, cx| {
-                            // Hero root toggles listen. Stop Reset from bubbling into begin.
                             cx.stop_propagation();
                             this.reset_hold(window, cx);
                         }))

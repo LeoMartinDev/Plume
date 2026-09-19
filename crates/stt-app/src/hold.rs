@@ -1,6 +1,5 @@
 use gpui::Modifiers;
 
-/// Modifier bits copied off `gpui::Modifiers` so tests never build a `Keystroke`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ModBits {
     pub ctrl: bool,
@@ -19,7 +18,6 @@ impl ModBits {
         fn_key: false,
     };
 
-    /// `platform` is Super. `function` is Fn.
     pub fn from_gpui(modifiers: Modifiers) -> Self {
         Self {
             ctrl: modifiers.control,
@@ -31,7 +29,6 @@ impl ModBits {
     }
 }
 
-/// Spelled chord. Only `classify_keydown` constructs it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChordText(String);
 
@@ -41,7 +38,6 @@ impl ChordText {
     }
 }
 
-/// One keydown while Listening, already decoded.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Stroke {
     Escape,
@@ -60,7 +56,6 @@ impl Stroke {
     }
 }
 
-// X11 emits mixed Keystroke.key names. Normalize case and aliases.
 pub fn classify_keydown(is_held: bool, key: &str, mods: ModBits) -> Stroke {
     if is_held {
         return Stroke::Repeat;
@@ -180,7 +175,6 @@ pub fn pill_hint(phase: HoldPhase) -> &'static str {
     }
 }
 
-/// What the GPUI shell must do after `HoldCapture::apply`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CaptureEffect {
     None,
@@ -190,7 +184,6 @@ pub enum CaptureEffect {
     Rejected(String),
 }
 
-/// Capture session. No focus handle, no prefs, no gpui types.
 pub struct HoldCapture {
     phase: HoldPhase,
     reject: Option<String>,
