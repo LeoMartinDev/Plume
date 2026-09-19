@@ -1,5 +1,6 @@
 pub mod dirs;
 pub mod download;
+pub mod hold;
 pub mod lock;
 pub mod phase;
 pub mod prefs;
