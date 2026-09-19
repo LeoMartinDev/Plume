@@ -227,6 +227,7 @@ impl RenderOnce for InsetRow {
                 div()
                     .flex()
                     .flex_row()
+                    .items_center()
                     .justify_between()
                     .child(
                         div()
@@ -238,6 +239,11 @@ impl RenderOnce for InsetRow {
                         div()
                             .text_xs()
                             .text_color(self.tokens.muted)
+                            .px_2()
+                            .py_1()
+                            .rounded_full()
+                            .border_1()
+                            .border_color(self.tokens.hairline)
                             .child(self.meta),
                     ),
             )
