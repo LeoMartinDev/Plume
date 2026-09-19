@@ -3,19 +3,22 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, size, App, Bounds, Context, SharedString, Subscription, TitlebarOptions,
-    Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Bounds, Context, FocusHandle, FontWeight, KeyDownEvent,
+    SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions,
 };
-use stt_ui::{AccentButton, InsetRow, ListGroup, Palette, Segment, Segmented, Tokens};
+use stt_ui::{AccentButton, InsetRow, ListGroup, Palette, Tokens};
 
+use crate::hold::{classify_keydown, pill_label, CaptureEffect, ChordText, HoldCapture, ModBits};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::{AppearancePref, PackId, Prefs, Scheme};
 
 pub const SETTINGS_TITLE: &str = "stt";
+const HOLD_CAPTURE_ID: &str = "hold-capture";
 
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
 
-const APPEARANCE_SEGMENTS: [(AppearancePref, &str); 3] = [
+const THEME_CARDS: [(AppearancePref, &str); 3] = [
     (AppearancePref::Fixed(Scheme::Light), "Light"),
     (AppearancePref::Fixed(Scheme::Dark), "Dark"),
     (AppearancePref::Auto, "Auto"),
@@ -24,17 +27,87 @@ const APPEARANCE_SEGMENTS: [(AppearancePref, &str); 3] = [
 pub struct SettingsView {
     phase: AppPhase,
     save_error: Option<String>,
+    capture: HoldCapture,
+    hold_focus: FocusHandle,
     _appearance: Subscription,
 }
 
 impl SettingsView {
+    fn reset_for_phase(&mut self) {
+        self.capture.cancel();
+    }
+
     pub fn set_phase(&mut self, phase: AppPhase, cx: &mut Context<Self>) {
+        self.reset_for_phase();
         self.phase = phase;
         cx.notify();
     }
 
+    pub fn toggle_hold_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.capture.is_listening() {
+            self.capture.cancel();
+            window.blur();
+            cx.notify();
+            return;
+        }
+        self.capture.begin();
+        window.focus(&self.hold_focus);
+        cx.notify();
+    }
+
+    pub fn on_hold_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        window.prevent_default();
+        let stroke = classify_keydown(
+            event.is_held,
+            event.keystroke.key.as_str(),
+            ModBits::from_gpui(event.keystroke.modifiers),
+        );
+        match self.capture.apply(stroke) {
+            CaptureEffect::None | CaptureEffect::StayListening => {}
+            CaptureEffect::Cancelled | CaptureEffect::Rejected(_) => {
+                window.blur();
+                cx.notify();
+            }
+            CaptureEffect::Offer(chord) => self.commit_hold(chord, window, cx),
+        }
+    }
+
+    fn commit_hold(&mut self, chord: ChordText, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = self.phase.prefs().hold().to_string();
+        match self.phase.prefs_mut().try_set_hold(chord.as_str()) {
+            Err(err) => {
+                self.capture.set_reject(err.to_string());
+                window.blur();
+                cx.notify();
+            }
+            Ok(()) if previous == chord.as_str() => {
+                window.blur();
+                cx.notify();
+            }
+            Ok(()) => {
+                match crate::prefs::save(self.phase.prefs()) {
+                    Ok(()) => self.save_error = None,
+                    Err(err) => self.save_error = Some(err.to_string()),
+                }
+                window.blur();
+                cx.notify();
+            }
+        }
+    }
+
     pub fn commit_appearance(&mut self, next: AppearancePref, cx: &mut Context<Self>) {
+        let was_listening = self.capture.is_listening();
+        self.capture.cancel();
         if self.phase.prefs().appearance() == next {
+            if was_listening {
+                cx.notify();
+            }
             return;
         }
         self.phase.prefs_mut().set_appearance(next);
@@ -46,20 +119,23 @@ impl SettingsView {
     }
 
     pub fn show_progress(&mut self, last: Progress, cx: &mut Context<Self>) {
+        self.reset_for_phase();
         if let AppPhase::Onboarding { status, .. } = &mut self.phase {
             *status = OnboardStatus::Fetching { last };
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub fn show_fetch_failed(&mut self, reason: String, cx: &mut Context<Self>) {
+        self.reset_for_phase();
         if let AppPhase::Onboarding { status, .. } = &mut self.phase {
             *status = OnboardStatus::Failed { reason };
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub fn show_live(&mut self, cx: &mut Context<Self>) {
+        self.reset_for_phase();
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),
         };
@@ -67,6 +143,7 @@ impl SettingsView {
     }
 
     pub fn show_refused(&mut self, reason: String, cx: &mut Context<Self>) {
+        self.reset_for_phase();
         self.phase = AppPhase::Refused {
             prefs: self.phase.prefs().clone(),
             reason,
@@ -76,7 +153,7 @@ impl SettingsView {
 }
 
 pub fn open_settings(cx: &mut App, phase: AppPhase) {
-    let bounds = Bounds::centered(None, size(px(520.), px(640.)), cx);
+    let bounds = Bounds::centered(None, size(px(520.), px(680.)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -109,6 +186,8 @@ pub fn open_settings(cx: &mut App, phase: AppPhase) {
                     SettingsView {
                         phase,
                         save_error: None,
+                        capture: HoldCapture::idle(),
+                        hold_focus: cx.focus_handle().tab_stop(true),
                         _appearance,
                     }
                 })
@@ -201,94 +280,31 @@ impl Render for SettingsView {
                 "The injector or hold chord refused. Retry after switching to X11.",
             ),
         };
+        let listening = self.capture.is_listening();
+        let reject = self.capture.reject().map(str::to_string);
 
         tokens
             .page()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().text_sm().text_color(tokens.muted).child("stt"))
-                    .child(div().text_xl().child("Dictation on this machine"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(tokens.muted)
-                            .child("Audio never leaves the computer."),
-                    ),
-            )
-            .children(warning.map(|text| {
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_1()
-                    .border_color(tokens.hairline)
-                    .text_color(tokens.muted)
-                    .text_sm()
-                    .child(text)
-            }))
+            .child(header(&tokens))
+            .children(warning.map(|text| warning_line(&tokens, text)))
             .child(div().text_sm().text_color(tokens.muted).child(status_line))
+            .child(hold_hero(
+                &tokens,
+                pill_label(self.capture.phase(), prefs.hold()),
+                &self.hold_focus,
+                listening,
+                cx,
+            ))
+            .children(reject.map(|text| muted_error_line(&tokens, text)))
             .children(
                 self.save_error
                     .clone()
-                    .map(|text| div().text_sm().text_color(tokens.muted).child(text)),
+                    .map(|text| muted_error_line(&tokens, text)),
             )
-            .child(appearance_group(prefs.appearance(), tokens, cx))
-            .child(
-                ListGroup::new(tokens)
-                    .child(
-                        InsetRow::new(tokens, PackId::Light.as_str(), "Nemotron 0.6B INT4")
-                            .meta("pinned")
-                            .detail("About 800 MB.")
-                            .selected(prefs.pack == PackId::Light)
-                            .on_click(cx, |this, cx| match &this.phase {
-                                AppPhase::Live { .. }
-                                | AppPhase::Onboarding {
-                                    status: OnboardStatus::Fetching { .. },
-                                    ..
-                                } => {}
-                                AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
-                                    let mut prefs = this.phase.prefs().clone();
-                                    prefs.pack = PackId::Light;
-                                    crate::begin_pack(cx, prefs);
-                                }
-                            }),
-                    )
-                    .child(
-                        InsetRow::new(tokens, PackId::Medium.as_str(), "Medium")
-                            .meta("not pinned")
-                            .detail("Visible until a snapshot survives Engine::open."),
-                    )
-                    .child(
-                        InsetRow::new(tokens, PackId::Large.as_str(), "Large")
-                            .meta("not pinned")
-                            .detail("Visible until a snapshot survives Engine::open."),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .mt_2()
-                    .child(div().text_sm().child(format!("Hold  {}", prefs.hold())))
-                    .child(div().text_sm().child(format!("Cancel  {}", prefs.cancel())))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.muted)
-                            .child("Pack and chords apply the next time you open the app."),
-                    ),
-            )
-            .when(cfg!(windows), |el| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child("Esc cancel does not fire on Windows. One hook is used for hold."),
-                )
-            })
+            .child(pack_group(&tokens, &prefs, cx))
+            .child(theme_cards(prefs.appearance(), &tokens, cx))
+            .child(cancel_line(&tokens, prefs.cancel()))
+            .when(cfg!(windows), |el| el.child(windows_esc_note(&tokens)))
             .children(matches!(self.phase, AppPhase::Refused { .. }).then(|| {
                 AccentButton::new(tokens, "retry", "Retry", cx, |this, cx| {
                     if matches!(this.phase, AppPhase::Refused { .. }) {
@@ -296,18 +312,153 @@ impl Render for SettingsView {
                     }
                 })
             }))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.muted)
-                    .child("Closing this window quits."),
-            )
+            .child(footer(&tokens))
     }
 }
 
-fn appearance_group(
+fn header(tokens: &Tokens) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_sm().text_color(tokens.muted).child("stt"))
+        .child(div().text_xl().child("Dictation on this machine"))
+        .child(
+            div()
+                .text_sm()
+                .text_color(tokens.muted)
+                .child("Audio never leaves the computer."),
+        )
+}
+
+fn warning_line(tokens: &Tokens, text: String) -> impl IntoElement {
+    div()
+        .px_3()
+        .py_2()
+        .border_1()
+        .border_color(tokens.hairline)
+        .text_color(tokens.muted)
+        .text_sm()
+        .child(text)
+}
+
+fn muted_error_line(tokens: &Tokens, text: String) -> impl IntoElement {
+    div().text_sm().text_color(tokens.muted).child(text)
+}
+
+fn hold_hero(
+    tokens: &Tokens,
+    pill: &str,
+    hold_focus: &FocusHandle,
+    listening: bool,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    div()
+        .id(HOLD_CAPTURE_ID)
+        .track_focus(hold_focus)
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_3()
+        .py_3()
+        .rounded_md()
+        .border_1()
+        .border_color(if listening {
+            tokens.accent
+        } else {
+            tokens.hairline
+        })
+        .bg(tokens.elevated)
+        .cursor_pointer()
+        .hover(|style| style.border_color(tokens.accent))
+        .on_click(cx.listener(|this, _ev, window, cx| {
+            this.toggle_hold_capture(window, cx);
+        }))
+        .when(listening, |el| {
+            el.on_key_down(cx.listener(SettingsView::on_hold_key))
+        })
+        .child(
+            div()
+                .text_xs()
+                .text_color(tokens.muted)
+                .child("Push to talk"),
+        )
+        .child(div().text_lg().child("Your shortcut"))
+        .child(
+            div()
+                .text_sm()
+                .text_color(tokens.muted)
+                .child("Click the shortcut to change it."),
+        )
+        .child(
+            div()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .bg(tokens.fill)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(SharedString::from(pill.to_string())),
+        )
+}
+
+fn pack_group(tokens: &Tokens, prefs: &Prefs, cx: &mut Context<SettingsView>) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(div().text_sm().text_color(tokens.muted).child("Model"))
+        .child(
+            ListGroup::new(*tokens)
+                .child(
+                    InsetRow::new(*tokens, PackId::Light.as_str(), "Nemotron 0.6B INT4")
+                        .meta(pack_meta(PackId::Light, prefs.pack))
+                        .detail("About 800 MB.")
+                        .selected(prefs.pack == PackId::Light)
+                        .on_click(cx, |this, cx| {
+                            this.capture.cancel();
+                            match &this.phase {
+                                AppPhase::Live { .. }
+                                | AppPhase::Onboarding {
+                                    status: OnboardStatus::Fetching { .. },
+                                    ..
+                                } => {
+                                    cx.notify();
+                                }
+                                AppPhase::Onboarding { .. } | AppPhase::Refused { .. } => {
+                                    let mut prefs = this.phase.prefs().clone();
+                                    prefs.pack = PackId::Light;
+                                    crate::begin_pack(cx, prefs);
+                                }
+                            }
+                        }),
+                )
+                .child(
+                    InsetRow::new(*tokens, PackId::Medium.as_str(), "Medium")
+                        .meta(pack_meta(PackId::Medium, prefs.pack))
+                        .detail("Visible until a snapshot survives Engine::open."),
+                )
+                .child(
+                    InsetRow::new(*tokens, PackId::Large.as_str(), "Large")
+                        .meta(pack_meta(PackId::Large, prefs.pack))
+                        .detail("Visible until a snapshot survives Engine::open."),
+                ),
+        )
+}
+
+fn pack_meta(id: PackId, selected: PackId) -> &'static str {
+    if id == selected {
+        "active"
+    } else if id == PackId::Light {
+        "pinned"
+    } else {
+        "not pinned"
+    }
+}
+
+fn theme_cards(
     selected: AppearancePref,
-    tokens: Tokens,
+    tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     div()
@@ -315,18 +466,117 @@ fn appearance_group(
         .flex_col()
         .gap_2()
         .child(div().text_sm().text_color(tokens.muted).child("Appearance"))
-        .child(Segmented::new(
-            tokens,
-            selected,
-            APPEARANCE_SEGMENTS.into_iter().map(|(pref, label)| {
-                Segment::new(pref, pref.element_id(), label)
-                    .on_click(cx, move |this, cx| this.commit_appearance(pref, cx))
-            }),
-        ))
+        .child(
+            div().flex().flex_row().gap_2().children(
+                THEME_CARDS
+                    .into_iter()
+                    .map(|(pref, label)| theme_card(pref, label, selected, tokens, cx)),
+            ),
+        )
         .child(
             div()
                 .text_xs()
                 .text_color(tokens.muted)
                 .child("Auto follows the system appearance."),
         )
+}
+
+fn theme_card(
+    pref: AppearancePref,
+    label: &'static str,
+    selected: AppearancePref,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    let is_selected = selected == pref;
+    div()
+        .id(pref.element_id())
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_2()
+        .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if is_selected {
+            tokens.accent
+        } else {
+            tokens.hairline
+        })
+        .bg(if is_selected {
+            tokens.fill
+        } else {
+            tokens.canvas
+        })
+        .cursor_pointer()
+        .hover(|style| style.bg(tokens.fill_hover))
+        .on_click(cx.listener(move |this, _ev, _window, cx| {
+            this.commit_appearance(pref, cx);
+        }))
+        .child(theme_swatch(pref))
+        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+}
+
+fn theme_swatch(pref: AppearancePref) -> impl IntoElement {
+    match pref {
+        AppearancePref::Fixed(Scheme::Light) => div()
+            .h(px(34.))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(0xe5e5e5))
+            .bg(rgb(0xf7f7f7))
+            .into_any_element(),
+        AppearancePref::Fixed(Scheme::Dark) => div()
+            .h(px(34.))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(0x2b2b2b))
+            .bg(rgb(0x181818))
+            .into_any_element(),
+        AppearancePref::Auto => div()
+            .h(px(34.))
+            .flex()
+            .flex_row()
+            .rounded_md()
+            .overflow_hidden()
+            .border_1()
+            .border_color(rgb(0x2b2b2b))
+            .child(div().flex_1().h_full().bg(rgb(0x181818)))
+            .child(div().flex_1().h_full().bg(rgb(0xf7f7f7)))
+            .into_any_element(),
+    }
+}
+
+fn cancel_line(tokens: &Tokens, cancel: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(tokens.muted)
+                .child(format!("Cancel  {cancel}")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(tokens.muted)
+                .child("Pack and chords apply the next time you open the app."),
+        )
+}
+
+fn windows_esc_note(tokens: &Tokens) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(tokens.muted)
+        .child("Esc cancel does not fire on Windows. One hook is used for hold.")
+}
+
+fn footer(tokens: &Tokens) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(tokens.muted)
+        .child("Closing this window quits.")
 }
