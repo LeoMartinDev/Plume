@@ -244,6 +244,7 @@ impl RenderOnce for InsetRow {
                             .rounded_full()
                             .border_1()
                             .border_color(self.tokens.hairline)
+                            .bg(self.tokens.canvas)
                             .child(self.meta),
                     ),
             )
