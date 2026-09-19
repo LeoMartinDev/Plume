@@ -61,6 +61,8 @@
   }
   .hotkey .sep { color: var(--muted); font-weight: 400; }
   .hotkey.listening { border-color: var(--accent); background: var(--accent-soft); animation: pulse 1.1s infinite; }
+  .hotkey[data-capture-pill] { cursor: pointer; }
+  .hotkey[data-capture-pill]:hover { border-color: var(--accent); }
   @keyframes pulse { 50% { border-color: transparent; } }
   .btn {
     background: var(--pill); color: var(--text); border: 1px solid var(--hairline);
@@ -182,11 +184,10 @@
         <h2>Your shortcut</h2>
         <p>Hold it anywhere, speak, release. Text lands where you type.</p>
         <div class="keyrow">
-          <span class="hotkey" data-hotkey><span data-keys>Ctrl + Space</span></span>
-          <button class="btn primary" data-change>Change</button>
+          <span class="hotkey" data-hotkey data-capture-pill title="Click to change"><span data-keys>Ctrl + Space</span></span>
           <button class="btn ghost" data-reset>Reset</button>
         </div>
-        <div class="hint" data-hint>Applies the next time you open the app.</div>
+        <div class="hint" data-hint>Click the shortcut to change it. Applies the next time you open the app.</div>
         <div class="cancelrow">Cancel <span class="minikey" data-cancel>Esc</span></div>
       </div>
       <div class="section-label">Model</div>
@@ -402,6 +403,8 @@ document.querySelectorAll("[data-hero]").forEach((hero) => {
 });
 document.querySelectorAll("[data-change]").forEach((b) =>
   b.addEventListener("click", () => setCapture(capture === "listening" ? "idle" : "listening")));
+document.querySelectorAll("[data-capture-pill]").forEach((p) =>
+  p.addEventListener("click", () => setCapture(capture === "listening" ? "idle" : "listening")));
 document.querySelectorAll("[data-reset]").forEach((b) =>
   b.addEventListener("click", () => { draft.hold = DEFAULT_HOLD; setCapture("idle", "Reset to Ctrl + Space."); }));
 function showVariant(v) {
