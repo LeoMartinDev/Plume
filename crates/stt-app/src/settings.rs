@@ -9,9 +9,11 @@ use gpui::{
 };
 use stt_ui::{AccentButton, InsetRow, ListGroup, Palette, Tokens};
 
-use crate::hold::{classify_keydown, pill_label, CaptureEffect, ChordText, HoldCapture, ModBits};
+use crate::hold::{
+    classify_keydown, pill_hint, pill_label, CaptureEffect, ChordText, HoldCapture, ModBits,
+};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
-use crate::prefs::{AppearancePref, PackId, Prefs, Scheme};
+use crate::prefs::{AppearancePref, PackId, Prefs, Scheme, DEFAULT_HOLD};
 
 pub const SETTINGS_TITLE: &str = "stt";
 const HOLD_CAPTURE_ID: &str = "hold-capture";
@@ -19,9 +21,9 @@ const HOLD_CAPTURE_ID: &str = "hold-capture";
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
 
 const THEME_CARDS: [(AppearancePref, &str); 3] = [
+    (AppearancePref::Auto, "Auto"),
     (AppearancePref::Fixed(Scheme::Light), "Light"),
     (AppearancePref::Fixed(Scheme::Dark), "Dark"),
-    (AppearancePref::Auto, "Auto"),
 ];
 
 pub struct SettingsView {
@@ -75,6 +77,30 @@ impl SettingsView {
                 cx.notify();
             }
             CaptureEffect::Offer(chord) => self.commit_hold(chord, window, cx),
+        }
+    }
+
+    fn reset_hold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.capture.cancel();
+        let previous = self.phase.prefs().hold().to_string();
+        match self.phase.prefs_mut().try_set_hold(DEFAULT_HOLD) {
+            Err(err) => {
+                self.capture.set_reject(err.to_string());
+                window.blur();
+                cx.notify();
+            }
+            Ok(()) if previous == DEFAULT_HOLD => {
+                window.blur();
+                cx.notify();
+            }
+            Ok(()) => {
+                match crate::prefs::save(self.phase.prefs()) {
+                    Ok(()) => self.save_error = None,
+                    Err(err) => self.save_error = Some(err.to_string()),
+                }
+                window.blur();
+                cx.notify();
+            }
         }
     }
 
@@ -282,6 +308,12 @@ impl Render for SettingsView {
         };
         let listening = self.capture.is_listening();
         let reject = self.capture.reject().map(str::to_string);
+        let phase = self.capture.phase();
+        let pill = if listening {
+            SharedString::from(pill_label(phase, prefs.hold()).to_string())
+        } else {
+            SharedString::from(pretty_hold(prefs.hold()))
+        };
 
         tokens
             .page()
@@ -290,7 +322,8 @@ impl Render for SettingsView {
             .child(div().text_sm().text_color(tokens.muted).child(status_line))
             .child(hold_hero(
                 &tokens,
-                pill_label(self.capture.phase(), prefs.hold()),
+                pill,
+                SharedString::from(pill_hint(phase)),
                 &self.hold_focus,
                 listening,
                 cx,
@@ -346,9 +379,14 @@ fn muted_error_line(tokens: &Tokens, text: String) -> impl IntoElement {
     div().text_sm().text_color(tokens.muted).child(text)
 }
 
+fn pretty_hold(hold: &str) -> String {
+    hold.split('+').collect::<Vec<_>>().join(" + ")
+}
+
 fn hold_hero(
     tokens: &Tokens,
-    pill: &str,
+    pill: SharedString,
+    hint: SharedString,
     hold_focus: &FocusHandle,
     listening: bool,
     cx: &mut Context<SettingsView>,
@@ -384,21 +422,41 @@ fn hold_hero(
                 .child("Push to talk"),
         )
         .child(div().text_lg().child("Your shortcut"))
+        .child(div().text_sm().text_color(tokens.muted).child(hint))
         .child(
             div()
-                .text_sm()
-                .text_color(tokens.muted)
-                .child("Click the shortcut to change it."),
-        )
-        .child(
-            div()
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .bg(tokens.fill)
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .child(SharedString::from(pill.to_string())),
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(tokens.fill)
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(pill),
+                )
+                .child(
+                    div()
+                        .id("hold-reset")
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(tokens.hairline)
+                        .text_sm()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(tokens.fill_hover))
+                        .on_click(cx.listener(|this, _ev, window, cx| {
+                            // Hero root toggles listen. Stop Reset from bubbling into begin.
+                            cx.stop_propagation();
+                            this.reset_hold(window, cx);
+                        }))
+                        .child("Reset"),
+                ),
         )
 }
 
@@ -579,4 +637,16 @@ fn footer(tokens: &Tokens) -> impl IntoElement {
         .text_xs()
         .text_color(tokens.muted)
         .child("Closing this window quits.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pretty_hold;
+
+    #[test]
+    fn pretty_hold_spaces_tokens_and_leaves_a_bare_trigger() {
+        assert_eq!(pretty_hold("Ctrl+Space"), "Ctrl + Space");
+        assert_eq!(pretty_hold("Alt+a"), "Alt + a");
+        assert_eq!(pretty_hold("F9"), "F9");
+    }
 }

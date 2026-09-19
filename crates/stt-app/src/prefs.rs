@@ -70,6 +70,8 @@ impl AppearancePref {
     }
 }
 
+pub const DEFAULT_HOLD: &str = "Ctrl+Space";
+
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
@@ -82,7 +84,7 @@ pub struct Prefs {
 impl Prefs {
     pub fn default_fresh() -> Self {
         Prefs {
-            hold: "Ctrl+Space".to_string(),
+            hold: DEFAULT_HOLD.to_string(),
             cancel: "Esc".to_string(),
             pack: PackId::Light,
             appearance: AppearancePref::Auto,

@@ -60,8 +60,7 @@ impl Stroke {
     }
 }
 
-// Live `Keystroke.key` strings on Linux are unverified. Normalize
-// case-insensitively and accept the aliases gpui and xkb actually emit.
+// X11 emits mixed Keystroke.key names. Normalize case and aliases.
 pub fn classify_keydown(is_held: bool, key: &str, mods: ModBits) -> Stroke {
     if is_held {
         return Stroke::Repeat;
@@ -169,8 +168,15 @@ pub enum HoldPhase {
 
 pub fn pill_label(phase: HoldPhase, committed_hold: &str) -> &str {
     match phase {
-        HoldPhase::Listening => "Listening",
+        HoldPhase::Listening => "Press keys\u{2026}",
         HoldPhase::Idle => committed_hold,
+    }
+}
+
+pub fn pill_hint(phase: HoldPhase) -> &'static str {
+    match phase {
+        HoldPhase::Listening => "Esc cancels",
+        HoldPhase::Idle => "Click the shortcut to change it.",
     }
 }
 
@@ -439,7 +445,15 @@ mod tests {
     #[test]
     fn pill_label_idle_versus_listening() {
         assert_eq!(pill_label(HoldPhase::Idle, "Ctrl+Space"), "Ctrl+Space");
-        assert_eq!(pill_label(HoldPhase::Listening, "Ctrl+Space"), "Listening");
+        assert_eq!(
+            pill_label(HoldPhase::Listening, "Ctrl+Space"),
+            "Press keys\u{2026}"
+        );
+        assert_eq!(
+            pill_hint(HoldPhase::Idle),
+            "Click the shortcut to change it."
+        );
+        assert_eq!(pill_hint(HoldPhase::Listening), "Esc cancels");
     }
 
     #[test]
