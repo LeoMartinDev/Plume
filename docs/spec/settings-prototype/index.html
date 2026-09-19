@@ -458,6 +458,7 @@ renderKeys(); renderPacks();
   if (q === "light" || q === "dark" || q === "auto") draft.appearance = q; }
 applyAppearance();
 showVariant({ "#a": "a", "#b": "b", "#c": "c" }[location.hash] || "a");
+if (new URLSearchParams(location.search).get("capture") === "listening") setCapture("listening");
 </script>
 </body>
 </html>
