@@ -4,28 +4,35 @@ use std::time::Duration;
 
 use gpui::{
     point, prelude::*, px, size, App, Application, AsyncApp, Bounds, Context, Pixels, Size,
-    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowHandle, WindowKind, WindowOptions,
 };
-use stt_core::Dictation;
-use stt_ui::{BubbleFrame, Palette, Tokens};
+use stt_core::{Dictation, SessionState};
+use stt_ui::BubbleFrame;
 
+use crate::frame::hide_server_frame;
 use crate::Bubble;
 
 pub const WINDOW_TITLE: &str = "stt-overlay";
 
 struct BubbleView {
     bubble: Bubble,
+    level: f32,
 }
 
 impl Render for BubbleView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = Tokens::new(Palette::from_window(window));
-        BubbleFrame::new(
-            tokens,
-            self.bubble.state().to_string(),
-            self.bubble.text().to_string(),
-        )
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let level = if speaking(self.bubble.state()) {
+            self.level
+        } else {
+            0.0
+        };
+        BubbleFrame::new(level)
     }
+}
+
+fn speaking(state: SessionState) -> bool {
+    matches!(state, SessionState::Recording | SessionState::Streaming)
 }
 
 fn bottom_center_bounds(window_size: Size<Pixels>, cx: &App) -> Bounds<Pixels> {
@@ -73,10 +80,10 @@ pub fn run() {
     });
 }
 
-pub fn run_with(rx: mpsc::Receiver<Bubble>) {
+pub fn run_with(bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Receiver<f32>) {
     prepare_display();
     Application::new().run(|cx: &mut App| {
-        attach(cx, rx);
+        attach(cx, bubbles, levels);
         print_opened_line();
         cx.activate(true);
     });
@@ -84,7 +91,7 @@ pub fn run_with(rx: mpsc::Receiver<Bubble>) {
 
 /// PopUp plus 16 ms poller inside an application that is already running.
 /// Title stays WINDOW_TITLE. kind PopUp, focus false.
-pub fn attach(cx: &mut App, rx: mpsc::Receiver<Bubble>) {
+pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Receiver<f32>) {
     let handle = open_popup(cx);
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor()
@@ -92,48 +99,84 @@ pub fn attach(cx: &mut App, rx: mpsc::Receiver<Bubble>) {
             .await;
         let mut latest = None;
         loop {
-            match rx.try_recv() {
+            match bubbles.try_recv() {
                 Ok(bubble) => latest = Some(bubble),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
         }
-        if let Some(bubble) = latest {
-            let _ = cx.update(|cx| {
-                let _ = handle.update(cx, |view: &mut BubbleView, _window, cx| {
-                    view.bubble = bubble;
-                    cx.notify();
-                });
-            });
+        let mut level = None;
+        loop {
+            match levels.try_recv() {
+                Ok(next) => level = Some(next),
+                Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
+            }
         }
+        if latest.is_none() && level.is_none() {
+            continue;
+        }
+        let _ = cx.update(|cx| {
+            let _ = handle.update(cx, |view: &mut BubbleView, _window, cx| {
+                if let Some(bubble) = latest {
+                    let still_speaking = speaking(bubble.state());
+                    view.bubble = bubble;
+                    if !still_speaking {
+                        view.level = 0.0;
+                    }
+                }
+                if let Some(level) = level {
+                    if speaking(view.bubble.state()) {
+                        view.level = level;
+                    }
+                }
+                cx.notify();
+            });
+        });
     })
     .detach();
 }
 
 fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {
-    let window_size = size(px(420.), px(56.));
+    let window_size = size(px(96.), px(36.));
     let bounds = bottom_center_bounds(window_size, cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(WINDOW_TITLE.into()),
+    let handle = cx
+        .open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(WINDOW_TITLE.into()),
+                    appears_transparent: true,
+                    ..Default::default()
+                }),
+                app_id: Some("stt-overlay".into()),
+                kind: WindowKind::PopUp,
+                focus: false,
+                is_movable: false,
+                is_resizable: false,
+                is_minimizable: false,
+                window_background: WindowBackgroundAppearance::Transparent,
+                window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
-            }),
-            app_id: Some("stt-overlay".into()),
-            kind: WindowKind::PopUp,
-            focus: false,
-            is_resizable: false,
-            is_minimizable: false,
-            ..Default::default()
-        },
-        |_window, cx| {
-            cx.new(|_cx| BubbleView {
-                bubble: Bubble::from_dictation(&Dictation::new()),
-            })
-        },
-    )
-    .expect("open overlay window")
+            },
+            |_window, cx| {
+                cx.new(|_cx| BubbleView {
+                    bubble: Bubble::from_dictation(&Dictation::new()),
+                    level: 0.0,
+                })
+            },
+        )
+        .expect("open overlay window");
+    hide_server_frame(WINDOW_TITLE);
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        for delay in [40, 150, 400] {
+            cx.background_executor()
+                .timer(Duration::from_millis(delay))
+                .await;
+            hide_server_frame(WINDOW_TITLE);
+        }
+    })
+    .detach();
+    handle
 }
 
 fn print_opened_line() {

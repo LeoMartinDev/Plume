@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, AnyElement, App, ClickEvent, Context, ElementId, FontWeight, IntoElement,
-    RenderOnce, SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight,
+    IntoElement, RenderOnce, Rgba, SharedString, Window,
 };
 
 use crate::tokens::Tokens;
@@ -298,45 +298,103 @@ impl RenderOnce for AccentButton {
     }
 }
 
+const DOT_SHAPE: [f32; 10] = [0.5, 0.625, 0.75, 0.875, 1.0, 1.0, 0.875, 0.75, 0.625, 0.5];
+
+struct BubbleChrome {
+    fill: Rgba,
+    border: Rgba,
+    mark: Rgba,
+}
+
+fn bubble_chrome() -> BubbleChrome {
+    BubbleChrome {
+        fill: rgb(0x000000),
+        border: rgb(0x303030),
+        mark: rgb(0xffffff),
+    }
+}
+
 #[derive(IntoElement)]
 pub struct BubbleFrame {
-    tokens: Tokens,
-    status: SharedString,
-    body: SharedString,
+    chrome: BubbleChrome,
+    level: f32,
 }
 
 impl BubbleFrame {
-    pub fn new(
-        tokens: Tokens,
-        status: impl Into<SharedString>,
-        body: impl Into<SharedString>,
-    ) -> Self {
+    pub fn new(level: f32) -> Self {
         BubbleFrame {
-            tokens,
-            status: status.into(),
-            body: body.into(),
+            chrome: bubble_chrome(),
+            level,
         }
     }
 }
 
 impl RenderOnce for BubbleFrame {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let mark = self.chrome.mark;
         div()
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
-            .px_4()
+            .justify_center()
+            .gap(px(10.))
+            .px(px(14.))
             .size_full()
-            .bg(self.tokens.elevated)
-            .text_color(self.tokens.text)
-            .rounded_md()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.tokens.status)
-                    .child(self.status),
-            )
-            .child(div().text_sm().child(self.body))
+            .rounded_full()
+            .bg(self.chrome.fill)
+            .border_1()
+            .border_color(self.chrome.border)
+            .child(voice_dots(self.level, mark))
+    }
+}
+
+fn voice_dots(level: f32, color: Rgba) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .gap(px(3.))
+        .h(px(12.))
+        .children((0..DOT_SHAPE.len()).map(|index| dot(index, level, color)))
+}
+
+fn dot(index: usize, level: f32, color: Rgba) -> Div {
+    div()
+        .w(px(2.5))
+        .h(px(dot_height(index, level)))
+        .rounded_full()
+        .bg(color)
+}
+
+fn dot_height(index: usize, level: f32) -> f32 {
+    let level = level.clamp(0.0, 1.0);
+    3.0 + DOT_SHAPE[index] * level * 8.0
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use gpui::rgb;
+
+    use super::*;
+
+    #[test]
+    fn dark_bubble_is_black_with_a_gray_border_and_white_marks() {
+        let chrome = bubble_chrome();
+        assert_eq!(chrome.fill, rgb(0x000000));
+        assert_eq!(chrome.border, rgb(0x303030));
+        assert_eq!(chrome.mark, rgb(0xffffff));
+    }
+
+    #[test]
+    fn dot_height_follows_one_level() {
+        assert_eq!(dot_height(0, 0.0), 3.0);
+        assert_eq!(dot_height(4, 0.0), 3.0);
+        assert_eq!(dot_height(4, 1.0), 11.0);
+        assert_eq!(dot_height(0, 1.0), 7.0);
+        assert_eq!(dot_height(1, 1.0), 8.0);
+        assert_eq!(dot_height(0, 0.5), dot_height(9, 0.5));
+        assert_eq!(dot_height(4, 0.5), dot_height(5, 0.5));
     }
 }

@@ -181,7 +181,7 @@ fn go_live(cx: &mut App, engine: Engine) {
     match stt_session::start(ready) {
         Ok(live) => {
             log_line("stt-app: compositor started");
-            stt_overlay::attach(cx, live.bubbles);
+            stt_overlay::attach(cx, live.bubbles, live.levels);
             settings_window_show_live(cx);
         }
         Err(err) => {

@@ -27,6 +27,7 @@ impl Ready {
 /// Dropping this does not stop Idle. The process drop does, as today.
 pub struct LiveSession {
     pub bubbles: mpsc::Receiver<Bubble>,
+    pub levels: mpsc::Receiver<f32>,
 }
 
 /// Injector, hold bind, spawn Idle. Returns the Bubble receiver.
@@ -39,16 +40,21 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         StartupError::backend(format!("hold chord {}: {err}", config.hold.as_str()).into())
     })?;
     let (bubble_tx, bubble_rx) = mpsc::channel();
+    let (level_tx, level_rx) = mpsc::sync_channel(8);
     let worker = Idle::new(
         hold,
         config.cancel,
         engine,
         Target::new(injector),
         BubbleSink::new(bubble_tx),
+        level_tx,
     );
     std::thread::Builder::new()
         .name("stt-compositor".to_string())
         .spawn(|| worker.run())
         .map_err(|err| StartupError::backend(err.into()))?;
-    Ok(LiveSession { bubbles: bubble_rx })
+    Ok(LiveSession {
+        bubbles: bubble_rx,
+        levels: level_rx,
+    })
 }

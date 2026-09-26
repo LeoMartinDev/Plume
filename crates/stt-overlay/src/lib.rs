@@ -1,3 +1,4 @@
+mod frame;
 mod window;
 
 use stt_core::{Dictation, Session, SessionState};

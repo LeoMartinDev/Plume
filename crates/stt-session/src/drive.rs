@@ -96,6 +96,7 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     engine: E,
     target: Target<I>,
     bubbles: BubbleSink,
+    levels: mpsc::SyncSender<f32>,
 }
 
 impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
@@ -105,6 +106,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         engine: E,
         target: Target<I>,
         bubbles: BubbleSink,
+        levels: mpsc::SyncSender<f32>,
     ) -> Self {
         Idle {
             hold,
@@ -112,6 +114,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             engine,
             target,
             bubbles,
+            levels,
         }
     }
 }
@@ -151,7 +154,7 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
             Ok(guard) => guard,
             Err(err) => return Outcome::Aborted(format!("cancel guard: {err}")),
         };
-        let (gate, pump, mic_pump) = capture::open_gate(mic);
+        let (gate, pump, mic_pump) = capture::open_gate(mic, self.levels.clone());
         let (hyp_tx, hyp_rx) = mpsc::channel();
         let engine = &self.engine;
         let outcome = std::thread::scope(|scope| {

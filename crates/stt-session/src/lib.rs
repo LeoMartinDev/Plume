@@ -51,6 +51,6 @@ pub fn run(config: Config) -> Result<(), StartupError> {
     let dir = ModelDir::open(config.model_dir()).map_err(StartupError::model)?;
     let engine = Engine::open(dir).map_err(StartupError::model)?;
     let live = start(Ready::from_open(config, engine))?;
-    stt_overlay::run_with(live.bubbles);
+    stt_overlay::run_with(live.bubbles, live.levels);
     Ok(())
 }
