@@ -70,6 +70,8 @@ impl AppearancePref {
     }
 }
 
+pub const DEFAULT_HOLD: &str = "Ctrl+Space";
+
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
@@ -82,7 +84,7 @@ pub struct Prefs {
 impl Prefs {
     pub fn default_fresh() -> Self {
         Prefs {
-            hold: "Ctrl+Space".to_string(),
+            hold: DEFAULT_HOLD.to_string(),
             cancel: "Esc".to_string(),
             pack: PackId::Light,
             appearance: AppearancePref::Auto,
@@ -103,6 +105,14 @@ impl Prefs {
 
     pub fn set_appearance(&mut self, pref: AppearancePref) {
         self.appearance = pref;
+    }
+
+    pub fn try_set_hold(&mut self, hold: &str) -> Result<(), stt_session::ConfigError> {
+        stt_session::Config::from_prefs(hold, self.cancel(), PathBuf::from("/"))?;
+        if self.hold != hold {
+            self.hold = hold.to_string();
+        }
+        Ok(())
     }
 }
 
@@ -429,5 +439,42 @@ mod tests {
             Scheme::Light
         );
         assert_eq!(AppearancePref::Auto.resolve(Scheme::Dark), Scheme::Dark);
+    }
+
+    #[test]
+    fn try_set_hold_accepts_a_valid_chord() {
+        let mut prefs = Prefs::default_fresh();
+        prefs.try_set_hold("Alt+a").unwrap();
+        assert_eq!(prefs.hold(), "Alt+a");
+    }
+
+    #[test]
+    fn try_set_hold_same_string_is_ok() {
+        let mut prefs = Prefs::default_fresh();
+        prefs.try_set_hold("Ctrl+Space").unwrap();
+        assert_eq!(prefs.hold(), "Ctrl+Space");
+    }
+
+    #[test]
+    fn try_set_hold_rejects_empty_and_keeps_the_old_hold() {
+        let mut prefs = Prefs::default_fresh();
+        let err = prefs.try_set_hold("").unwrap_err();
+        assert!(
+            err.to_string().contains("hold is not a usable chord"),
+            "{err}"
+        );
+        assert_eq!(prefs.hold(), "Ctrl+Space");
+    }
+
+    #[test]
+    fn try_set_hold_rejects_fn_and_keeps_the_old_hold() {
+        let mut prefs = Prefs::default_fresh();
+        let err = prefs.try_set_hold("Fn+Space").unwrap_err();
+        assert!(
+            err.to_string().contains("hold is not a usable chord"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("Fn"), "{err}");
+        assert_eq!(prefs.hold(), "Ctrl+Space");
     }
 }
