@@ -298,18 +298,16 @@ impl RenderOnce for AccentButton {
     }
 }
 
-const DOT_SHAPE: [f32; 10] = [0.5, 0.625, 0.75, 0.875, 1.0, 1.0, 0.875, 0.75, 0.625, 0.5];
+const BAR_SHAPE: [f32; 8] = [0.32, 0.68, 0.46, 1.0, 0.82, 0.42, 0.72, 0.28];
 
 struct BubbleChrome {
     fill: Rgba,
-    border: Rgba,
     mark: Rgba,
 }
 
 fn bubble_chrome() -> BubbleChrome {
     BubbleChrome {
         fill: rgb(0x000000),
-        border: rgb(0x303030),
         mark: rgb(0xffffff),
     }
 }
@@ -342,8 +340,6 @@ impl RenderOnce for BubbleFrame {
             .size_full()
             .rounded_full()
             .bg(self.chrome.fill)
-            .border_1()
-            .border_color(self.chrome.border)
             .child(voice_dots(self.level, mark))
     }
 }
@@ -355,22 +351,27 @@ fn voice_dots(level: f32, color: Rgba) -> Div {
         .flex_shrink_0()
         .items_center()
         .justify_center()
-        .gap(px(3.))
-        .h(px(12.))
-        .children((0..DOT_SHAPE.len()).map(|index| dot(index, level, color)))
+        .gap(px(4.))
+        .h(px(20.))
+        .children((0..BAR_SHAPE.len()).map(|index| voice_bar(index, level, color)))
 }
 
-fn dot(index: usize, level: f32, color: Rgba) -> Div {
+fn voice_bar(index: usize, level: f32, color: Rgba) -> Div {
     div()
-        .w(px(2.5))
-        .h(px(dot_height(index, level)))
-        .rounded_full()
+        .w(px(4.))
+        .h(px(bar_height(index, level)))
+        .rounded(px(2.))
         .bg(color)
 }
 
-fn dot_height(index: usize, level: f32) -> f32 {
-    let level = level.clamp(0.0, 1.0);
-    3.0 + DOT_SHAPE[index] * level * 8.0
+fn visual_level(level: f32) -> f32 {
+    ((level.clamp(0.0, 1.0) - 0.02) / 0.48)
+        .clamp(0.0, 1.0)
+        .sqrt()
+}
+
+fn bar_height(index: usize, level: f32) -> f32 {
+    3.0 + BAR_SHAPE[index] * visual_level(level) * 17.0
 }
 
 #[cfg(test)]
@@ -380,21 +381,28 @@ mod voice_tests {
     use super::*;
 
     #[test]
-    fn dark_bubble_is_black_with_a_gray_border_and_white_marks() {
+    fn dark_bubble_is_black_with_white_marks() {
         let chrome = bubble_chrome();
         assert_eq!(chrome.fill, rgb(0x000000));
-        assert_eq!(chrome.border, rgb(0x303030));
         assert_eq!(chrome.mark, rgb(0xffffff));
     }
 
     #[test]
-    fn dot_height_follows_one_level() {
-        assert_eq!(dot_height(0, 0.0), 3.0);
-        assert_eq!(dot_height(4, 0.0), 3.0);
-        assert_eq!(dot_height(4, 1.0), 11.0);
-        assert_eq!(dot_height(0, 1.0), 7.0);
-        assert_eq!(dot_height(1, 1.0), 8.0);
-        assert_eq!(dot_height(0, 0.5), dot_height(9, 0.5));
-        assert_eq!(dot_height(4, 0.5), dot_height(5, 0.5));
+    fn voice_bars_have_a_wider_visible_range() {
+        assert_eq!(BAR_SHAPE.len(), 8);
+        assert_eq!(bar_height(0, 0.0), 3.0);
+        assert_eq!(bar_height(3, 0.0), 3.0);
+        assert_eq!(bar_height(3, 0.5), 20.0);
+        assert!(bar_height(3, 0.5) - bar_height(7, 0.5) > 12.0);
+        assert_eq!(bar_height(3, 1.0), 20.0);
+    }
+
+    #[test]
+    fn visual_level_amplifies_normal_speech_without_animating_noise() {
+        assert_eq!(visual_level(0.0), 0.0);
+        assert_eq!(visual_level(0.02), 0.0);
+        assert!(visual_level(0.1) > 0.4);
+        assert_eq!(visual_level(0.5), 1.0);
+        assert_eq!(visual_level(1.0), 1.0);
     }
 }

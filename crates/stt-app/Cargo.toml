@@ -13,3 +13,10 @@ stt-session = { path = "../stt-session" }
 stt-ui = { path = "../stt-ui" }
 toml = "0.8"
 ureq = "3"
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6.2"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+] }

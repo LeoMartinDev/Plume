@@ -45,6 +45,31 @@ pub enum AppearancePref {
     Auto,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LanguagePref {
+    Auto,
+    French,
+    English,
+}
+
+impl LanguagePref {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::French => "fr",
+            Self::English => "en",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Automatic",
+            Self::French => "Français",
+            Self::English => "English",
+        }
+    }
+}
+
 impl AppearancePref {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -79,6 +104,7 @@ pub struct Prefs {
     cancel: String,
     pub pack: PackId,
     appearance: AppearancePref,
+    language: LanguagePref,
 }
 
 impl Prefs {
@@ -88,6 +114,7 @@ impl Prefs {
             cancel: "Esc".to_string(),
             pack: PackId::Light,
             appearance: AppearancePref::Auto,
+            language: LanguagePref::Auto,
         }
     }
 
@@ -105,6 +132,14 @@ impl Prefs {
 
     pub fn set_appearance(&mut self, pref: AppearancePref) {
         self.appearance = pref;
+    }
+
+    pub fn language(&self) -> LanguagePref {
+        self.language
+    }
+
+    pub fn set_language(&mut self, language: LanguagePref) {
+        self.language = language;
     }
 
     pub fn try_set_hold(&mut self, hold: &str) -> Result<(), stt_session::ConfigError> {
@@ -148,6 +183,28 @@ impl Default for AppearanceWire {
     }
 }
 
+struct LanguageWire(LanguagePref);
+
+impl Default for LanguageWire {
+    fn default() -> Self {
+        Self(LanguagePref::Auto)
+    }
+}
+
+impl<'de> Deserialize<'de> for LanguageWire {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = toml::Value::deserialize(deserializer)?;
+        Ok(Self(match value {
+            toml::Value::String(raw) => match raw.as_str() {
+                "fr" => LanguagePref::French,
+                "en" => LanguagePref::English,
+                _ => LanguagePref::Auto,
+            },
+            _ => LanguagePref::Auto,
+        }))
+    }
+}
+
 impl<'de> Deserialize<'de> for AppearanceWire {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = toml::Value::deserialize(deserializer)?;
@@ -169,6 +226,8 @@ struct WireIn {
     pack: String,
     #[serde(default)]
     appearance: AppearanceWire,
+    #[serde(default)]
+    language: LanguageWire,
 }
 
 #[derive(Serialize)]
@@ -177,6 +236,7 @@ struct WireOut {
     cancel: String,
     pack: String,
     appearance: &'static str,
+    language: &'static str,
 }
 
 pub fn prefs_path() -> PathBuf {
@@ -213,6 +273,7 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
         cancel: prefs.cancel.clone(),
         pack: prefs.pack.as_str().to_string(),
         appearance: prefs.appearance().as_str(),
+        language: prefs.language().as_str(),
     };
     let body = toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))?;
     let tmp = path.with_extension("toml.tmp");
@@ -232,6 +293,7 @@ fn parse_wire(raw: &str) -> Result<Prefs, String> {
         cancel: wire.cancel,
         pack,
         appearance: wire.appearance.0,
+        language: wire.language.0,
     })
 }
 
@@ -344,10 +406,26 @@ mod tests {
         match load_at(&path) {
             PrefsLoad::Loaded(prefs) => {
                 assert_eq!(prefs.appearance(), AppearancePref::Auto);
+                assert_eq!(prefs.language(), LanguagePref::Auto);
                 assert_eq!(prefs.pack, PackId::Light);
                 assert_eq!(prefs.hold(), "Ctrl+Space");
             }
             _ => panic!("file without appearance must be Loaded"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn language_round_trips_and_old_files_default_to_auto() {
+        let path = temp_prefs("language-round");
+        let mut prefs = Prefs::default_fresh();
+        prefs.set_language(LanguagePref::French);
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => {
+                assert_eq!(loaded.language(), LanguagePref::French);
+            }
+            _ => panic!("saved language must load"),
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

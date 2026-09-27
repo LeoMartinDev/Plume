@@ -19,7 +19,6 @@ const N_MELS: usize = 128;
 const PREEMPH: f32 = 0.97;
 const LOG_GUARD: f32 = 5.960_464_5e-8;
 const MAX_SYMBOLS: usize = 10;
-const LANG_AUTO: i64 = 101;
 const CHUNK_NEED: usize = 55 * HOP + N_FFT / 2;
 
 fn samples_needed(chunk: usize) -> usize {
@@ -236,10 +235,11 @@ pub(crate) struct NemotronStream {
     tokens: Vec<usize>,
     cumulative: String,
     finished: bool,
+    lang_id: i64,
 }
 
 impl NemotronStream {
-    pub fn new(inner: Arc<OrtInner>, audio: AudioStream) -> Self {
+    pub fn new(inner: Arc<OrtInner>, audio: AudioStream, lang_id: i64) -> Self {
         let cache_channel = vec![0.0; inner.cache_channel_len];
         let cache_time = vec![0.0; inner.cache_time_len];
         let lstm = vec![0.0; inner.lstm_len];
@@ -259,6 +259,7 @@ impl NemotronStream {
             tokens: Vec::new(),
             cumulative: String::new(),
             finished: false,
+            lang_id,
         }
     }
 
@@ -278,7 +279,7 @@ impl NemotronStream {
                 "cache_last_channel" => ort::value::Tensor::from_array((inner.cache_channel_shape.clone(), self.cache_channel.clone()))?,
                 "cache_last_time" => ort::value::Tensor::from_array((inner.cache_time_shape.clone(), self.cache_time.clone()))?,
                 "cache_last_channel_len" => ort::value::Tensor::from_array(([1], vec![self.cache_len]))?,
-                "lang_id" => ort::value::Tensor::from_array(([1], vec![LANG_AUTO]))?
+                "lang_id" => ort::value::Tensor::from_array(([1], vec![self.lang_id]))?
             ])?;
             let (_, encoded) = outputs["outputs"].try_extract_tensor::<f32>()?;
             let (_, lens) = outputs["encoded_lengths"].try_extract_tensor::<i64>()?;

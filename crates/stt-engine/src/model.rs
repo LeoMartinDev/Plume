@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ort::session::Session;
@@ -74,8 +75,38 @@ pub(crate) struct OrtInner {
     pub joint_dim: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Language {
+    Auto,
+    French,
+    English,
+}
+
+impl Language {
+    pub(crate) fn encoder_id(self) -> i64 {
+        match self {
+            Self::Auto => 101,
+            Self::French => 8,
+            Self::English => 0,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LanguageTarget {
+    language: Arc<AtomicI64>,
+}
+
+impl LanguageTarget {
+    pub fn set(&self, language: Language) {
+        self.language
+            .store(language.encoder_id(), Ordering::Relaxed);
+    }
+}
+
 pub struct Engine {
     pub(crate) inner: Arc<OrtInner>,
+    pub(crate) language: Arc<AtomicI64>,
 }
 
 impl Engine {
@@ -145,7 +176,19 @@ impl Engine {
                 dec_hidden: dec_hidden as usize,
                 joint_dim: joint_dim as usize,
             }),
+            language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
         })
+    }
+
+    pub fn set_language(&self, language: Language) {
+        self.language
+            .store(language.encoder_id(), Ordering::Relaxed);
+    }
+
+    pub fn language_target(&self) -> LanguageTarget {
+        LanguageTarget {
+            language: self.language.clone(),
+        }
     }
 }
 
@@ -186,5 +229,12 @@ mod tests {
             Err(e) => assert!(!e.to_string().is_empty()),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn language_ids_match_the_nemotron_prompt_table() {
+        assert_eq!(Language::Auto.encoder_id(), 101);
+        assert_eq!(Language::French.encoder_id(), 8);
+        assert_eq!(Language::English.encoder_id(), 0);
     }
 }

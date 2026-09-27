@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod dirs;
 pub mod download;
 pub mod hold;
@@ -10,7 +11,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui::{App, Application};
-use stt_engine::Engine;
+use stt_engine::{Engine, Language};
+
+use crate::assets::Assets;
 
 use crate::download::{DownloadEvent, PackStatus};
 use crate::lock::{AlreadyRunning, AppLock};
@@ -32,7 +35,7 @@ pub fn product_main() {
         }
     };
     stt_overlay::prepare_display();
-    Application::new().run(|cx| {
+    Application::new().with_assets(Assets).run(|cx| {
         let loaded = prefs::load();
         let (prefs, warning) = match loaded {
             PrefsLoad::Fresh(prefs) | PrefsLoad::Loaded(prefs) => (prefs, None),
@@ -162,6 +165,13 @@ fn go_live(cx: &mut App, engine: Engine) {
     let Some(prefs) = settings_window_prefs(cx) else {
         return;
     };
+    let language = match prefs.language() {
+        crate::prefs::LanguagePref::Auto => Language::Auto,
+        crate::prefs::LanguagePref::French => Language::French,
+        crate::prefs::LanguagePref::English => Language::English,
+    };
+    engine.set_language(language);
+    let language_target = engine.language_target();
     if let Err(err) = prefs::save(&prefs) {
         settings_window_show_fetch_failed(cx, err);
         return;
@@ -182,7 +192,7 @@ fn go_live(cx: &mut App, engine: Engine) {
         Ok(live) => {
             log_line("stt-app: compositor started");
             stt_overlay::attach(cx, live.bubbles, live.levels);
-            settings_window_show_live(cx);
+            settings_window_show_live(cx, live.hold, language_target);
         }
         Err(err) => {
             log_line(format!("stt-app: compositor refused: {err}"));

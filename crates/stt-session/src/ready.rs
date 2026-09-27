@@ -23,11 +23,25 @@ impl Ready {
     }
 }
 
+/// Sends a new hold chord to the running compositor. The listener swaps
+/// hooks between sessions, so a settings change applies without a restart.
+#[derive(Clone)]
+pub struct HoldTarget {
+    tx: mpsc::Sender<String>,
+}
+
+impl HoldTarget {
+    pub fn set(&self, hold: &str) {
+        let _ = self.tx.send(hold.to_string());
+    }
+}
+
 /// Detached compositor plus the overlay's incoming snapshots.
 /// Dropping this does not stop Idle. The process drop does, as today.
 pub struct LiveSession {
     pub bubbles: mpsc::Receiver<Bubble>,
     pub levels: mpsc::Receiver<f32>,
+    pub hold: HoldTarget,
 }
 
 /// Injector, hold bind, spawn Idle. Returns the Bubble receiver.
@@ -41,8 +55,12 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
     })?;
     let (bubble_tx, bubble_rx) = mpsc::channel();
     let (level_tx, level_rx) = mpsc::sync_channel(8);
+    let (hold_tx, hold_rx) = mpsc::channel();
+    let hold_raw = config.hold.as_str().to_string();
     let worker = Idle::new(
         hold,
+        hold_raw,
+        hold_rx,
         config.cancel,
         engine,
         Target::new(injector),
@@ -56,5 +74,6 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
     Ok(LiveSession {
         bubbles: bubble_rx,
         levels: level_rx,
+        hold: HoldTarget { tx: hold_tx },
     })
 }

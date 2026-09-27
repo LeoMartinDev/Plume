@@ -21,7 +21,10 @@ impl Palette {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
+    pub chrome: Rgba,
+    pub content: Rgba,
     pub canvas: Rgba,
+    pub group: Rgba,
     pub elevated: Rgba,
     pub text: Rgba,
     pub muted: Rgba,
@@ -37,7 +40,10 @@ impl Tokens {
     pub fn new(palette: Palette) -> Self {
         match palette {
             Palette::Light => Tokens {
+                chrome: rgb(0xf3f3f3),
+                content: rgb(0xffffff),
                 canvas: rgb(0xf7f7f7),
+                group: rgb(0xf7f7f7),
                 elevated: rgb(0xffffff),
                 text: rgb(0x141414),
                 muted: rgb(0x6b6b6b),
@@ -49,7 +55,10 @@ impl Tokens {
                 status: rgb(0x3b6dff),
             },
             Palette::Dark => Tokens {
+                chrome: rgb(0x202020),
+                content: rgb(0x171717),
                 canvas: rgb(0x181818),
+                group: rgb(0x1e1e1e),
                 elevated: rgb(0x1e1e1e),
                 text: rgb(0xe4e4e4),
                 muted: rgb(0x8a8a8a),

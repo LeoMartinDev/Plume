@@ -91,7 +91,9 @@ fn describe_target_error(err: &TargetError) -> String {
 }
 
 pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
-    hold: Chord,
+    hold: Option<Chord>,
+    hold_raw: String,
+    hold_rx: mpsc::Receiver<String>,
     cancel_spec: ChordSpec,
     engine: E,
     target: Target<I>,
@@ -102,6 +104,8 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
 impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
     pub(crate) fn new(
         hold: Chord,
+        hold_raw: String,
+        hold_rx: mpsc::Receiver<String>,
         cancel_spec: ChordSpec,
         engine: E,
         target: Target<I>,
@@ -109,7 +113,9 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         levels: mpsc::SyncSender<f32>,
     ) -> Self {
         Idle {
-            hold,
+            hold: Some(hold),
+            hold_raw,
+            hold_rx,
             cancel_spec,
             engine,
             target,
@@ -117,12 +123,59 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             levels,
         }
     }
+
+    fn retarget_hold(&mut self) {
+        let Some(raw) = drain_latest(&self.hold_rx) else {
+            return;
+        };
+        if raw == self.hold_raw {
+            return;
+        }
+        let spec = match ChordSpec::parse(&raw) {
+            Ok(spec) => spec,
+            Err(err) => {
+                eprintln!("stt-session: hold rejected: {err}");
+                return;
+            }
+        };
+        self.hold = None;
+        match Chord::bind(&spec) {
+            Ok(chord) => {
+                eprintln!("stt-session: hold is {}", spec.as_str());
+                self.hold_raw = spec.as_str().to_string();
+                self.hold = Some(chord);
+            }
+            Err(err) => {
+                eprintln!("stt-session: hold bind failed: {err}");
+                self.restore_hold();
+            }
+        }
+    }
+
+    fn restore_hold(&mut self) {
+        let Ok(spec) = ChordSpec::parse(&self.hold_raw) else {
+            return;
+        };
+        match Chord::bind(&spec) {
+            Ok(chord) => self.hold = Some(chord),
+            Err(err) => eprintln!("stt-session: hold restore failed: {err}"),
+        }
+    }
+}
+
+fn drain_latest(rx: &mpsc::Receiver<String>) -> Option<String> {
+    let mut latest = None;
+    while let Ok(raw) = rx.try_recv() {
+        latest = Some(raw);
+    }
+    latest
 }
 
 impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
     pub(crate) fn run(mut self) -> ! {
         loop {
-            match self.hold.next_event() {
+            self.retarget_hold();
+            match self.hold.as_mut().and_then(|hold| hold.next_event()) {
                 Some(HotkeyEvent::Pressed) => {
                     let outcome = self.session_once();
                     self.target.reset();
@@ -143,16 +196,29 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
     }
 
     fn session_once(&mut self) -> Outcome {
+        let Some(mut hold) = self.hold.take() else {
+            return Outcome::Aborted("hold chord is not bound".into());
+        };
         let mut dictation = Dictation::new();
         dictation.hold();
         self.bubbles.push_from(&dictation);
         let mic = match Mic::open() {
             Ok(mic) => mic,
-            Err(err) => return Outcome::Aborted(format!("mic: {err}")),
+            Err(err) => {
+                dictation.cancel();
+                self.bubbles.push_from(&dictation);
+                self.hold = Some(hold);
+                return Outcome::Aborted(format!("mic: {err}"));
+            }
         };
         let guard = match CancelGuard::arm(&self.cancel_spec) {
             Ok(guard) => guard,
-            Err(err) => return Outcome::Aborted(format!("cancel guard: {err}")),
+            Err(err) => {
+                dictation.cancel();
+                self.bubbles.push_from(&dictation);
+                self.hold = Some(hold);
+                return Outcome::Aborted(format!("cancel guard: {err}"));
+            }
         };
         let (gate, pump, mic_pump) = capture::open_gate(mic, self.levels.clone());
         let (hyp_tx, hyp_rx) = mpsc::channel();
@@ -167,7 +233,7 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
                 }
             });
             Self::live_loop(
-                &mut self.hold,
+                &mut hold,
                 &mut self.target,
                 &self.bubbles,
                 &mut dictation,
@@ -177,6 +243,7 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
             )
         });
         self.bubbles.push_from(&dictation);
+        self.hold = Some(hold);
         outcome
     }
 
@@ -409,5 +476,14 @@ mod tests {
         let late = dictation.on_hypothesis(final_hyp("ab")).unwrap();
         assert_eq!(late.edit, None);
         assert_eq!(late.transcript, None);
+    }
+
+    #[test]
+    fn drain_latest_keeps_the_last_chord() {
+        let (tx, rx) = mpsc::channel();
+        tx.send("Ctrl+Space".to_string()).unwrap();
+        tx.send("Ctrl+m".to_string()).unwrap();
+        assert_eq!(drain_latest(&rx).as_deref(), Some("Ctrl+m"));
+        assert_eq!(drain_latest(&rx), None);
     }
 }
