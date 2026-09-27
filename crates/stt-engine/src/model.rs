@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use ort::session::Session;
 use stt_core::BoxError;
+use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 use crate::decode::{Mel, Vocab, CACHE_MEL, CHUNK_MEL};
 
@@ -104,8 +105,13 @@ impl LanguageTarget {
     }
 }
 
+pub(crate) enum EngineBackend {
+    Nemotron(Arc<OrtInner>),
+    Whisper(Arc<WhisperContext>),
+}
+
 pub struct Engine {
-    pub(crate) inner: Arc<OrtInner>,
+    pub(crate) backend: EngineBackend,
     pub(crate) language: Arc<AtomicI64>,
 }
 
@@ -159,7 +165,7 @@ impl Engine {
         let (cache_time_shape, cache_time_len) = concrete(cache_time_shape)?;
         let (lstm_shape, lstm_len) = concrete(lstm_shape)?;
         Ok(Self {
-            inner: Arc::new(OrtInner {
+            backend: EngineBackend::Nemotron(Arc::new(OrtInner {
                 encoder: Mutex::new(encoder),
                 decoder: Mutex::new(decoder),
                 joint: Mutex::new(joint),
@@ -175,7 +181,22 @@ impl Engine {
                 enc_hidden: enc_hidden as usize,
                 dec_hidden: dec_hidden as usize,
                 joint_dim: joint_dim as usize,
-            }),
+            })),
+            language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
+        })
+    }
+
+    pub fn open_whisper(path: impl AsRef<Path>) -> Result<Self, BoxError> {
+        let path = path.as_ref();
+        if !path.is_file() {
+            return Err(format!("whisper model {} is not a file", path.display()).into());
+        }
+        let path = path
+            .to_str()
+            .ok_or_else(|| format!("whisper model path {} is not UTF-8", path.display()))?;
+        let context = WhisperContext::new_with_params(path, WhisperContextParameters::default())?;
+        Ok(Self {
+            backend: EngineBackend::Whisper(Arc::new(context)),
             language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
         })
     }

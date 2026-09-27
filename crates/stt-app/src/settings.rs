@@ -8,12 +8,13 @@ use gpui::{
     WindowKind, WindowOptions,
 };
 use stt_engine::{Language, LanguageTarget};
-use stt_session::HoldTarget;
+use stt_session::{EngineTarget, HoldTarget};
 use stt_ui::{Palette, Segment, Segmented, Tokens};
 
+use crate::catalog::{self, ModelEntry, ModelId};
 use crate::hold::{classify_keydown, pill_label, CaptureEffect, ChordText, HoldCapture, ModBits};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
-use crate::prefs::{AppearancePref, LanguagePref, PackId, Prefs, Scheme, DEFAULT_HOLD};
+use crate::prefs::{AppearancePref, LanguagePref, Prefs, Scheme, DEFAULT_HOLD};
 
 pub const SETTINGS_TITLE: &str = "stt";
 const HOLD_CAPTURE_ID: &str = "hold-capture";
@@ -65,6 +66,7 @@ pub struct SettingsView {
     capture: HoldCapture,
     hold_focus: FocusHandle,
     hold_target: Option<HoldTarget>,
+    engine_target: Option<EngineTarget>,
     language_target: Option<LanguageTarget>,
     _appearance: Subscription,
 }
@@ -219,11 +221,13 @@ impl SettingsView {
     pub fn show_live(
         &mut self,
         hold_target: HoldTarget,
+        engine_target: EngineTarget,
         language_target: LanguageTarget,
         cx: &mut Context<Self>,
     ) {
         self.reset_for_phase();
         self.hold_target = Some(hold_target);
+        self.engine_target = Some(engine_target);
         self.language_target = Some(language_target);
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),
@@ -289,6 +293,7 @@ pub fn open_settings(cx: &mut App, phase: AppPhase) {
                         capture: HoldCapture::idle(),
                         hold_focus: cx.focus_handle().tab_stop(true),
                         hold_target: None,
+                        engine_target: None,
                         language_target: None,
                         _appearance,
                     }
@@ -325,12 +330,36 @@ pub fn settings_window_show_fetch_failed(cx: &mut App, err: impl std::fmt::Displ
 pub fn settings_window_show_live(
     cx: &mut App,
     hold_target: HoldTarget,
+    engine_target: EngineTarget,
     language_target: LanguageTarget,
 ) {
     let handle = *SETTINGS.lock().expect("settings handle");
     if let Some(handle) = handle {
         let _ = handle.update(cx, |view, _window, cx| {
-            view.show_live(hold_target, language_target, cx)
+            view.show_live(hold_target, engine_target, language_target, cx)
+        });
+    }
+}
+
+pub fn settings_window_engine_target(cx: &mut App) -> Option<EngineTarget> {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    handle.and_then(|handle| {
+        handle
+            .update(cx, |view, _window, _cx| view.engine_target.clone())
+            .ok()
+            .flatten()
+    })
+}
+
+pub fn settings_window_show_swapped(cx: &mut App, language_target: LanguageTarget) {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    if let Some(handle) = handle {
+        let _ = handle.update(cx, |view, _window, cx| {
+            view.language_target = Some(language_target);
+            view.phase = AppPhase::Live {
+                prefs: view.phase.prefs().clone(),
+            };
+            cx.notify();
         });
     }
 }
@@ -671,95 +700,126 @@ fn model_page(
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let (action, enabled, error) = model_state(&view.phase);
     page(
-        "Model",
+        "Models",
         div()
             .flex()
             .flex_col()
             .gap(px(10.))
-            .child(
-                settings_group(tokens)
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .w_full()
-                            .min_h(px(64.))
-                            .px(px(14.))
-                            .py(px(10.))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(16.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child("Nemotron 0.6B INT4"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(tokens.muted)
-                                            .child("~800 MB · French & English"),
-                                    ),
-                            )
-                            .child(model_button(tokens, action, enabled, cx)),
-                    )
-                    .child(div().h(px(1.)).mx(px(14.)).bg(tokens.hairline))
-                    .child(language_row(
-                        tokens,
-                        prefs.language(),
-                        view.language_open,
-                        cx,
-                    )),
-            )
-            .children(error.map(|text| error_text(tokens, text)))
+            .child(settings_group(tokens).child(language_row(
+                tokens,
+                prefs.language(),
+                view.language_open,
+                cx,
+            )))
+            .child(model_catalog(view, tokens, prefs, cx))
+            .children(model_error(&view.phase).map(|text| error_text(tokens, text)))
             .children(view.save_error.clone().map(|text| error_text(tokens, text))),
     )
 }
 
-fn model_state(phase: &AppPhase) -> (SharedString, bool, Option<String>) {
-    match phase {
-        AppPhase::Live { .. } => ("Installed".into(), false, None),
-        AppPhase::Onboarding {
-            status, warning, ..
-        } => match status {
-            OnboardStatus::Idle => ("Download".into(), true, warning.clone()),
-            OnboardStatus::Fetching { last } => {
-                (download_progress(last).into(), false, warning.clone())
-            }
-            OnboardStatus::Failed { reason } => ("Retry".into(), true, Some(reason.clone())),
-        },
-        AppPhase::Refused { reason, .. } => ("Retry".into(), true, Some(reason.clone())),
-    }
-}
-
-fn download_progress(progress: &Progress) -> String {
-    match progress.total {
-        Some(total) if total > 0 => {
-            let percent = (progress.bytes.saturating_mul(100) / total).min(100);
-            format!("Downloading {percent}%")
-        }
-        _ => "Downloading…".to_string(),
-    }
-}
-
-fn model_button(
+fn model_catalog(
+    view: &SettingsView,
     tokens: &Tokens,
+    prefs: &Prefs,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    settings_group(tokens).flex().flex_col().children(
+        catalog::entries()
+            .iter()
+            .enumerate()
+            .flat_map(|(index, entry)| {
+                let mut rows = vec![
+                    catalog_model_row(entry, &view.phase, tokens, prefs, cx).into_any_element()
+                ];
+                if index + 1 < catalog::entries().len() {
+                    rows.push(
+                        div()
+                            .h(px(1.))
+                            .mx(px(14.))
+                            .bg(tokens.hairline)
+                            .into_any_element(),
+                    );
+                }
+                rows
+            }),
+    )
+}
+
+fn catalog_model_row(
+    entry: &ModelEntry,
+    phase: &AppPhase,
+    tokens: &Tokens,
+    prefs: &Prefs,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    let language = match prefs.language() {
+        LanguagePref::Auto => entry.languages.to_string(),
+        LanguagePref::French => "French supported".to_string(),
+        LanguagePref::English => "English supported".to_string(),
+    };
+    let detail = format!("{} · {} · {}", entry.size, language, entry.guidance);
+    let (label, enabled) = catalog_model_action(phase, entry.id);
+    div()
+        .id(SharedString::from(format!("model-{}", entry.id.as_str())))
+        .w_full()
+        .min_h(px(68.))
+        .px(px(14.))
+        .py(px(10.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(16.))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(3.))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(entry.name),
+                )
+                .child(div().text_xs().text_color(tokens.muted).child(detail)),
+        )
+        .child(catalog_model_button(tokens, entry.id, label, enabled, cx))
+}
+
+fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
+    if phase.prefs().model == id {
+        return match phase {
+            AppPhase::Live { .. } => ("In use".into(), false),
+            AppPhase::Onboarding { status, .. } => match status {
+                OnboardStatus::Idle => ("Download".into(), true),
+                OnboardStatus::Fetching { last } => (download_progress(last).into(), false),
+                OnboardStatus::Failed { .. } => ("Retry".into(), true),
+            },
+            AppPhase::Refused { .. } => ("Retry".into(), true),
+        };
+    }
+    let busy = matches!(
+        phase,
+        AppPhase::Onboarding {
+            status: OnboardStatus::Fetching { .. },
+            ..
+        }
+    );
+    let installed = catalog::is_complete(id, &id.data_dir());
+    (if installed { "Use" } else { "Download" }.into(), !busy)
+}
+
+fn catalog_model_button(
+    tokens: &Tokens,
+    id: ModelId,
     label: SharedString,
     enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     div()
-        .id("model-action")
+        .id(SharedString::from(format!("model-{}-action", id.as_str())))
         .h(px(32.))
         .px(px(12.))
         .flex()
@@ -773,14 +833,37 @@ fn model_button(
         .when(enabled, |el| {
             el.cursor_pointer()
                 .hover(|style| style.bg(tokens.fill_hover))
-                .on_click(cx.listener(|this, _event, _window, cx| {
+                .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.capture.cancel();
                     let mut prefs = this.phase.prefs().clone();
-                    prefs.pack = PackId::Light;
+                    prefs.model = id;
                     crate::begin_pack(cx, prefs);
                 }))
         })
         .child(label)
+}
+
+fn model_error(phase: &AppPhase) -> Option<String> {
+    match phase {
+        AppPhase::Live { .. } => None,
+        AppPhase::Onboarding {
+            status, warning, ..
+        } => match status {
+            OnboardStatus::Idle | OnboardStatus::Fetching { .. } => warning.clone(),
+            OnboardStatus::Failed { reason } => Some(reason.clone()),
+        },
+        AppPhase::Refused { reason, .. } => Some(reason.clone()),
+    }
+}
+
+fn download_progress(progress: &Progress) -> String {
+    match progress.total {
+        Some(total) if total > 0 => {
+            let percent = (progress.bytes.saturating_mul(100) / total).min(100);
+            format!("Downloading {percent}%")
+        }
+        _ => "Downloading…".to_string(),
+    }
 }
 
 fn language_row(

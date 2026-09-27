@@ -42,6 +42,18 @@ pub struct LiveSession {
     pub bubbles: mpsc::Receiver<Bubble>,
     pub levels: mpsc::Receiver<f32>,
     pub hold: HoldTarget,
+    pub engine: EngineTarget,
+}
+
+#[derive(Clone)]
+pub struct EngineTarget {
+    tx: mpsc::Sender<Engine>,
+}
+
+impl EngineTarget {
+    pub fn set(&self, engine: Engine) {
+        let _ = self.tx.send(engine);
+    }
 }
 
 /// Injector, hold bind, spawn Idle. Returns the Bubble receiver.
@@ -56,6 +68,7 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
     let (bubble_tx, bubble_rx) = mpsc::channel();
     let (level_tx, level_rx) = mpsc::sync_channel(8);
     let (hold_tx, hold_rx) = mpsc::channel();
+    let (engine_tx, engine_rx) = mpsc::channel();
     let hold_raw = config.hold.as_str().to_string();
     let worker = Idle::new(
         hold,
@@ -63,6 +76,7 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         hold_rx,
         config.cancel,
         engine,
+        engine_rx,
         Target::new(injector),
         BubbleSink::new(bubble_tx),
         level_tx,
@@ -75,5 +89,6 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         bubbles: bubble_rx,
         levels: level_rx,
         hold: HoldTarget { tx: hold_tx },
+        engine: EngineTarget { tx: engine_tx },
     })
 }

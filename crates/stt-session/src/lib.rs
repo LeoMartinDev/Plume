@@ -9,7 +9,7 @@ use stt_core::BoxError;
 use stt_engine::{Engine, ModelDir};
 
 pub use config::{Config, ConfigError};
-pub use ready::{start, HoldTarget, LiveSession, Ready};
+pub use ready::{start, EngineTarget, HoldTarget, LiveSession, Ready};
 
 /// Startup failure with its process exit code: 4 for a missing or invalid
 /// model pack (matches transcribe), 1 for injector, hotkey, or thread setup.

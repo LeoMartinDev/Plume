@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::prefs::PackId;
+use crate::catalog::ModelId;
 
 /// Product folder under the OS config and local-data roots.
 /// Same leaf name Tauri would append as the bundle identifier.
@@ -36,8 +36,13 @@ impl AppDirs {
         self.config.join("prefs.toml")
     }
 
-    pub fn pack_dir(&self, id: PackId) -> PathBuf {
-        self.local_data.join("packs").join(id.as_str())
+    pub fn model_dir(&self, id: ModelId) -> PathBuf {
+        let leaf = match id {
+            // Keep existing installations; only the user-facing tier name disappears.
+            ModelId::Nemotron35Compact => "light",
+            _ => id.as_str(),
+        };
+        self.local_data.join("packs").join(leaf)
     }
 
     pub fn lock_path(&self) -> PathBuf {
@@ -69,7 +74,7 @@ mod tests {
         let dirs = AppDirs::from_roots("/cfg", "/data");
         assert_eq!(dirs.prefs_path(), PathBuf::from("/cfg/prefs.toml"));
         assert_eq!(
-            dirs.pack_dir(PackId::Light),
+            dirs.model_dir(ModelId::Nemotron35Compact),
             PathBuf::from("/data/packs/light")
         );
         assert_eq!(dirs.lock_path(), PathBuf::from("/data/lock"));
@@ -86,6 +91,9 @@ mod tests {
             .join("stt");
         assert_eq!(got.prefs_path(), config.join("prefs.toml"));
         assert_eq!(got.lock_path(), local_data.join("lock"));
-        assert_eq!(got.pack_dir(PackId::Light), local_data.join("packs/light"));
+        assert_eq!(
+            got.model_dir(ModelId::Nemotron35Compact),
+            local_data.join("packs/light")
+        );
     }
 }

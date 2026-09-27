@@ -2,44 +2,19 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-use stt_engine::{Engine, ModelDir};
+use stt_engine::Engine;
 
+use crate::catalog::ModelId;
 use crate::phase::Progress;
-use crate::prefs::PackId;
-
-const LIGHT_REPO: &str = "onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4";
-const LIGHT_REV: &str = "8364d9e2dd9da23789b480bdbba9e423717e42ee";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OfferPin {
-    Pinned {
-        repo: &'static str,
-        revision: &'static str,
-    },
-    Unpinned,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct PackOffer {
-    pub id: PackId,
-    pub pin: OfferPin,
+    pub id: ModelId,
 }
 
-impl PackId {
+impl ModelId {
     pub fn offer(self) -> PackOffer {
-        match self {
-            PackId::Light => PackOffer {
-                id: PackId::Light,
-                pin: OfferPin::Pinned {
-                    repo: LIGHT_REPO,
-                    revision: LIGHT_REV,
-                },
-            },
-            PackId::Medium | PackId::Large => PackOffer {
-                id: self,
-                pin: OfferPin::Unpinned,
-            },
-        }
+        PackOffer { id: self }
     }
 }
 
@@ -56,7 +31,6 @@ pub enum DownloadEvent {
 
 #[derive(Debug)]
 pub enum DownloadError {
-    Unpinned(PackId),
     Io(std::io::Error),
     Open(String),
     Fetch(String),
@@ -65,13 +39,6 @@ pub enum DownloadError {
 impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DownloadError::Unpinned(id) => {
-                write!(
-                    f,
-                    "pack {} is not pinned until Engine::open succeeds",
-                    id.as_str()
-                )
-            }
             DownloadError::Io(err) => write!(f, "pack io: {err}"),
             DownloadError::Open(err) => write!(f, "pack open: {err}"),
             DownloadError::Fetch(err) => write!(f, "pack fetch: {err}"),
@@ -118,11 +85,12 @@ impl Staging {
         fetch: &dyn Fetch,
         events: &mpsc::Sender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
-        let OfferPin::Pinned { repo, revision } = self.offer.pin else {
-            return Err(DownloadError::Unpinned(self.offer.id));
-        };
+        let entry = self.offer.id.entry();
+        let repo = entry.repo;
+        let revision = entry.revision;
         std::fs::create_dir_all(&self.partial)?;
-        for name in ModelDir::REQUIRED_FILES {
+        for model_file in entry.files {
+            let name = model_file.local;
             let done = self.partial.join(name);
             let part = self.partial.join(format!("{name}.part"));
             if done.is_file() {
@@ -132,7 +100,10 @@ impl Staging {
             if part.exists() {
                 std::fs::remove_file(&part)?;
             }
-            let url = format!("https://huggingface.co/{repo}/resolve/{revision}/{name}");
+            let url = format!(
+                "https://huggingface.co/{repo}/resolve/{revision}/{}",
+                model_file.remote
+            );
             let events = events.clone();
             let file = name.to_string();
             fetch.fetch_to_file(&url, &part, &move |bytes, total| {
@@ -148,7 +119,7 @@ impl Staging {
             std::fs::remove_dir_all(&self.dest)?;
         }
         std::fs::rename(&self.partial, &self.dest)?;
-        match try_open(&self.dest) {
+        match try_open(self.offer.id, &self.dest) {
             Ok(engine) => {
                 let _ = events.send(DownloadEvent::Proven(engine));
                 Ok(())
@@ -163,12 +134,8 @@ impl Staging {
 
 /// Scan dest, then staging. Never fetches a dest that already opens.
 pub fn reconcile(offer: PackOffer, dest: &Path) -> Result<PackStatus, DownloadError> {
-    match offer.pin {
-        OfferPin::Unpinned => return Err(DownloadError::Unpinned(offer.id)),
-        OfferPin::Pinned { .. } => {}
-    }
     if dest.is_dir() {
-        match try_open(dest) {
+        match try_open(offer.id, dest) {
             Ok(engine) => return Ok(PackStatus::Proven(engine)),
             Err(_) => move_failed(dest),
         }
@@ -188,9 +155,8 @@ fn sibling_partial(dest: &Path) -> PathBuf {
     dest.with_file_name(format!("{name}.partial"))
 }
 
-fn try_open(dest: &Path) -> Result<Engine, DownloadError> {
-    let dir = ModelDir::open(dest).map_err(|err| DownloadError::Open(err.to_string()))?;
-    Engine::open(dir).map_err(|err| DownloadError::Open(err.to_string()))
+fn try_open(id: ModelId, dest: &Path) -> Result<Engine, DownloadError> {
+    crate::catalog::open(id, dest).map_err(DownloadError::Open)
 }
 
 fn move_failed(dest: &Path) {
@@ -251,6 +217,7 @@ impl Fetch for UreqFetch {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use stt_engine::ModelDir;
 
     struct MapFetch {
         files: HashMap<String, Vec<u8>>,
@@ -287,7 +254,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir.join("light")
+        dir.join(ModelId::Nemotron35Compact.as_str())
     }
 
     fn dummy_files() -> HashMap<String, Vec<u8>> {
@@ -295,17 +262,6 @@ mod tests {
             .into_iter()
             .map(|name| (name.to_string(), b"not an onnx graph".to_vec()))
             .collect()
-    }
-
-    #[test]
-    fn unpinned_medium_is_an_error() {
-        let dest = temp_dest("unpinned");
-        let err = match reconcile(PackId::Medium.offer(), &dest) {
-            Err(err) => err,
-            Ok(_) => panic!("unpinned must err"),
-        };
-        assert!(matches!(err, DownloadError::Unpinned(PackId::Medium)));
-        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
     }
 
     #[test]
@@ -321,7 +277,7 @@ mod tests {
         let mut staging = Staging {
             dest: dest.clone(),
             partial,
-            offer: PackId::Light.offer(),
+            offer: ModelId::Nemotron35Compact.offer(),
         };
         let (tx, rx) = mpsc::channel();
         staging.resume_with(&fetch, tx);
@@ -353,7 +309,7 @@ mod tests {
         for name in ModelDir::REQUIRED_FILES {
             std::fs::write(dest.join(name), b"not an onnx graph").unwrap();
         }
-        match reconcile(PackId::Light.offer(), &dest) {
+        match reconcile(ModelId::Nemotron35Compact.offer(), &dest) {
             Ok(PackStatus::Incomplete(_)) => {}
             Ok(PackStatus::Proven(_)) => panic!("unparsable graphs must not prove"),
             Err(err) => panic!("reconcile should return Incomplete after moving dest, got {err}"),
@@ -373,7 +329,11 @@ mod tests {
         let file = dest.parent().unwrap().join("vocab.txt");
         UreqFetch
             .fetch_to_file(
-                &format!("https://huggingface.co/{LIGHT_REPO}/resolve/{LIGHT_REV}/vocab.txt"),
+                &format!(
+                    "https://huggingface.co/{}/resolve/{}/vocab.txt",
+                    ModelId::Nemotron35Compact.entry().repo,
+                    ModelId::Nemotron35Compact.entry().revision
+                ),
                 &file,
                 &|_, _| {},
             )
@@ -388,7 +348,7 @@ mod tests {
     fn live_light_pack_opens() {
         let dest = match std::env::var_os("STT_KEEP_PACK") {
             Some(dir) => {
-                let dest = PathBuf::from(dir).join("light");
+                let dest = PathBuf::from(dir).join(ModelId::Nemotron35Compact.as_str());
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).unwrap();
                 }
@@ -396,7 +356,7 @@ mod tests {
             }
             None => temp_dest("live-light"),
         };
-        match reconcile(PackId::Light.offer(), &dest) {
+        match reconcile(ModelId::Nemotron35Compact.offer(), &dest) {
             Ok(PackStatus::Proven(_)) => {}
             Ok(PackStatus::Incomplete(mut staging)) => {
                 let (tx, rx) = mpsc::channel();

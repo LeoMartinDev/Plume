@@ -60,25 +60,16 @@ fn fold_hypothesis<I: TextInjector, P: Postpass>(
         Ok(step) => step,
         Err(_) => return Fold::Done(Outcome::EmptyRelease),
     };
-    if let Some(edit) = &step.edit {
-        if let Err(err) = target.apply_edit(edit) {
-            dictation.cancel();
-            let _ = target.retract();
-            return Fold::Done(Outcome::Aborted(describe_target_error(&err)));
-        }
-    }
     match step.transcript {
         Some(transcript) => {
             let raw = transcript.text;
             let cleaned = postpass.clean(&raw);
-            if cleaned != raw {
-                let edit = Edit::Replace {
-                    old: raw,
-                    new: cleaned.clone(),
-                };
-                if let Err(err) = target.apply_edit(&edit) {
-                    return Fold::Done(Outcome::Aborted(describe_target_error(&err)));
-                }
+            if cleaned.is_empty() {
+                return Fold::Done(Outcome::EmptyRelease);
+            }
+            if let Err(err) = target.apply_edit(&Edit::Insert(cleaned.clone())) {
+                dictation.cancel();
+                return Fold::Done(Outcome::Aborted(describe_target_error(&err)));
             }
             Fold::Done(Outcome::Committed(cleaned))
         }
@@ -96,6 +87,7 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     hold_rx: mpsc::Receiver<String>,
     cancel_spec: ChordSpec,
     engine: E,
+    engine_rx: mpsc::Receiver<E>,
     target: Target<I>,
     bubbles: BubbleSink,
     levels: mpsc::SyncSender<f32>,
@@ -108,6 +100,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         hold_rx: mpsc::Receiver<String>,
         cancel_spec: ChordSpec,
         engine: E,
+        engine_rx: mpsc::Receiver<E>,
         target: Target<I>,
         bubbles: BubbleSink,
         levels: mpsc::SyncSender<f32>,
@@ -118,6 +111,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             hold_rx,
             cancel_spec,
             engine,
+            engine_rx,
             target,
             bubbles,
             levels,
@@ -174,6 +168,9 @@ fn drain_latest(rx: &mpsc::Receiver<String>) -> Option<String> {
 impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
     pub(crate) fn run(mut self) -> ! {
         loop {
+            while let Ok(engine) = self.engine_rx.try_recv() {
+                self.engine = engine;
+            }
             self.retarget_hold();
             match self.hold.as_mut().and_then(|hold| hold.next_event()) {
                 Some(HotkeyEvent::Pressed) => {
@@ -361,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn hypotheses_fold_into_inserts_replaces_and_commit() {
+    fn hypotheses_insert_only_the_final_transcript() {
         let mut dictation = Dictation::new();
         dictation.hold();
         let mut target = Target::new(RecordingInjector::new());
@@ -376,14 +373,7 @@ mod tests {
             "got: {outcome:?}"
         );
         assert_eq!(target.inserted(), "Bonjour.");
-        assert_eq!(
-            target.injector().ops(),
-            &[
-                "insert:bonj",
-                "replace:bonj->bonjour",
-                "replace:bonjour->Bonjour."
-            ]
-        );
+        assert_eq!(target.injector().ops(), &["insert:Bonjour."]);
     }
 
     #[test]
@@ -402,14 +392,7 @@ mod tests {
             "got: {outcome:?}"
         );
         assert_eq!(target.inserted(), "HELLO");
-        assert_eq!(
-            target.injector().ops(),
-            &[
-                "insert:hello",
-                "replace:hello->hello",
-                "replace:hello->HELLO"
-            ]
-        );
+        assert_eq!(target.injector().ops(), &["insert:HELLO"]);
     }
 
     #[test]
@@ -432,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn release_before_any_partial_maps_final_to_empty_release() {
+    fn release_before_any_partial_still_commits_the_final() {
         let mut dictation = Dictation::new();
         dictation.hold();
         dictation.release();
@@ -443,9 +426,12 @@ mod tests {
             vec![final_hyp("late")],
             &NoopPostpass,
         );
-        assert!(matches!(outcome, Outcome::EmptyRelease), "got: {outcome:?}");
-        assert_eq!(target.inserted(), "");
-        assert!(target.injector().ops().is_empty());
+        assert!(
+            matches!(outcome, Outcome::Committed(ref text) if text == "late"),
+            "got: {outcome:?}"
+        );
+        assert_eq!(target.inserted(), "late");
+        assert_eq!(target.injector().ops(), &["insert:late"]);
     }
 
     #[test]
@@ -457,25 +443,22 @@ mod tests {
         assert!(matches!(folded, Fold::Continue));
         let outcome = drive_cancel(&mut dictation, &mut target);
         assert!(matches!(outcome, Outcome::Cancelled), "got: {outcome:?}");
-        assert_eq!(target.injector().ops(), &["insert:bonj", "replace:bonj->"]);
+        assert!(target.injector().ops().is_empty());
         let late = dictation.on_hypothesis(partial("bonjour")).unwrap();
         assert_eq!(late.edit, None);
         assert_eq!(late.transcript, None);
     }
 
     #[test]
-    fn desync_aborts_and_consumes_dictation() {
+    fn partials_never_touch_the_target() {
         let mut dictation = Dictation::new();
         dictation.hold();
         let mut target = Target::new(RecordingInjector::new());
         let folded = fold_hypothesis(&mut dictation, &mut target, partial("a"), &NoopPostpass);
         assert!(matches!(folded, Fold::Continue));
-        target.reset();
         let folded = fold_hypothesis(&mut dictation, &mut target, partial("ab"), &NoopPostpass);
-        assert!(matches!(folded, Fold::Done(Outcome::Aborted(_))),);
-        let late = dictation.on_hypothesis(final_hyp("ab")).unwrap();
-        assert_eq!(late.edit, None);
-        assert_eq!(late.transcript, None);
+        assert!(matches!(folded, Fold::Continue));
+        assert!(target.injector().ops().is_empty());
     }
 
     #[test]

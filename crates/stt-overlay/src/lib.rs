@@ -21,11 +21,7 @@ impl Bubble {
     }
 
     pub fn from_session(session: &Session) -> Self {
-        let text = match session {
-            Session::Streaming(streaming) => streaming.latest().text().to_string(),
-            Session::Finalizing(finalizing) => finalizing.latest().text().to_string(),
-            Session::Idle | Session::Recording(_) | Session::Cancelled(_) => String::new(),
-        };
+        let text = String::new();
         Self {
             text,
             state: session.state(),
@@ -59,7 +55,7 @@ mod tests {
     }
 
     #[test]
-    fn bubble_mirrors_scripted_partials_and_final() {
+    fn bubble_never_exposes_partial_text() {
         let mut dictation = Dictation::new();
         let bubble = Bubble::from_dictation(&dictation);
         assert_eq!(bubble.text(), "");
@@ -72,17 +68,17 @@ mod tests {
 
         dictation.on_hypothesis(partial("bonj")).unwrap();
         let bubble = Bubble::from_dictation(&dictation);
-        assert_eq!(bubble.text(), "bonj");
+        assert_eq!(bubble.text(), "");
         assert_eq!(bubble.state(), SessionState::Streaming);
 
         dictation.on_hypothesis(partial("bonjour")).unwrap();
         let bubble = Bubble::from_dictation(&dictation);
-        assert_eq!(bubble.text(), "bonjour");
+        assert_eq!(bubble.text(), "");
         assert_eq!(bubble.state(), SessionState::Streaming);
 
         dictation.release();
         let bubble = Bubble::from_dictation(&dictation);
-        assert_eq!(bubble.text(), "bonjour");
+        assert_eq!(bubble.text(), "");
         assert_eq!(bubble.state(), SessionState::Finalizing);
 
         dictation.on_hypothesis(final_hyp("Bonjour.")).unwrap();

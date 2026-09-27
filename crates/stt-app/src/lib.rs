@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod catalog;
 pub mod dirs;
 pub mod download;
 pub mod hold;
@@ -20,9 +21,9 @@ use crate::lock::{AlreadyRunning, AppLock};
 use crate::phase::{AppPhase, OnboardStatus};
 use crate::prefs::{Prefs, PrefsLoad};
 use crate::settings::{
-    open_settings, settings_window_prefs, settings_window_set_phase,
+    open_settings, settings_window_engine_target, settings_window_prefs, settings_window_set_phase,
     settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
-    settings_window_show_refused,
+    settings_window_show_refused, settings_window_show_swapped,
 };
 
 /// Product entry. Settings window first. Compositor starts after a proven pack.
@@ -77,8 +78,8 @@ fn boot_after_window_opens(cx: &mut App, prefs: Prefs) {
 }
 
 fn spawn_reconcile(cx: &mut App, prefs: Prefs, fetch_if_incomplete: bool) {
-    let dest = prefs.pack.data_dir();
-    let offer = prefs.pack.offer();
+    let dest = prefs.model.data_dir();
+    let offer = prefs.model.offer();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         eprintln!("stt-app: reconcile dest={}", dest.display());
@@ -176,23 +177,27 @@ fn go_live(cx: &mut App, engine: Engine) {
         settings_window_show_fetch_failed(cx, err);
         return;
     }
-    let config = match stt_session::Config::from_prefs(
-        prefs.hold(),
-        prefs.cancel(),
-        prefs.pack.data_dir(),
-    ) {
-        Ok(config) => config,
-        Err(err) => {
-            settings_window_show_fetch_failed(cx, err);
-            return;
-        }
-    };
+    if let Some(engine_target) = settings_window_engine_target(cx) {
+        engine_target.set(engine);
+        settings_window_show_swapped(cx, language_target);
+        log_line("stt-app: engine swapped");
+        return;
+    }
+    let config =
+        match stt_session::Config::from_prefs(prefs.hold(), prefs.cancel(), prefs.model.data_dir())
+        {
+            Ok(config) => config,
+            Err(err) => {
+                settings_window_show_fetch_failed(cx, err);
+                return;
+            }
+        };
     let ready = stt_session::Ready::from_open(config, engine);
     match stt_session::start(ready) {
         Ok(live) => {
             log_line("stt-app: compositor started");
             stt_overlay::attach(cx, live.bubbles, live.levels);
-            settings_window_show_live(cx, live.hold, language_target);
+            settings_window_show_live(cx, live.hold, live.engine, language_target);
         }
         Err(err) => {
             log_line(format!("stt-app: compositor refused: {err}"));

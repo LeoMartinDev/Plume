@@ -1,37 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::catalog::ModelId;
 use serde::{Deserialize, Deserializer, Serialize};
-
-/// Light is pinned. Medium and Large stay visible until a snapshot opens.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PackId {
-    Light,
-    Medium,
-    Large,
-}
-
-impl PackId {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PackId::Light => "light",
-            PackId::Medium => "medium",
-            PackId::Large => "large",
-        }
-    }
-
-    fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "light" => Some(PackId::Light),
-            "medium" => Some(PackId::Medium),
-            "large" => Some(PackId::Large),
-            _ => None,
-        }
-    }
-
-    pub fn data_dir(self) -> PathBuf {
-        crate::dirs::AppDirs::resolve().pack_dir(self)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scheme {
@@ -102,7 +72,7 @@ pub const DEFAULT_HOLD: &str = "Ctrl+Space";
 pub struct Prefs {
     hold: String,
     cancel: String,
-    pub pack: PackId,
+    pub model: ModelId,
     appearance: AppearancePref,
     language: LanguagePref,
 }
@@ -112,7 +82,7 @@ impl Prefs {
         Prefs {
             hold: DEFAULT_HOLD.to_string(),
             cancel: "Esc".to_string(),
-            pack: PackId::Light,
+            model: ModelId::default(),
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
         }
@@ -223,7 +193,8 @@ impl<'de> Deserialize<'de> for AppearanceWire {
 struct WireIn {
     hold: String,
     cancel: String,
-    pack: String,
+    #[serde(alias = "pack")]
+    model: String,
     #[serde(default)]
     appearance: AppearanceWire,
     #[serde(default)]
@@ -234,7 +205,7 @@ struct WireIn {
 struct WireOut {
     hold: String,
     cancel: String,
-    pack: String,
+    model: String,
     appearance: &'static str,
     language: &'static str,
 }
@@ -271,7 +242,7 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
     let wire = WireOut {
         hold: prefs.hold.clone(),
         cancel: prefs.cancel.clone(),
-        pack: prefs.pack.as_str().to_string(),
+        model: prefs.model.as_str().to_string(),
         appearance: prefs.appearance().as_str(),
         language: prefs.language().as_str(),
     };
@@ -284,14 +255,14 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
 
 fn parse_wire(raw: &str) -> Result<Prefs, String> {
     let wire: WireIn = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
-    let pack = PackId::parse(&wire.pack)
-        .ok_or_else(|| format!("prefs pack {} is not light, medium, or large", wire.pack))?;
+    let model = ModelId::parse(&wire.model)
+        .ok_or_else(|| format!("prefs model {} is unknown", wire.model))?;
     stt_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
         .map_err(|err| format!("prefs chords rejected: {err}"))?;
     Ok(Prefs {
         hold: wire.hold,
         cancel: wire.cancel,
-        pack,
+        model,
         appearance: wire.appearance.0,
         language: wire.language.0,
     })
@@ -344,7 +315,7 @@ mod tests {
         match load_at(&path) {
             PrefsLoad::Fresh(prefs) => {
                 assert_eq!(prefs.hold(), "Ctrl+Space");
-                assert_eq!(prefs.pack, PackId::Light);
+                assert_eq!(prefs.model, ModelId::Nemotron35Compact);
                 assert_eq!(prefs.appearance(), AppearancePref::Auto);
             }
             _ => panic!("missing file must be Fresh"),
@@ -360,6 +331,22 @@ mod tests {
             PrefsLoad::Loaded(loaded) => assert_eq!(loaded, prefs),
             _ => panic!("saved prefs must load"),
         }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn named_model_round_trips() {
+        let path = temp_prefs("named-model");
+        let mut prefs = Prefs::default_fresh();
+        prefs.model = ModelId::WhisperSmall;
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => assert_eq!(loaded.model, ModelId::WhisperSmall),
+            _ => panic!("saved named model must load"),
+        }
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("model = \"whisper-small\""), "{body}");
+        assert!(!body.contains("pack ="), "{body}");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -407,7 +394,7 @@ mod tests {
             PrefsLoad::Loaded(prefs) => {
                 assert_eq!(prefs.appearance(), AppearancePref::Auto);
                 assert_eq!(prefs.language(), LanguagePref::Auto);
-                assert_eq!(prefs.pack, PackId::Light);
+                assert_eq!(prefs.model, ModelId::Nemotron35Compact);
                 assert_eq!(prefs.hold(), "Ctrl+Space");
             }
             _ => panic!("file without appearance must be Loaded"),
@@ -479,8 +466,8 @@ mod tests {
         match load_at(&path) {
             PrefsLoad::Loaded(prefs) => {
                 assert_eq!(prefs.appearance(), AppearancePref::Fixed(Scheme::Light));
-                assert_eq!(prefs.pack, PackId::Light);
-                assert_ne!(prefs.appearance().element_id(), prefs.pack.as_str());
+                assert_eq!(prefs.model, ModelId::Nemotron35Compact);
+                assert_ne!(prefs.appearance().element_id(), prefs.model.as_str());
             }
             _ => panic!("appearance light must be Loaded"),
         }

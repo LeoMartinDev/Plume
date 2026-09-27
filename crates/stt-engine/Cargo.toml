@@ -8,6 +8,7 @@ stt-core = { path = "../stt-core" }
 ort = "=2.0.0-rc.13"
 hound = "3.5"
 rustfft = "6"
+whisper-rs = "0.16"
 
 [dev-dependencies]
 stt-core = { path = "../stt-core" }

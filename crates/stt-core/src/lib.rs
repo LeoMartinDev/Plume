@@ -115,19 +115,19 @@ impl PartialTranscript {
 /// The user released or toggled off and a latest partial exists to refine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finalizing {
-    latest: PartialTranscript,
+    latest: Option<PartialTranscript>,
 }
 
 impl Finalizing {
-    pub fn latest(&self) -> &PartialTranscript {
-        &self.latest
+    pub fn latest(&self) -> Option<&PartialTranscript> {
+        self.latest.as_ref()
     }
 
     pub fn on_partial(self, hypothesis: PartialHypothesis) -> Self {
         Finalizing {
-            latest: PartialTranscript {
+            latest: Some(PartialTranscript {
                 text: hypothesis.text,
-            },
+            }),
         }
     }
 
@@ -168,9 +168,9 @@ impl Recording {
         (Session::Idle, transcript)
     }
 
-    /// Release before any hypothesis. Nothing to refine, nothing to inject.
-    pub fn release(self) -> Session {
-        Session::Idle
+    /// Release before any hypothesis still waits for the engine's final text.
+    pub fn release(self) -> Finalizing {
+        Finalizing { latest: None }
     }
 
     pub fn cancel(self) -> Cancelled {
@@ -204,7 +204,7 @@ impl Streaming {
     /// the same latest partial.
     pub fn release(self) -> Finalizing {
         Finalizing {
-            latest: self.latest,
+            latest: Some(self.latest),
         }
     }
 
@@ -250,7 +250,7 @@ impl Session {
     pub fn toggle(self) -> Self {
         match self {
             Session::Idle => Session::Recording(Recording),
-            Session::Recording(recording) => recording.release(),
+            Session::Recording(recording) => Session::Finalizing(recording.release()),
             Session::Streaming(streaming) => Session::Finalizing(streaming.release()),
             closing => closing,
         }
@@ -334,7 +334,10 @@ mod tests {
         assert_eq!(streaming.latest().text(), "bonjour");
 
         let finalizing = streaming.release();
-        assert_eq!(finalizing.latest().text(), "bonjour");
+        assert_eq!(
+            finalizing.latest().map(PartialTranscript::text),
+            Some("bonjour")
+        );
 
         // Esc during finalization: -> cancelled, partials dropped.
         let cancelled = finalizing.cancel();
@@ -355,12 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn release_before_any_hypothesis_returns_to_idle() {
+    fn release_before_any_hypothesis_waits_for_final() {
         let session = Session::new().hold();
         let Session::Recording(recording) = session else {
             panic!("hold from idle must start recording");
         };
-        assert_eq!(recording.release().state(), SessionState::Idle);
+        assert_eq!(recording.release().latest(), None);
     }
 
     #[test]

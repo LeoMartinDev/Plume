@@ -37,12 +37,11 @@ impl Dictation {
         self.session = mem::take(&mut self.session).hold();
     }
 
-    /// Recording with no partials -> Idle.
-    /// Streaming -> Finalizing, keeping latest.
+    /// Recording or Streaming -> Finalizing, waiting for the engine's final.
     /// Already closing -> no-op.
     pub fn release(&mut self) {
         self.session = match mem::take(&mut self.session) {
-            Session::Recording(recording) => recording.release(),
+            Session::Recording(recording) => Session::Finalizing(recording.release()),
             Session::Streaming(streaming) => Session::Finalizing(streaming.release()),
             closing => closing,
         };
@@ -109,21 +108,33 @@ impl Dictation {
                 })
             }
             (Session::Finalizing(finalizing), Hypothesis::Partial(partial)) => {
-                let old = finalizing.latest().text().to_string();
                 let new = partial.text.clone();
+                let edit = match finalizing.latest() {
+                    Some(latest) => Edit::Replace {
+                        old: latest.text().to_string(),
+                        new: new.clone(),
+                    },
+                    None => Edit::Insert(new.clone()),
+                };
                 self.session = Session::Finalizing(finalizing.on_partial(partial));
                 Ok(Step {
-                    edit: Some(Edit::Replace { old, new }),
+                    edit: Some(edit),
                     transcript: None,
                 })
             }
             (Session::Finalizing(finalizing), Hypothesis::Final(transcript)) => {
-                let old = finalizing.latest().text().to_string();
                 let new = transcript.text.clone();
+                let edit = match finalizing.latest() {
+                    Some(latest) => Edit::Replace {
+                        old: latest.text().to_string(),
+                        new: new.clone(),
+                    },
+                    None => Edit::Insert(new.clone()),
+                };
                 let (session, transcript) = finalizing.finish(transcript);
                 self.session = session;
                 Ok(Step {
-                    edit: Some(Edit::Replace { old, new }),
+                    edit: Some(edit),
                     transcript: Some(transcript),
                 })
             }
