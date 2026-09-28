@@ -240,6 +240,7 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
             )
         });
         self.bubbles.push_from(&dictation);
+        hold.discard_pending_events();
         self.hold = Some(hold);
         outcome
     }
