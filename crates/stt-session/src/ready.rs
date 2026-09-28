@@ -69,6 +69,7 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
     let (level_tx, level_rx) = mpsc::sync_channel(8);
     let (hold_tx, hold_rx) = mpsc::channel();
     let (engine_tx, engine_rx) = mpsc::channel();
+    let (completion_tx, completion_rx) = mpsc::channel();
     let hold_raw = config.hold.as_str().to_string();
     let worker = Idle::new(
         hold,
@@ -77,6 +78,8 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         config.cancel,
         engine,
         engine_rx,
+        completion_tx,
+        completion_rx,
         Target::new(injector),
         BubbleSink::new(bubble_tx),
         level_tx,

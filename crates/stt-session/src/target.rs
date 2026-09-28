@@ -35,6 +35,7 @@ impl<I: TextInjector> Target<I> {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn retract(&mut self) -> Result<(), BoxError> {
         if self.inserted.is_empty() {
             return Ok(());

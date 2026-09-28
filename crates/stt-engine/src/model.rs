@@ -105,11 +105,13 @@ impl LanguageTarget {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum EngineBackend {
     Nemotron(Arc<OrtInner>),
     Whisper(Arc<WhisperContext>),
 }
 
+#[derive(Clone)]
 pub struct Engine {
     pub(crate) backend: EngineBackend,
     pub(crate) language: Arc<AtomicI64>,

@@ -2,7 +2,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use stt_audio::Mic;
-use stt_core::{AsrEngine, BoxError, Dictation, Edit, HotkeyEvent, Hypothesis, TextInjector};
+use stt_core::{AsrEngine, Dictation, Edit, HotkeyEvent, Hypothesis, TextInjector};
 use stt_overlay::Bubble;
 
 use crate::capture::{self, AudioPump};
@@ -25,12 +25,15 @@ impl BubbleSink {
     }
 }
 
+#[cfg(test)]
 pub(crate) trait Postpass {
     fn clean(&self, transcript: &str) -> String;
 }
 
+#[cfg(test)]
 pub(crate) struct NoopPostpass;
 
+#[cfg(test)]
 impl Postpass for NoopPostpass {
     fn clean(&self, transcript: &str) -> String {
         transcript.to_string()
@@ -39,17 +42,22 @@ impl Postpass for NoopPostpass {
 
 #[derive(Debug)]
 pub(crate) enum Outcome {
+    #[cfg(test)]
     Committed(String),
+    Released,
+    #[cfg(test)]
     EmptyRelease,
     Cancelled,
     Aborted(String),
 }
 
+#[cfg(test)]
 enum Fold {
     Continue,
     Done(Outcome),
 }
 
+#[cfg(test)]
 fn fold_hypothesis<I: TextInjector, P: Postpass>(
     dictation: &mut Dictation,
     target: &mut Target<I>,
@@ -88,6 +96,8 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     cancel_spec: ChordSpec,
     engine: E,
     engine_rx: mpsc::Receiver<E>,
+    completion_tx: mpsc::Sender<Result<String, String>>,
+    completion_rx: mpsc::Receiver<Result<String, String>>,
     target: Target<I>,
     bubbles: BubbleSink,
     levels: mpsc::SyncSender<f32>,
@@ -101,6 +111,8 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         cancel_spec: ChordSpec,
         engine: E,
         engine_rx: mpsc::Receiver<E>,
+        completion_tx: mpsc::Sender<Result<String, String>>,
+        completion_rx: mpsc::Receiver<Result<String, String>>,
         target: Target<I>,
         bubbles: BubbleSink,
         levels: mpsc::SyncSender<f32>,
@@ -112,6 +124,8 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             cancel_spec,
             engine,
             engine_rx,
+            completion_tx,
+            completion_rx,
             target,
             bubbles,
             levels,
@@ -165,21 +179,25 @@ fn drain_latest(rx: &mpsc::Receiver<String>) -> Option<String> {
     latest
 }
 
-impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
+impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
     pub(crate) fn run(mut self) -> ! {
         loop {
             while let Ok(engine) = self.engine_rx.try_recv() {
                 self.engine = engine;
             }
+            self.drain_completions();
             self.retarget_hold();
             match self.hold.as_mut().and_then(|hold| hold.next_event()) {
                 Some(HotkeyEvent::Pressed) => {
                     let outcome = self.session_once();
                     self.target.reset();
                     match &outcome {
+                        #[cfg(test)]
                         Outcome::Committed(text) => {
                             eprintln!("stt-session: committed {} chars", text.len())
                         }
+                        Outcome::Released => {}
+                        #[cfg(test)]
                         Outcome::EmptyRelease => eprintln!("stt-session: empty release"),
                         Outcome::Cancelled => eprintln!("stt-session: cancelled"),
                         Outcome::Aborted(reason) => {
@@ -218,92 +236,72 @@ impl<E: AsrEngine + Sync, I: TextInjector> Idle<E, I> {
             }
         };
         let (gate, pump, mic_pump) = capture::open_gate(mic, self.levels.clone());
-        let (hyp_tx, hyp_rx) = mpsc::channel();
-        let engine = &self.engine;
-        let outcome = std::thread::scope(|scope| {
-            scope.spawn(|| mic_pump.run());
-            scope.spawn(|| {
-                for hyp in engine.stream(gate.into_audio_stream()) {
-                    if hyp_tx.send(hyp).is_err() {
-                        break;
-                    }
-                }
-            });
-            Self::live_loop(
-                &mut hold,
-                &mut self.target,
-                &self.bubbles,
-                &mut dictation,
-                pump,
-                guard,
-                hyp_rx,
-            )
+        std::thread::spawn(move || mic_pump.run());
+        let engine = self.engine.clone();
+        let completion_tx = self.completion_tx.clone();
+        std::thread::spawn(move || {
+            let result = decode_final(&engine, gate.into_audio_stream());
+            let _ = completion_tx.send(result);
         });
-        self.bubbles.push_from(&dictation);
-        hold.discard_pending_events();
+        let outcome = Self::live_loop(&mut hold, &self.bubbles, &mut dictation, pump, guard);
         self.hold = Some(hold);
         outcome
     }
 
+    fn drain_completions(&mut self) {
+        while let Ok(completion) = self.completion_rx.try_recv() {
+            match completion {
+                Ok(text) if text.is_empty() => eprintln!("stt-session: empty release"),
+                Ok(text) => match self.target.apply_edit(&Edit::Insert(text.clone())) {
+                    Ok(()) => {
+                        self.target.reset();
+                        eprintln!("stt-session: committed {} chars", text.len());
+                    }
+                    Err(err) => eprintln!("stt-session: aborted: {}", describe_target_error(&err)),
+                },
+                Err(err) => eprintln!("stt-session: aborted: {err}"),
+            }
+        }
+    }
+
     fn live_loop(
         hold: &mut Chord,
-        target: &mut Target<I>,
         bubbles: &BubbleSink,
         dictation: &mut Dictation,
         pump: AudioPump,
         mut guard: CancelGuard,
-        hyp_rx: mpsc::Receiver<Result<Hypothesis, BoxError>>,
     ) -> Outcome {
         let mut pump = Some(pump);
-        let mut released = false;
         loop {
             if guard.cancelled() {
                 dictation.cancel();
                 if let Some(pump) = pump.take() {
                     pump.close();
                 }
-                drop(hyp_rx);
-                let _ = target.retract();
+                bubbles.push_from(dictation);
                 return Outcome::Cancelled;
             }
-            if !released && matches!(hold.next_event(), Some(HotkeyEvent::Released)) {
-                released = true;
+            if matches!(hold.next_event(), Some(HotkeyEvent::Released)) {
                 dictation.release();
                 if let Some(pump) = pump.take() {
                     pump.close();
                 }
                 bubbles.push_from(dictation);
+                return Outcome::Released;
             }
-            match hyp_rx.recv_timeout(POLL_QUANTUM) {
-                Ok(Ok(hyp)) => match fold_hypothesis(dictation, target, hyp, &NoopPostpass) {
-                    Fold::Continue => bubbles.push_from(dictation),
-                    Fold::Done(outcome) => {
-                        if let Some(pump) = pump.take() {
-                            pump.close();
-                        }
-                        return outcome;
-                    }
-                },
-                Ok(Err(err)) => {
-                    dictation.cancel();
-                    if let Some(pump) = pump.take() {
-                        pump.close();
-                    }
-                    let _ = target.retract();
-                    return Outcome::Aborted(err.to_string());
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    if let Some(pump) = pump.take() {
-                        pump.close();
-                    }
-                    return Outcome::Aborted(
-                        "decode thread ended without a final transcript".to_string(),
-                    );
-                }
-            }
+            std::thread::sleep(POLL_QUANTUM);
         }
     }
+}
+
+fn decode_final<E: AsrEngine>(engine: &E, audio: stt_core::AudioStream) -> Result<String, String> {
+    for item in engine.stream(audio) {
+        match item.map_err(|err| err.to_string())? {
+            Hypothesis::Final(transcript) => return Ok(transcript.text),
+            Hypothesis::Partial(_) => {}
+        }
+    }
+    Err("decode thread ended without a final transcript".to_string())
 }
 
 #[cfg(test)]
@@ -336,7 +334,7 @@ pub(crate) fn drive_cancel<I: TextInjector>(
 mod tests {
     use super::*;
     use crate::target::RecordingInjector;
-    use stt_core::{PartialHypothesis, Transcript};
+    use stt_core::{AudioChunk, AudioStream, HypothesisStream, PartialHypothesis, Transcript};
 
     fn partial(text: &str) -> Hypothesis {
         Hypothesis::Partial(PartialHypothesis {
@@ -356,6 +354,23 @@ mod tests {
         fn clean(&self, transcript: &str) -> String {
             transcript.to_uppercase()
         }
+    }
+
+    struct FinalEngine;
+
+    impl AsrEngine for FinalEngine {
+        fn stream(&self, _audio: AudioStream) -> HypothesisStream {
+            Box::new(std::iter::once(Ok(final_hyp("done"))))
+        }
+    }
+
+    #[test]
+    fn background_decode_returns_the_final_transcript() {
+        let audio: AudioStream = Box::new(std::iter::once(AudioChunk {
+            samples: vec![0.0; 16],
+            sample_rate: 16_000,
+        }));
+        assert_eq!(decode_final(&FinalEngine, audio).as_deref(), Ok("done"));
     }
 
     #[test]

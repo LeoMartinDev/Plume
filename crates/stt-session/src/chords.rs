@@ -42,13 +42,6 @@ impl Chord {
     pub(crate) fn next_event(&mut self) -> Option<HotkeyEvent> {
         self.hotkey.next_event()
     }
-
-    /// Drop events accumulated while the previous utterance was finalizing.
-    /// The hold listener is unavailable during that work, so replaying a
-    /// completed press/release pair would otherwise start an empty session.
-    pub(crate) fn discard_pending_events(&mut self) {
-        while self.hotkey.next_event().is_some() {}
-    }
 }
 
 /// Windows installs one process-wide low-level hook, so a second
