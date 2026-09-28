@@ -17,6 +17,7 @@ pub use stt_core::{BoxError, GlobalHotkey, HotkeyEvent};
 pub enum HotkeyError {
     Unsupported(&'static str),
     InvalidShortcut(String),
+    TooManyKeys(usize),
     Os(String),
 }
 
@@ -25,6 +26,9 @@ impl fmt::Display for HotkeyError {
         match self {
             HotkeyError::Unsupported(reason) => write!(f, "unsupported hotkey: {reason}"),
             HotkeyError::InvalidShortcut(raw) => write!(f, "invalid shortcut {raw:?}"),
+            HotkeyError::TooManyKeys(count) => {
+                write!(f, "shortcut can contain at most 3 keys (got {count})")
+            }
             HotkeyError::Os(detail) => write!(f, "hotkey os error: {detail}"),
         }
     }

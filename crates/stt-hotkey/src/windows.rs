@@ -54,8 +54,13 @@ pub(crate) fn decode_windows(vk: u32, flags: u32, msg: u32) -> Option<(KeyId, Ed
     Some((id, if up { Edge::Up } else { Edge::Down }))
 }
 
+fn should_block_windows_key(vk: u32, block_super: bool, super_down: bool) -> bool {
+    block_super && (super_down || matches!(windows_key_id(vk), Some(KeyId::Super)))
+}
+
 #[cfg(windows)]
 mod backend {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
     use std::sync::{Mutex, OnceLock};
     use std::thread::{self, JoinHandle};
@@ -69,7 +74,7 @@ mod backend {
         TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_QUIT,
     };
 
-    use super::decode_windows;
+    use super::{decode_windows, should_block_windows_key};
     use crate::chord::ChordTracker;
     use crate::shortcut::Shortcut;
     use crate::HotkeyError;
@@ -81,6 +86,8 @@ mod backend {
     }
 
     static HOOK_TX: OnceLock<Mutex<Option<Sender<WinRaw>>>> = OnceLock::new();
+    static BLOCK_SUPER: AtomicBool = AtomicBool::new(false);
+    static SUPER_DOWN: AtomicBool = AtomicBool::new(false);
 
     fn hook_tx() -> &'static Mutex<Option<Sender<WinRaw>>> {
         HOOK_TX.get_or_init(|| Mutex::new(None))
@@ -156,13 +163,35 @@ mod backend {
                     });
                 }
             }
+            let is_super = matches!(
+                super::windows_key_id(info.vkCode),
+                Some(super::KeyId::Super)
+            );
+            let is_up = info.flags & super::LLKHF_UP != 0;
+            if is_super && !is_up {
+                SUPER_DOWN.store(true, Ordering::Relaxed);
+            }
+            let block = should_block_windows_key(
+                info.vkCode,
+                BLOCK_SUPER.load(Ordering::Relaxed),
+                SUPER_DOWN.load(Ordering::Relaxed),
+            );
+            if is_super && is_up {
+                SUPER_DOWN.store(false, Ordering::Relaxed);
+            }
+            if block {
+                return 1;
+            }
         }
         CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
     }
 
     impl GlobalHotkey for WindowsHotkey {
         fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
-            self.tracker = Some(ChordTracker::new(Shortcut::parse(shortcut)?));
+            let shortcut = Shortcut::parse(shortcut)?;
+            BLOCK_SUPER.store(shortcut.super_key, Ordering::Relaxed);
+            SUPER_DOWN.store(false, Ordering::Relaxed);
+            self.tracker = Some(ChordTracker::new(shortcut));
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
@@ -186,6 +215,8 @@ mod backend {
 
     impl Drop for WindowsHotkey {
         fn drop(&mut self) {
+            BLOCK_SUPER.store(false, Ordering::Relaxed);
+            SUPER_DOWN.store(false, Ordering::Relaxed);
             {
                 let mut slot = hook_tx().lock().unwrap_or_else(|err| err.into_inner());
                 *slot = None;
@@ -244,5 +275,14 @@ mod tests {
     #[test]
     fn f9_virtual_key_maps_to_f9() {
         assert_eq!(windows_key_id(0x78), Some(KeyId::Trigger(Trigger::F(9))));
+    }
+
+    #[test]
+    fn windows_key_is_blocked_only_when_the_registered_chord_uses_it() {
+        assert!(should_block_windows_key(VK_LWIN, true, false));
+        assert!(should_block_windows_key(VK_RWIN, true, false));
+        assert!(!should_block_windows_key(VK_LWIN, false, false));
+        assert!(!should_block_windows_key(VK_SPACE, true, false));
+        assert!(should_block_windows_key(VK_SPACE, true, true));
     }
 }

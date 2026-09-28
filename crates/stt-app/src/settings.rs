@@ -3,15 +3,17 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, size, svg, AnyElement, App, Bounds, Context, Div, FocusHandle, FontWeight,
-    KeyDownEvent, SharedString, Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions,
+    bounds, canvas, deferred, div, fill, point, prelude::*, px, relative, size, svg, AnyElement,
+    App, Bounds, Context, Div, FocusHandle, FontWeight, KeyDownEvent, KeyUpEvent,
+    ModifiersChangedEvent, Rgba, ScrollHandle, SharedString, Subscription, TitlebarOptions, Window,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 use stt_engine::{Language, LanguageTarget};
 use stt_session::{EngineTarget, HoldTarget};
 use stt_ui::{Palette, Segment, Segmented, Tokens};
 
 use crate::catalog::{self, ModelEntry, ModelId};
+use crate::download::{DownloadRequest, DownloadRequestTracker};
 use crate::hold::{classify_keydown, pill_label, CaptureEffect, ChordText, HoldCapture, ModBits};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::{AppearancePref, LanguagePref, Prefs, Scheme, DEFAULT_HOLD};
@@ -65,9 +67,11 @@ pub struct SettingsView {
     save_error: Option<String>,
     capture: HoldCapture,
     hold_focus: FocusHandle,
+    content_scroll: ScrollHandle,
     hold_target: Option<HoldTarget>,
     engine_target: Option<EngineTarget>,
     language_target: Option<LanguageTarget>,
+    downloads: DownloadRequestTracker,
     _appearance: Subscription,
 }
 
@@ -80,6 +84,40 @@ impl SettingsView {
         self.reset_for_phase();
         self.phase = phase;
         cx.notify();
+    }
+
+    fn register_download(&mut self, model: ModelId) -> DownloadRequest {
+        self.downloads.register(model)
+    }
+
+    fn accepts_download(&self, request: DownloadRequest) -> bool {
+        self.downloads.accepts(self.phase.prefs().model, request)
+    }
+
+    fn begin_download(&mut self, prefs: Prefs, cx: &mut Context<Self>) -> DownloadRequest {
+        let request = self.register_download(prefs.model);
+        let installed = catalog::is_complete(prefs.model, &prefs.model.data_dir());
+        let status = if installed {
+            OnboardStatus::Activating
+        } else {
+            OnboardStatus::Fetching {
+                last: Progress {
+                    file: "starting".into(),
+                    bytes: 0,
+                    total: None,
+                    bytes_per_second: None,
+                },
+            }
+        };
+        self.set_phase(
+            AppPhase::Onboarding {
+                prefs,
+                status,
+                warning: None,
+            },
+            cx,
+        );
+        request
     }
 
     pub fn toggle_hold_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -107,8 +145,45 @@ impl SettingsView {
             event.keystroke.key.as_str(),
             ModBits::from_gpui(event.keystroke.modifiers),
         );
-        match self.capture.apply(stroke) {
-            CaptureEffect::None | CaptureEffect::StayListening => {}
+        let effect = self.capture.apply(stroke);
+        self.handle_hold_capture(effect, window, cx);
+    }
+
+    pub fn on_hold_modifiers(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        window.prevent_default();
+        let effect = self
+            .capture
+            .apply_modifiers(ModBits::from_gpui(event.modifiers));
+        self.handle_hold_capture(effect, window, cx);
+    }
+
+    pub fn on_hold_key_up(
+        &mut self,
+        _event: &KeyUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        window.prevent_default();
+        let effect = self.capture.apply_key_up();
+        self.handle_hold_capture(effect, window, cx);
+    }
+
+    fn handle_hold_capture(
+        &mut self,
+        effect: CaptureEffect,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match effect {
+            CaptureEffect::None => {}
+            CaptureEffect::StayListening => cx.notify(),
             CaptureEffect::Cancelled | CaptureEffect::Rejected(_) => {
                 window.blur();
                 cx.notify();
@@ -212,6 +287,7 @@ impl SettingsView {
     pub fn show_fetch_failed(&mut self, reason: String, cx: &mut Context<Self>) {
         self.reset_for_phase();
         self.section = SettingsSection::Model;
+        self.downloads.clear();
         if let AppPhase::Onboarding { status, .. } = &mut self.phase {
             *status = OnboardStatus::Failed { reason };
         }
@@ -226,6 +302,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         self.reset_for_phase();
+        self.downloads.clear();
         self.hold_target = Some(hold_target);
         self.engine_target = Some(engine_target);
         self.language_target = Some(language_target);
@@ -238,10 +315,37 @@ impl SettingsView {
     pub fn show_refused(&mut self, reason: String, cx: &mut Context<Self>) {
         self.reset_for_phase();
         self.section = SettingsSection::Model;
+        self.downloads.clear();
         self.phase = AppPhase::Refused {
             prefs: self.phase.prefs().clone(),
             reason,
         };
+        cx.notify();
+    }
+
+    fn delete_model(&mut self, id: ModelId, cx: &mut Context<Self>) {
+        let selected = self.phase.prefs().model == id;
+        if self.downloads.is_active_for(id) {
+            self.save_error =
+                Some("Wait for the current download to finish before deleting it.".into());
+            cx.notify();
+            return;
+        }
+
+        match crate::download::remove(id.offer(), &id.data_dir()) {
+            Ok(()) => {
+                self.save_error = None;
+                if selected {
+                    self.downloads.clear();
+                    self.phase = AppPhase::Onboarding {
+                        prefs: self.phase.prefs().clone(),
+                        status: OnboardStatus::Idle,
+                        warning: None,
+                    };
+                }
+            }
+            Err(err) => self.save_error = Some(format!("Could not delete model: {err}")),
+        }
         cx.notify();
     }
 }
@@ -255,7 +359,7 @@ fn engine_language(language: LanguagePref) -> Language {
 }
 
 pub fn open_settings(cx: &mut App, phase: AppPhase) {
-    let bounds = Bounds::centered(None, size(px(720.), px(280.)), cx);
+    let bounds = Bounds::centered(None, size(px(720.), px(480.)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -292,9 +396,11 @@ pub fn open_settings(cx: &mut App, phase: AppPhase) {
                         save_error: None,
                         capture: HoldCapture::idle(),
                         hold_focus: cx.focus_handle().tab_stop(true),
+                        content_scroll: ScrollHandle::new(),
                         hold_target: None,
                         engine_target: None,
                         language_target: None,
+                        downloads: DownloadRequestTracker::default(),
                         _appearance,
                     }
                 })
@@ -310,6 +416,28 @@ pub fn settings_window_set_phase(cx: &mut App, phase: AppPhase) {
     if let Some(handle) = handle {
         let _ = handle.update(cx, |view, _window, cx| view.set_phase(phase, cx));
     }
+}
+
+/// Registers a background reconciliation without changing the visible phase.
+pub fn settings_window_register_download(cx: &mut App, model: ModelId) -> Option<DownloadRequest> {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    handle.and_then(|handle| {
+        handle
+            .update(cx, |view, _window, _cx| view.register_download(model))
+            .ok()
+    })
+}
+
+/// Returns whether an event still belongs to the selected, latest request.
+pub fn settings_window_accepts_download(cx: &mut App, request: DownloadRequest) -> bool {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    handle
+        .and_then(|handle| {
+            handle
+                .update(cx, |view, _window, _cx| view.accepts_download(request))
+                .ok()
+        })
+        .unwrap_or(false)
 }
 
 pub fn settings_window_show_progress(cx: &mut App, last: Progress) {
@@ -356,6 +484,7 @@ pub fn settings_window_show_swapped(cx: &mut App, language_target: LanguageTarge
     if let Some(handle) = handle {
         let _ = handle.update(cx, |view, _window, cx| {
             view.language_target = Some(language_target);
+            view.downloads.clear();
             view.phase = AppPhase::Live {
                 prefs: view.phase.prefs().clone(),
             };
@@ -460,21 +589,61 @@ impl Render for SettingsView {
             .text_color(tokens.text)
             .child(sidebar(self.section, &tokens, cx))
             .child(
-                div().flex_1().h_full().p(px(8.)).child(
-                    div()
-                        .id("settings-content")
-                        .size_full()
-                        .overflow_y_scroll()
-                        .rounded(px(12.))
-                        .border_1()
-                        .border_color(tokens.hairline)
-                        .bg(tokens.content)
-                        .px(px(28.))
-                        .py(px(24.))
-                        .child(content),
-                ),
+                div()
+                    .flex_1()
+                    .h_full()
+                    .relative()
+                    .p(px(8.))
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.content_scroll)
+                            .rounded(px(12.))
+                            .border_1()
+                            .border_color(tokens.hairline)
+                            .bg(tokens.content)
+                            .px(px(28.))
+                            .py(px(24.))
+                            .child(content),
+                    )
+                    .child(scrollbar(self.content_scroll.clone(), tokens.muted)),
             )
     }
+}
+
+fn scrollbar(scroll: ScrollHandle, color: Rgba) -> impl IntoElement {
+    canvas(
+        move |_, _, _| (),
+        move |track, _, window, _| {
+            let max_offset: f32 = scroll.max_offset().height.into();
+            if max_offset <= 0. {
+                return;
+            }
+
+            let viewport_height: f32 = scroll.bounds().size.height.into();
+            let track_height: f32 = track.size.height.into();
+            let thumb_height = (track_height * viewport_height / (viewport_height + max_offset))
+                .max(24.)
+                .min(track_height);
+            let offset: f32 = (-scroll.offset().y).into();
+            let thumb_top = (track_height - thumb_height) * (offset / max_offset);
+
+            window.paint_quad(fill(
+                bounds(
+                    point(track.left(), track.top() + px(thumb_top)),
+                    size(track.size.width, px(thumb_height)),
+                ),
+                color,
+            ));
+        },
+    )
+    .absolute()
+    .top(px(16.))
+    .bottom(px(16.))
+    .right(px(12.))
+    .w(px(4.))
 }
 
 fn sidebar(
@@ -595,7 +764,12 @@ fn dictation_page(
 ) -> AnyElement {
     let listening = view.capture.is_listening();
     let label = if listening {
-        SharedString::from(pill_label(view.capture.phase(), prefs.hold()).to_string())
+        SharedString::from(
+            view.capture
+                .preview()
+                .unwrap_or_else(|| pill_label(view.capture.phase(), prefs.hold()))
+                .to_string(),
+        )
     } else {
         SharedString::from(pretty_hold(prefs.hold()))
     };
@@ -625,6 +799,8 @@ fn dictation_page(
                     .when(listening, |el| el.bg(tokens.fill))
                     .when(listening, |el| {
                         el.on_key_down(cx.listener(SettingsView::on_hold_key))
+                            .on_key_up(cx.listener(SettingsView::on_hold_key_up))
+                            .on_modifiers_changed(cx.listener(SettingsView::on_hold_modifiers))
                     })
                     .child(
                         div()
@@ -637,7 +813,11 @@ fn dictation_page(
                                     .text_xs()
                                     .text_color(tokens.muted)
                                     .child(if listening {
-                                        "Press the new shortcut"
+                                        if view.capture.preview().is_some() {
+                                            "Release the keys to apply"
+                                        } else {
+                                            "Press the new shortcut"
+                                        }
                                     } else {
                                         "Hold while speaking"
                                     }),
@@ -729,9 +909,15 @@ fn model_catalog(
             .iter()
             .enumerate()
             .flat_map(|(index, entry)| {
-                let mut rows = vec![
-                    catalog_model_row(entry, &view.phase, tokens, prefs, cx).into_any_element()
-                ];
+                let mut rows = vec![catalog_model_row(
+                    entry,
+                    &view.phase,
+                    view.downloads.is_active_for(entry.id),
+                    tokens,
+                    prefs,
+                    cx,
+                )
+                .into_any_element()];
                 if index + 1 < catalog::entries().len() {
                     rows.push(
                         div()
@@ -749,6 +935,7 @@ fn model_catalog(
 fn catalog_model_row(
     entry: &ModelEntry,
     phase: &AppPhase,
+    request_active: bool,
     tokens: &Tokens,
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
@@ -758,11 +945,25 @@ fn catalog_model_row(
         LanguagePref::French => "French supported".to_string(),
         LanguagePref::English => "English supported".to_string(),
     };
-    let detail = format!("{} · {} · {}", entry.size, language, entry.guidance);
+    let progress = match phase {
+        AppPhase::Onboarding {
+            prefs,
+            status: OnboardStatus::Fetching { last },
+            ..
+        } if prefs.model == entry.id => Some(last),
+        _ => None,
+    };
+    let detail = match progress {
+        Some(progress) => download_status(progress).unwrap_or_default(),
+        None => format!("{} · {} · {}", entry.size, language, entry.guidance),
+    };
     let (label, enabled) = catalog_model_action(phase, entry.id);
+    let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
+    let can_delete = installed && !request_active;
     div()
         .id(SharedString::from(format!("model-{}", entry.id.as_str())))
         .w_full()
+        .relative()
         .min_h(px(68.))
         .px(px(14.))
         .py(px(10.))
@@ -774,6 +975,7 @@ fn catalog_model_row(
         .child(
             div()
                 .flex_1()
+                .min_w(px(0.))
                 .flex()
                 .flex_col()
                 .gap(px(3.))
@@ -783,18 +985,39 @@ fn catalog_model_row(
                         .font_weight(FontWeight::MEDIUM)
                         .child(entry.name),
                 )
-                .child(div().text_xs().text_color(tokens.muted).child(detail)),
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(16.))
+                        .flex()
+                        .items_center()
+                        .truncate()
+                        .text_xs()
+                        .text_color(tokens.muted)
+                        .child(detail),
+                ),
         )
-        .child(catalog_model_button(tokens, entry.id, label, enabled, cx))
+        .child(
+            div()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(6.))
+                .children(can_delete.then(|| catalog_model_delete_button(tokens, entry.id, cx)))
+                .child(catalog_model_button(tokens, entry.id, label, enabled, cx)),
+        )
+        .children(progress.and_then(|progress| catalog_model_progress(progress, tokens)))
 }
 
 fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
+    let installed = catalog::is_complete(id, &id.data_dir());
     if phase.prefs().model == id {
         return match phase {
-            AppPhase::Live { .. } => ("In use".into(), false),
+            AppPhase::Live { .. } => (if installed { "In use" } else { "In memory" }.into(), false),
             AppPhase::Onboarding { status, .. } => match status {
                 OnboardStatus::Idle => ("Download".into(), true),
-                OnboardStatus::Fetching { last } => (download_progress(last).into(), false),
+                OnboardStatus::Activating => ("Use".into(), false),
+                OnboardStatus::Fetching { .. } => ("Downloading".into(), false),
                 OnboardStatus::Failed { .. } => ("Retry".into(), true),
             },
             AppPhase::Refused { .. } => ("Retry".into(), true),
@@ -803,11 +1026,10 @@ fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
     let busy = matches!(
         phase,
         AppPhase::Onboarding {
-            status: OnboardStatus::Fetching { .. },
+            status: OnboardStatus::Activating | OnboardStatus::Fetching { .. },
             ..
         }
     );
-    let installed = catalog::is_complete(id, &id.data_dir());
     (if installed { "Use" } else { "Download" }.into(), !busy)
 }
 
@@ -818,12 +1040,14 @@ fn catalog_model_button(
     enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
+    let download_action = matches!(label.as_ref(), "Download" | "Retry");
     div()
         .id(SharedString::from(format!("model-{}-action", id.as_str())))
         .h(px(32.))
-        .px(px(12.))
+        .w(px(108.))
         .flex()
         .items_center()
+        .justify_center()
         .rounded(px(6.))
         .border_1()
         .border_color(tokens.hairline)
@@ -837,10 +1061,69 @@ fn catalog_model_button(
                     this.capture.cancel();
                     let mut prefs = this.phase.prefs().clone();
                     prefs.model = id;
-                    crate::begin_pack(cx, prefs);
+                    let request = this.begin_download(prefs.clone(), cx);
+                    crate::begin_pack(cx, prefs, request);
                 }))
         })
-        .child(label)
+        .when(download_action, |el| {
+            el.child(
+                svg()
+                    .path("fluent/download.svg")
+                    .size(px(16.))
+                    .text_color(if enabled { tokens.text } else { tokens.muted }),
+            )
+        })
+        .when(!download_action, |el| el.child(label))
+}
+
+fn catalog_model_delete_button(
+    tokens: &Tokens,
+    id: ModelId,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(format!("model-{}-delete", id.as_str())))
+        .h(px(32.))
+        .w(px(32.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .text_color(tokens.muted)
+        .cursor_pointer()
+        .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            this.capture.cancel();
+            this.delete_model(id, cx);
+        }))
+        .child(
+            svg()
+                .path("fluent/delete.svg")
+                .size(px(16.))
+                .text_color(tokens.muted),
+        )
+}
+
+fn catalog_model_progress(progress: &Progress, tokens: &Tokens) -> Option<Div> {
+    let total = progress.total.filter(|total| *total > 0)?;
+    let fraction = (progress.bytes as f64 / total as f64).clamp(0.0, 1.0) as f32;
+    Some(
+        div()
+            .absolute()
+            .left(px(14.))
+            .right(px(14.))
+            .bottom(px(3.))
+            .h(px(3.))
+            .rounded(px(2.))
+            .bg(tokens.fill)
+            .child(
+                div()
+                    .h_full()
+                    .w(relative(fraction))
+                    .rounded(px(2.))
+                    .bg(tokens.accent),
+            ),
+    )
 }
 
 fn model_error(phase: &AppPhase) -> Option<String> {
@@ -849,20 +1132,41 @@ fn model_error(phase: &AppPhase) -> Option<String> {
         AppPhase::Onboarding {
             status, warning, ..
         } => match status {
-            OnboardStatus::Idle | OnboardStatus::Fetching { .. } => warning.clone(),
+            OnboardStatus::Idle | OnboardStatus::Activating | OnboardStatus::Fetching { .. } => {
+                warning.clone()
+            }
             OnboardStatus::Failed { reason } => Some(reason.clone()),
         },
         AppPhase::Refused { reason, .. } => Some(reason.clone()),
     }
 }
 
-fn download_progress(progress: &Progress) -> String {
-    match progress.total {
-        Some(total) if total > 0 => {
-            let percent = (progress.bytes.saturating_mul(100) / total).min(100);
-            format!("Downloading {percent}%")
-        }
-        _ => "Downloading…".to_string(),
+fn download_status(progress: &Progress) -> Option<String> {
+    let mut parts = Vec::with_capacity(2);
+    if let Some(total) = progress.total.filter(|total| *total > 0) {
+        let percent = (progress.bytes.saturating_mul(100) / total).min(100);
+        parts.push(format!("{percent}%"));
+    }
+    if let Some(speed) = progress_speed(progress.bytes_per_second) {
+        parts.push(speed);
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+fn progress_speed(bytes_per_second: Option<u64>) -> Option<String> {
+    bytes_per_second.map(|bytes| format!("{}/s", format_bytes(bytes)))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= MB {
+        format!("{:.1} MB", bytes / MB)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes / KB)
+    } else {
+        format!("{} B", bytes as u64)
     }
 }
 
@@ -915,44 +1219,48 @@ fn language_row(
         )
         .when(open, |el| {
             el.child(
-                div()
-                    .absolute()
-                    .bottom(px(46.))
-                    .right(px(14.))
-                    .w(px(156.))
-                    .p(px(4.))
-                    .flex()
-                    .flex_col()
-                    .rounded(px(7.))
-                    .border_1()
-                    .border_color(tokens.hairline)
-                    .bg(tokens.elevated)
-                    .shadow_md()
-                    .children(LANGUAGES.into_iter().map(|language| {
-                        let active = language == selected;
-                        div()
-                            .id(SharedString::from(format!(
-                                "language-{}",
-                                language.as_str()
-                            )))
-                            .h(px(30.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(5.))
-                            .text_sm()
-                            .when(active, |row| {
-                                row.bg(tokens.fill).font_weight(FontWeight::MEDIUM)
-                            })
-                            .when(!active, |row| {
-                                row.cursor_pointer()
-                                    .hover(|style| style.bg(tokens.fill_hover))
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.commit_language(language, cx);
-                                    }))
-                            })
-                            .child(language.label())
-                    })),
+                // The model catalog is a later sibling, so paint the menu after the page content.
+                deferred(
+                    div()
+                        .absolute()
+                        .bottom(px(46.))
+                        .right(px(14.))
+                        .w(px(156.))
+                        .p(px(4.))
+                        .flex()
+                        .flex_col()
+                        .rounded(px(7.))
+                        .border_1()
+                        .border_color(tokens.hairline)
+                        .bg(tokens.elevated)
+                        .shadow_md()
+                        .children(LANGUAGES.into_iter().map(|language| {
+                            let active = language == selected;
+                            div()
+                                .id(SharedString::from(format!(
+                                    "language-{}",
+                                    language.as_str()
+                                )))
+                                .h(px(30.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(5.))
+                                .text_sm()
+                                .when(active, |row| {
+                                    row.bg(tokens.fill).font_weight(FontWeight::MEDIUM)
+                                })
+                                .when(!active, |row| {
+                                    row.cursor_pointer()
+                                        .hover(|style| style.bg(tokens.fill_hover))
+                                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                                            this.commit_language(language, cx);
+                                        }))
+                                })
+                                .child(language.label())
+                        })),
+                )
+                .with_priority(1),
             )
         })
 }
@@ -999,7 +1307,7 @@ fn pretty_hold(hold: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_progress, pretty_hold};
+    use super::{download_status, format_bytes, pretty_hold};
     use crate::phase::Progress;
 
     #[test]
@@ -1012,20 +1320,32 @@ mod tests {
     #[test]
     fn progress_is_compact_and_bounded() {
         assert_eq!(
-            download_progress(&Progress {
+            download_status(&Progress {
+                file: "starting".into(),
+                bytes: 0,
+                total: None,
+                bytes_per_second: None,
+            }),
+            None
+        );
+        assert_eq!(
+            download_status(&Progress {
                 file: "encoder.onnx".into(),
                 bytes: 25,
                 total: Some(100),
+                bytes_per_second: None,
             }),
-            "Downloading 25%"
+            Some("25%".to_string())
         );
         assert_eq!(
-            download_progress(&Progress {
+            download_status(&Progress {
                 file: "encoder.onnx".into(),
                 bytes: 150,
                 total: Some(100),
+                bytes_per_second: Some(10 * 1024 * 1024),
             }),
-            "Downloading 100%"
+            Some("100% · 10.0 MB/s".to_string())
         );
+        assert_eq!(format_bytes(1536), "1.5 KB");
     }
 }

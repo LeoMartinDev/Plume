@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use stt_engine::Engine;
 
@@ -18,15 +19,75 @@ impl ModelId {
     }
 }
 
+/// Identifies one reconciliation attempt for a particular model.
+///
+/// A model can be selected more than once while an earlier attempt is still
+/// running, so the model id alone is not enough to identify the current work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DownloadRequest {
+    pub model: ModelId,
+    pub generation: u64,
+}
+
+/// Tracks which request is currently allowed to update the application.
+#[derive(Default)]
+pub struct DownloadRequestTracker {
+    next_generation: u64,
+    active: Option<DownloadRequest>,
+}
+
+impl DownloadRequestTracker {
+    pub fn register(&mut self, model: ModelId) -> DownloadRequest {
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let request = DownloadRequest {
+            model,
+            generation: self.next_generation,
+        };
+        self.active = Some(request);
+        request
+    }
+
+    pub fn accepts(&self, selected_model: ModelId, request: DownloadRequest) -> bool {
+        self.active == Some(request) && selected_model == request.model
+    }
+
+    pub fn is_active_for(&self, model: ModelId) -> bool {
+        self.active.is_some_and(|request| request.model == model)
+    }
+
+    pub fn clear(&mut self) {
+        self.active = None;
+    }
+}
+
 pub enum PackStatus {
     Proven(Engine),
     Incomplete(Staging),
 }
 
 pub enum DownloadEvent {
-    Progress(Progress),
-    Proven(Engine),
-    Failed(DownloadError),
+    Progress {
+        request: DownloadRequest,
+        last: Progress,
+    },
+    Proven {
+        request: DownloadRequest,
+        engine: Engine,
+    },
+    Failed {
+        request: DownloadRequest,
+        error: DownloadError,
+    },
+}
+
+impl DownloadEvent {
+    pub fn request(&self) -> DownloadRequest {
+        match self {
+            Self::Progress { request, .. }
+            | Self::Proven { request, .. }
+            | Self::Failed { request, .. } => *request,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -70,24 +131,35 @@ impl Staging {
                 .is_some()
     }
 
-    pub fn resume(&mut self, events: mpsc::Sender<DownloadEvent>) {
-        self.resume_with(&UreqFetch, events);
+    pub fn resume(&mut self, request: DownloadRequest, events: mpsc::Sender<DownloadEvent>) {
+        self.resume_with(&UreqFetch, request, events);
     }
 
-    fn resume_with(&mut self, fetch: &dyn Fetch, events: mpsc::Sender<DownloadEvent>) {
-        if let Err(err) = self.resume_inner(fetch, &events) {
-            let _ = events.send(DownloadEvent::Failed(err));
+    fn resume_with(
+        &mut self,
+        fetch: &dyn Fetch,
+        request: DownloadRequest,
+        events: mpsc::Sender<DownloadEvent>,
+    ) {
+        debug_assert_eq!(request.model, self.offer.id);
+        if let Err(error) = self.resume_inner(fetch, request, &events) {
+            let _ = events.send(DownloadEvent::Failed { request, error });
         }
     }
 
     fn resume_inner(
         &mut self,
         fetch: &dyn Fetch,
+        request: DownloadRequest,
         events: &mpsc::Sender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
         let entry = self.offer.id.entry();
         let repo = entry.repo;
         let revision = entry.revision;
+        let total_bytes = entry.files.iter().map(|file| file.bytes).sum();
+        let mut completed_bytes = 0u64;
+        let mut downloaded_bytes = 0u64;
+        let download_started = Instant::now();
         std::fs::create_dir_all(&self.partial)?;
         for model_file in entry.files {
             let name = model_file.local;
@@ -95,6 +167,7 @@ impl Staging {
             let part = self.partial.join(format!("{name}.part"));
             if done.is_file() {
                 let _ = std::fs::remove_file(&part);
+                completed_bytes = completed_bytes.saturating_add(model_file.bytes);
                 continue;
             }
             if part.exists() {
@@ -106,14 +179,26 @@ impl Staging {
             );
             let events = events.clone();
             let file = name.to_string();
-            fetch.fetch_to_file(&url, &part, &move |bytes, total| {
-                let _ = events.send(DownloadEvent::Progress(Progress {
-                    file: file.clone(),
-                    bytes,
-                    total,
-                }));
+            let base_bytes = completed_bytes;
+            let base_downloaded = downloaded_bytes;
+            fetch.fetch_to_file(&url, &part, &move |bytes, _| {
+                let elapsed = download_started.elapsed().as_secs_f64();
+                let bytes_per_second = (elapsed >= 0.1).then(|| {
+                    ((base_downloaded.saturating_add(bytes)) as f64 / elapsed).round() as u64
+                });
+                let _ = events.send(DownloadEvent::Progress {
+                    request,
+                    last: Progress {
+                        file: file.clone(),
+                        bytes: base_bytes.saturating_add(bytes),
+                        total: Some(total_bytes),
+                        bytes_per_second,
+                    },
+                });
             })?;
             std::fs::rename(&part, &done)?;
+            completed_bytes = completed_bytes.saturating_add(model_file.bytes);
+            downloaded_bytes = downloaded_bytes.saturating_add(model_file.bytes);
         }
         if self.dest.exists() {
             std::fs::remove_dir_all(&self.dest)?;
@@ -121,7 +206,7 @@ impl Staging {
         std::fs::rename(&self.partial, &self.dest)?;
         match try_open(self.offer.id, &self.dest) {
             Ok(engine) => {
-                let _ = events.send(DownloadEvent::Proven(engine));
+                let _ = events.send(DownloadEvent::Proven { request, engine });
                 Ok(())
             }
             Err(err) => {
@@ -145,6 +230,22 @@ pub fn reconcile(offer: PackOffer, dest: &Path) -> Result<PackStatus, DownloadEr
         partial: sibling_partial(dest),
         offer,
     }))
+}
+
+/// Removes a downloaded model and any interrupted download for the same model.
+pub fn remove(_offer: PackOffer, dest: &Path) -> Result<(), DownloadError> {
+    remove_path(dest)?;
+    remove_path(&sibling_partial(dest))?;
+    Ok(())
+}
+
+fn remove_path(path: &Path) -> Result<(), DownloadError> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 fn sibling_partial(dest: &Path) -> PathBuf {
@@ -199,6 +300,8 @@ impl Fetch for UreqFetch {
         let mut file = std::fs::File::create(dest)?;
         let mut buf = [0u8; 64 * 1024];
         let mut received = 0u64;
+        let mut last_reported = 0u64;
+        let mut last_report = Instant::now();
         loop {
             let n = reader.read(&mut buf)?;
             if n == 0 {
@@ -206,6 +309,13 @@ impl Fetch for UreqFetch {
             }
             file.write_all(&buf[..n])?;
             received += n as u64;
+            if last_reported == 0 || last_report.elapsed() >= Duration::from_millis(50) {
+                progress(received, total);
+                last_reported = received;
+                last_report = Instant::now();
+            }
+        }
+        if last_reported != received {
             progress(received, total);
         }
         file.flush()?;
@@ -264,6 +374,35 @@ mod tests {
             .collect()
     }
 
+    fn request() -> DownloadRequest {
+        DownloadRequest {
+            model: ModelId::Nemotron35Compact,
+            generation: 1,
+        }
+    }
+
+    #[test]
+    fn tracker_rejects_an_older_request_after_reselecting_the_same_model() {
+        let mut tracker = DownloadRequestTracker::default();
+        let first = tracker.register(ModelId::Nemotron35Compact);
+        let _other = tracker.register(ModelId::WhisperBase);
+        let latest = tracker.register(ModelId::Nemotron35Compact);
+
+        assert!(!tracker.accepts(ModelId::Nemotron35Compact, first));
+        assert!(tracker.accepts(ModelId::Nemotron35Compact, latest));
+        assert!(tracker.is_active_for(ModelId::Nemotron35Compact));
+    }
+
+    #[test]
+    fn tracker_clear_rejects_the_active_request() {
+        let mut tracker = DownloadRequestTracker::default();
+        let request = tracker.register(ModelId::WhisperSmall);
+        tracker.clear();
+
+        assert!(!tracker.accepts(ModelId::WhisperSmall, request));
+        assert!(!tracker.is_active_for(ModelId::WhisperSmall));
+    }
+
     #[test]
     fn resume_keeps_whole_files_and_refetches_parts() {
         let dest = temp_dest("parts");
@@ -280,18 +419,29 @@ mod tests {
             offer: ModelId::Nemotron35Compact.offer(),
         };
         let (tx, rx) = mpsc::channel();
-        staging.resume_with(&fetch, tx);
+        staging.resume_with(&fetch, request(), tx);
         let events: Vec<_> = rx.iter().collect();
         assert!(
             events
                 .iter()
-                .any(|ev| matches!(ev, DownloadEvent::Failed(_))),
+                .any(|ev| matches!(ev, DownloadEvent::Failed { .. })),
             "dummy graphs must fail Engine::open"
         );
         assert!(!events.iter().any(|ev| match ev {
-            DownloadEvent::Progress(p) => p.file == "encoder.onnx",
+            DownloadEvent::Progress { last, .. } => last.file == "encoder.onnx",
             _ => false,
         }));
+        let progress: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                DownloadEvent::Progress { last, .. } => Some(last.bytes),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            progress.windows(2).all(|pair| pair[0] <= pair[1]),
+            "model progress must never reset between files: {progress:?}"
+        );
         let failed = dest.parent().unwrap().read_dir().unwrap().any(|entry| {
             entry
                 .ok()
@@ -318,6 +468,22 @@ mod tests {
             !dest.exists(),
             "failed dest must be renamed away so the next resume can fetch"
         );
+        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+    }
+
+    #[test]
+    fn remove_deletes_download_and_partial_directory() {
+        let dest = temp_dest("remove");
+        let partial = sibling_partial(&dest);
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(dest.join("model.bin"), b"model").unwrap();
+        std::fs::write(partial.join("model.bin.part"), b"partial").unwrap();
+
+        remove(ModelId::Nemotron35Compact.offer(), &dest).unwrap();
+
+        assert!(!dest.exists());
+        assert!(!partial.exists());
         let _ = std::fs::remove_dir_all(dest.parent().unwrap());
     }
 
@@ -360,15 +526,15 @@ mod tests {
             Ok(PackStatus::Proven(_)) => {}
             Ok(PackStatus::Incomplete(mut staging)) => {
                 let (tx, rx) = mpsc::channel();
-                std::thread::spawn(move || staging.resume(tx));
+                std::thread::spawn(move || staging.resume(request(), tx));
                 let mut proven = false;
                 for event in rx {
                     match event {
-                        DownloadEvent::Progress(last) => {
+                        DownloadEvent::Progress { last, .. } => {
                             eprintln!("live-light {} {} {:?}", last.file, last.bytes, last.total);
                         }
-                        DownloadEvent::Proven(_) => proven = true,
-                        DownloadEvent::Failed(err) => panic!("{err}"),
+                        DownloadEvent::Proven { .. } => proven = true,
+                        DownloadEvent::Failed { error, .. } => panic!("{error}"),
                     }
                 }
                 assert!(proven, "Light must open after fetch");

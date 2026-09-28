@@ -19,6 +19,7 @@ pub enum EngineKind {
 pub struct ModelFile {
     pub remote: &'static str,
     pub local: &'static str,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,49 +39,60 @@ const NEMOTRON_FILES: &[ModelFile] = &[
     ModelFile {
         remote: "encoder.onnx",
         local: "encoder.onnx",
+        bytes: 2_677_548,
     },
     ModelFile {
         remote: "encoder.onnx.data",
         local: "encoder.onnx.data",
+        bytes: 690_089_984,
     },
     ModelFile {
         remote: "decoder.onnx",
         local: "decoder.onnx",
+        bytes: 4_696,
     },
     ModelFile {
         remote: "decoder.onnx.data",
         local: "decoder.onnx.data",
+        bytes: 59_785_216,
     },
     ModelFile {
         remote: "joint.onnx",
         local: "joint.onnx",
+        bytes: 2_136,
     },
     ModelFile {
         remote: "joint.onnx.data",
         local: "joint.onnx.data",
+        bytes: 37_830_656,
     },
     ModelFile {
         remote: "silero_vad.onnx",
         local: "silero_vad.onnx",
+        bytes: 2_243_022,
     },
     ModelFile {
         remote: "tokenizer.json",
         local: "tokenizer.json",
+        bytes: 642_525,
     },
     ModelFile {
         remote: "vocab.txt",
         local: "vocab.txt",
+        bytes: 64_024,
     },
 ];
 
 const WHISPER_BASE_FILES: &[ModelFile] = &[ModelFile {
     remote: "ggml-base.bin",
     local: "model.bin",
+    bytes: 147_951_465,
 }];
 
 const WHISPER_SMALL_FILES: &[ModelFile] = &[ModelFile {
     remote: "ggml-small.bin",
     local: "model.bin",
+    bytes: 487_601_967,
 }];
 
 const CATALOG: &[ModelEntry] = &[

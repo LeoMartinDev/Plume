@@ -27,6 +27,14 @@ impl ModBits {
             fn_key: modifiers.function,
         }
     }
+
+    fn count(self) -> usize {
+        self.ctrl as usize
+            + self.alt as usize
+            + self.shift as usize
+            + self.super_key as usize
+            + self.fn_key as usize
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +51,7 @@ pub enum Stroke {
     Escape,
     Repeat,
     ModifierOnly,
+    TooManyKeys,
     Unknown,
     Chord(ChordText),
 }
@@ -66,6 +75,9 @@ pub fn classify_keydown(is_held: bool, key: &str, mods: ModBits) -> Stroke {
     }
     if is_modifier_key(&key) {
         return Stroke::ModifierOnly;
+    }
+    if mods.count() >= 3 {
+        return Stroke::TooManyKeys;
     }
     match spell_trigger(&key) {
         Some(trigger) => Stroke::Chord(ChordText(spell_chord(mods, &trigger))),
@@ -135,6 +147,12 @@ fn parse_function_key(key: &str) -> Option<u8> {
 }
 
 fn spell_chord(mods: ModBits, trigger: &str) -> String {
+    let mut parts = spell_modifiers(mods);
+    parts.push(trigger);
+    parts.join("+")
+}
+
+fn spell_modifiers(mods: ModBits) -> Vec<&'static str> {
     let mut parts = Vec::new();
     if mods.ctrl {
         parts.push("Ctrl");
@@ -151,8 +169,7 @@ fn spell_chord(mods: ModBits, trigger: &str) -> String {
     if mods.fn_key {
         parts.push("Fn");
     }
-    parts.push(trigger);
-    parts.join("+")
+    parts
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -187,6 +204,9 @@ pub enum CaptureEffect {
 pub struct HoldCapture {
     phase: HoldPhase,
     reject: Option<String>,
+    pending_modifiers: ModBits,
+    pending_chord: Option<ChordText>,
+    preview: Option<ChordText>,
 }
 
 impl HoldCapture {
@@ -194,6 +214,9 @@ impl HoldCapture {
         HoldCapture {
             phase: HoldPhase::Idle,
             reject: None,
+            pending_modifiers: ModBits::NONE,
+            pending_chord: None,
+            preview: None,
         }
     }
 
@@ -209,6 +232,10 @@ impl HoldCapture {
         self.reject.as_deref()
     }
 
+    pub fn preview(&self) -> Option<&str> {
+        self.preview.as_ref().map(ChordText::as_str)
+    }
+
     pub fn set_reject(&mut self, message: String) {
         self.reject = Some(message);
     }
@@ -219,12 +246,57 @@ impl HoldCapture {
 
     pub fn begin(&mut self) {
         self.phase = HoldPhase::Listening;
+        self.pending_modifiers = ModBits::NONE;
+        self.pending_chord = None;
+        self.preview = None;
         self.clear_reject();
     }
 
     pub fn cancel(&mut self) {
         self.phase = HoldPhase::Idle;
+        self.pending_modifiers = ModBits::NONE;
+        self.pending_chord = None;
+        self.preview = None;
         self.clear_reject();
+    }
+
+    pub fn apply_modifiers(&mut self, modifiers: ModBits) -> CaptureEffect {
+        if !self.is_listening() {
+            return CaptureEffect::None;
+        }
+        if self.pending_chord.is_some() {
+            return CaptureEffect::StayListening;
+        }
+        if modifiers.count() > 3 {
+            return self.reject_too_many_keys();
+        }
+
+        let previous = self.pending_modifiers;
+        if modifiers.count() >= previous.count() {
+            self.pending_modifiers = modifiers;
+            let parts = spell_modifiers(modifiers);
+            self.preview = (!parts.is_empty()).then(|| ChordText(parts.join("+")));
+            return CaptureEffect::StayListening;
+        }
+        if previous.count() == 0 {
+            return CaptureEffect::StayListening;
+        }
+
+        self.phase = HoldPhase::Idle;
+        self.pending_modifiers = ModBits::NONE;
+        self.preview = None;
+        self.clear_reject();
+        CaptureEffect::Offer(ChordText(spell_modifiers(previous).join("+")))
+    }
+
+    fn reject_too_many_keys(&mut self) -> CaptureEffect {
+        self.phase = HoldPhase::Idle;
+        self.pending_modifiers = ModBits::NONE;
+        self.pending_chord = None;
+        self.preview = None;
+        let message = "shortcut can contain at most 3 keys".to_string();
+        self.set_reject(message.clone());
+        CaptureEffect::Rejected(message)
     }
 
     pub fn apply(&mut self, stroke: Stroke) -> CaptureEffect {
@@ -233,22 +305,39 @@ impl HoldCapture {
         }
         match stroke {
             Stroke::Repeat | Stroke::ModifierOnly => CaptureEffect::StayListening,
+            Stroke::TooManyKeys => self.reject_too_many_keys(),
             Stroke::Escape => {
                 self.cancel();
                 CaptureEffect::Cancelled
             }
             Stroke::Unknown => {
                 self.phase = HoldPhase::Idle;
+                self.pending_modifiers = ModBits::NONE;
+                self.preview = None;
                 let message = "that key cannot be a hold trigger".to_string();
                 self.set_reject(message.clone());
                 CaptureEffect::Rejected(message)
             }
             Stroke::Chord(text) => {
-                self.phase = HoldPhase::Idle;
-                self.clear_reject();
-                CaptureEffect::Offer(text)
+                self.preview = Some(text.clone());
+                self.pending_chord = Some(text);
+                CaptureEffect::StayListening
             }
         }
+    }
+
+    pub fn apply_key_up(&mut self) -> CaptureEffect {
+        if !self.is_listening() {
+            return CaptureEffect::None;
+        }
+        let Some(chord) = self.pending_chord.take() else {
+            return CaptureEffect::StayListening;
+        };
+        self.phase = HoldPhase::Idle;
+        self.pending_modifiers = ModBits::NONE;
+        self.preview = None;
+        self.clear_reject();
+        CaptureEffect::Offer(chord)
     }
 }
 
@@ -327,7 +416,7 @@ mod tests {
                 false,
                 "enter",
                 bits(true, true, true, true, true),
-                Stroke::Chord(ChordText("Ctrl+Alt+Shift+Super+Fn+Return".into())),
+                Stroke::TooManyKeys,
             ),
             (false, "escape", ModBits::NONE, Stroke::Escape),
             (
@@ -367,6 +456,14 @@ mod tests {
             let got = classify_keydown(is_held, key, mods);
             assert_eq!(got, want, "classify({is_held}, {key:?}, {mods:?})");
         }
+    }
+
+    #[test]
+    fn rejects_more_than_three_keys() {
+        assert_eq!(
+            classify_keydown(false, "space", bits(true, true, true, false, false)),
+            Stroke::TooManyKeys
+        );
     }
 
     #[test]
@@ -474,7 +571,13 @@ mod tests {
             Stroke::Chord(text) => text,
             other => panic!("expected Chord, got {other:?}"),
         };
-        match cap.apply(Stroke::Chord(chord)) {
+        assert_eq!(
+            cap.apply(Stroke::Chord(chord)),
+            CaptureEffect::StayListening
+        );
+        assert_eq!(cap.preview(), Some("Ctrl+Space"));
+        assert!(cap.is_listening());
+        match cap.apply_key_up() {
             CaptureEffect::Offer(text) => assert_eq!(text.as_str(), "Ctrl+Space"),
             other => panic!("expected Offer, got {other:?}"),
         }
@@ -510,5 +613,38 @@ mod tests {
         assert_eq!(cap.reject(), None);
         cap.cancel();
         assert!(!cap.is_listening());
+    }
+
+    #[test]
+    fn modifier_only_capture_commits_on_first_release() {
+        let mut cap = HoldCapture::idle();
+        cap.begin();
+        assert_eq!(
+            cap.apply_modifiers(bits(false, false, false, true, false)),
+            CaptureEffect::StayListening
+        );
+        assert_eq!(cap.preview(), Some("Super"));
+        assert_eq!(
+            cap.apply_modifiers(bits(true, false, false, true, false)),
+            CaptureEffect::StayListening
+        );
+        assert_eq!(cap.preview(), Some("Ctrl+Super"));
+        match cap.apply_modifiers(bits(false, false, false, true, false)) {
+            CaptureEffect::Offer(text) => assert_eq!(text.as_str(), "Ctrl+Super"),
+            other => panic!("expected Offer, got {other:?}"),
+        }
+        assert!(!cap.is_listening());
+    }
+
+    #[test]
+    fn windows_key_alone_is_captured() {
+        let mut cap = HoldCapture::idle();
+        cap.begin();
+        cap.apply_modifiers(bits(false, false, false, true, false));
+        assert_eq!(cap.preview(), Some("Super"));
+        match cap.apply_modifiers(ModBits::NONE) {
+            CaptureEffect::Offer(text) => assert_eq!(text.as_str(), "Super"),
+            other => panic!("expected Offer, got {other:?}"),
+        }
     }
 }

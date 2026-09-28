@@ -16,14 +16,15 @@ use stt_engine::{Engine, Language};
 
 use crate::assets::Assets;
 
-use crate::download::{DownloadEvent, PackStatus};
+use crate::download::{DownloadEvent, DownloadRequest, PackStatus};
 use crate::lock::{AlreadyRunning, AppLock};
 use crate::phase::{AppPhase, OnboardStatus};
 use crate::prefs::{Prefs, PrefsLoad};
 use crate::settings::{
-    open_settings, settings_window_engine_target, settings_window_prefs, settings_window_set_phase,
-    settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
-    settings_window_show_refused, settings_window_show_swapped,
+    open_settings, settings_window_accepts_download, settings_window_engine_target,
+    settings_window_prefs, settings_window_register_download, settings_window_show_fetch_failed,
+    settings_window_show_live, settings_window_show_progress, settings_window_show_refused,
+    settings_window_show_swapped,
 };
 
 /// Product entry. Settings window first. Compositor starts after a proven pack.
@@ -42,11 +43,16 @@ pub fn product_main() {
             PrefsLoad::Fresh(prefs) | PrefsLoad::Loaded(prefs) => (prefs, None),
             PrefsLoad::Quarantined { prefs, warning } => (prefs, Some(warning)),
         };
+        let status = if catalog::is_complete(prefs.model, &prefs.model.data_dir()) {
+            OnboardStatus::Activating
+        } else {
+            OnboardStatus::Idle
+        };
         open_settings(
             cx,
             AppPhase::Onboarding {
                 prefs: prefs.clone(),
-                status: OnboardStatus::Idle,
+                status,
                 warning,
             },
         );
@@ -55,29 +61,24 @@ pub fn product_main() {
     });
 }
 
-pub fn begin_pack(cx: &mut App, prefs: Prefs) {
-    settings_window_set_phase(
-        cx,
-        AppPhase::Onboarding {
-            prefs: prefs.clone(),
-            status: OnboardStatus::Fetching {
-                last: crate::phase::Progress {
-                    file: "starting".into(),
-                    bytes: 0,
-                    total: None,
-                },
-            },
-            warning: None,
-        },
-    );
-    spawn_reconcile(cx, prefs, true);
+pub fn begin_pack(cx: &mut App, prefs: Prefs, request: DownloadRequest) {
+    spawn_reconcile(cx, prefs, request, true);
 }
 
 fn boot_after_window_opens(cx: &mut App, prefs: Prefs) {
-    spawn_reconcile(cx, prefs, false);
+    let Some(request) = settings_window_register_download(cx, prefs.model) else {
+        log_line("stt-app: initial reconcile request not registered");
+        return;
+    };
+    spawn_reconcile(cx, prefs, request, false);
 }
 
-fn spawn_reconcile(cx: &mut App, prefs: Prefs, fetch_if_incomplete: bool) {
+fn spawn_reconcile(
+    cx: &mut App,
+    prefs: Prefs,
+    request: DownloadRequest,
+    fetch_if_incomplete: bool,
+) {
     let dest = prefs.model.data_dir();
     let offer = prefs.model.offer();
     let (tx, rx) = mpsc::channel();
@@ -86,7 +87,7 @@ fn spawn_reconcile(cx: &mut App, prefs: Prefs, fetch_if_incomplete: bool) {
         match download::reconcile(offer, &dest) {
             Ok(PackStatus::Proven(engine)) => {
                 log_line("stt-app: pack proven");
-                match tx.send(DownloadEvent::Proven(engine)) {
+                match tx.send(DownloadEvent::Proven { request, engine }) {
                     Ok(()) => log_line("stt-app: proven sent"),
                     Err(_) => log_line("stt-app: proven send failed"),
                 }
@@ -94,12 +95,15 @@ fn spawn_reconcile(cx: &mut App, prefs: Prefs, fetch_if_incomplete: bool) {
             Ok(PackStatus::Incomplete(mut staging)) => {
                 eprintln!("stt-app: pack incomplete started={}", staging.started());
                 if fetch_if_incomplete || staging.started() {
-                    staging.resume(tx);
+                    staging.resume(request, tx);
                 }
             }
             Err(err) => {
                 eprintln!("stt-app: reconcile failed: {err}");
-                let _ = tx.send(DownloadEvent::Failed(err));
+                let _ = tx.send(DownloadEvent::Failed {
+                    request,
+                    error: err,
+                });
             }
         }
     });
@@ -137,14 +141,7 @@ fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
                 log_line(format!("stt-app: drain events={}", batch.len()));
             }
             for event in batch {
-                if cx
-                    .update(|cx| match event {
-                        DownloadEvent::Progress(last) => settings_window_show_progress(cx, last),
-                        DownloadEvent::Proven(engine) => go_live(cx, engine),
-                        DownloadEvent::Failed(err) => settings_window_show_fetch_failed(cx, err),
-                    })
-                    .is_err()
-                {
+                if cx.update(|cx| handle_download_event(cx, event)).is_err() {
                     log_line("stt-app: drain update failed");
                 }
             }
@@ -161,11 +158,36 @@ fn log_line(msg: impl std::fmt::Display) {
     let _ = std::io::Write::flush(&mut std::io::stderr());
 }
 
-fn go_live(cx: &mut App, engine: Engine) {
+fn handle_download_event(cx: &mut App, event: DownloadEvent) {
+    let request = event.request();
+    if !settings_window_accepts_download(cx, request) {
+        log_line(format!(
+            "stt-app: ignored stale download event model={} generation={}",
+            request.model.as_str(),
+            request.generation
+        ));
+        return;
+    }
+    match event {
+        DownloadEvent::Progress { last, .. } => settings_window_show_progress(cx, last),
+        DownloadEvent::Proven { engine, .. } => go_live(cx, request, engine),
+        DownloadEvent::Failed { error, .. } => settings_window_show_fetch_failed(cx, error),
+    }
+}
+
+fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
     log_line("stt-app: go_live");
+    if !settings_window_accepts_download(cx, request) {
+        log_line("stt-app: ignored stale proven download");
+        return;
+    }
     let Some(prefs) = settings_window_prefs(cx) else {
         return;
     };
+    if prefs.model != request.model {
+        log_line("stt-app: ignored proven download for a different model");
+        return;
+    }
     let language = match prefs.language() {
         crate::prefs::LanguagePref::Auto => Language::Auto,
         crate::prefs::LanguagePref::French => Language::French,
@@ -212,14 +234,20 @@ mod tests {
     use crate::download::DownloadError;
 
     fn failed(msg: &str) -> DownloadEvent {
-        DownloadEvent::Failed(DownloadError::Fetch(msg.into()))
+        DownloadEvent::Failed {
+            request: DownloadRequest {
+                model: crate::catalog::ModelId::Nemotron35Compact,
+                generation: 1,
+            },
+            error: DownloadError::Fetch(msg.into()),
+        }
     }
 
     fn failed_reason(event: &DownloadEvent) -> String {
         match event {
-            DownloadEvent::Failed(err) => err.to_string(),
-            DownloadEvent::Progress(_) => panic!("expected Failed, got Progress"),
-            DownloadEvent::Proven(_) => panic!("expected Failed, got Proven"),
+            DownloadEvent::Failed { error, .. } => error.to_string(),
+            DownloadEvent::Progress { .. } => panic!("expected Failed, got Progress"),
+            DownloadEvent::Proven { .. } => panic!("expected Failed, got Proven"),
         }
     }
 

@@ -102,4 +102,15 @@ mod tests {
         );
         assert_eq!(ChordSpec::parse("Esc").unwrap().as_str(), "Esc");
     }
+
+    #[test]
+    fn parse_accepts_windows_key_and_caps_chords_at_three_keys() {
+        assert_eq!(ChordSpec::parse("Super").unwrap().as_str(), "Super");
+        assert_eq!(
+            ChordSpec::parse("Ctrl+Super").unwrap().as_str(),
+            "Ctrl+Super"
+        );
+        assert!(ChordSpec::parse("Ctrl+Alt+Shift").is_ok());
+        assert!(ChordSpec::parse("Ctrl+Alt+Shift+Space").is_err());
+    }
 }

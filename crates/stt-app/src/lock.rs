@@ -100,16 +100,20 @@ fn windows_pid_alive(pid: u32) -> bool {
     use std::ffi::c_void;
     extern "system" {
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetExitCodeProcess(handle: *mut c_void, exit_code: *mut u32) -> i32;
         fn CloseHandle(handle: *mut c_void) -> i32;
     }
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle.is_null() {
             return false;
         }
+        let mut exit_code = 0;
+        let alive = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE;
         CloseHandle(handle);
-        true
+        alive
     }
 }
 
@@ -151,5 +155,11 @@ mod tests {
         assert_eq!(written.trim(), std::process::id().to_string());
         drop(lock);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_windows_process_is_alive() {
+        assert!(pid_alive(std::process::id()));
     }
 }

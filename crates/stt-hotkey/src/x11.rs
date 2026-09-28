@@ -17,13 +17,9 @@ const XK_ESCAPE: u32 = 0xff1b;
 const XK_TAB: u32 = 0xff09;
 const XK_RETURN: u32 = 0xff0d;
 const XK_F1: u32 = 0xffbe;
-#[cfg(test)]
 const XK_CONTROL_L: u32 = 0xffe3;
-#[cfg(test)]
 const XK_SHIFT_L: u32 = 0xffe1;
-#[cfg(test)]
 const XK_ALT_L: u32 = 0xffe9;
-#[cfg(test)]
 const XK_SUPER_L: u32 = 0xffeb;
 
 pub struct X11Hotkey {
@@ -137,28 +133,28 @@ impl GlobalHotkey for X11Hotkey {
         let mut shift = None;
         #[cfg(test)]
         let mut super_key = None;
-        if parsed.ctrl {
+        if parsed.ctrl && parsed.trigger != Trigger::Ctrl {
             base |= ModMask::CONTROL;
             #[cfg(test)]
             {
                 ctrl = Some(self.keycode(XK_CONTROL_L)?);
             }
         }
-        if parsed.alt {
+        if parsed.alt && parsed.trigger != Trigger::Alt {
             base |= ModMask::M1;
             #[cfg(test)]
             {
                 alt = Some(self.keycode(XK_ALT_L)?);
             }
         }
-        if parsed.shift {
+        if parsed.shift && parsed.trigger != Trigger::Shift {
             base |= ModMask::SHIFT;
             #[cfg(test)]
             {
                 shift = Some(self.keycode(XK_SHIFT_L)?);
             }
         }
-        if parsed.super_key {
+        if parsed.super_key && parsed.trigger != Trigger::Super {
             base |= ModMask::M4;
             #[cfg(test)]
             {
@@ -269,6 +265,10 @@ fn lock_combos(base: ModMask) -> [ModMask; 8] {
 
 fn trigger_keysym(trigger: Trigger) -> Result<u32, HotkeyError> {
     Ok(match trigger {
+        Trigger::Ctrl => XK_CONTROL_L,
+        Trigger::Alt => XK_ALT_L,
+        Trigger::Shift => XK_SHIFT_L,
+        Trigger::Super => XK_SUPER_L,
         Trigger::Space => XK_SPACE,
         Trigger::Escape => XK_ESCAPE,
         Trigger::Tab => XK_TAB,

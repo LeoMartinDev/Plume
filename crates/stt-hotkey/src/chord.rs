@@ -87,15 +87,25 @@ impl ChordTracker {
 fn apply_id(down: &mut Down, wanted_trigger: Trigger, id: KeyId, edge: Edge) {
     let on = matches!(edge, Edge::Down);
     match id {
-        KeyId::Ctrl => down.mods.ctrl = on,
-        KeyId::Alt => down.mods.alt = on,
-        KeyId::Shift => down.mods.shift = on,
-        KeyId::Super => down.mods.super_key = on,
+        KeyId::Ctrl => {
+            down.mods.ctrl = on;
+            apply_modifier_trigger(down, wanted_trigger, Trigger::Ctrl, on);
+        }
+        KeyId::Alt => {
+            down.mods.alt = on;
+            apply_modifier_trigger(down, wanted_trigger, Trigger::Alt, on);
+        }
+        KeyId::Shift => {
+            down.mods.shift = on;
+            apply_modifier_trigger(down, wanted_trigger, Trigger::Shift, on);
+        }
+        KeyId::Super => {
+            down.mods.super_key = on;
+            apply_modifier_trigger(down, wanted_trigger, Trigger::Super, on);
+        }
         KeyId::Fn => {
             down.mods.fn_key = on;
-            if wanted_trigger == Trigger::Fn {
-                down.trigger = if on { Some(Trigger::Fn) } else { None };
-            }
+            apply_modifier_trigger(down, wanted_trigger, Trigger::Fn, on);
         }
         KeyId::Trigger(trigger) => {
             if on {
@@ -109,18 +119,19 @@ fn apply_id(down: &mut Down, wanted_trigger: Trigger, id: KeyId, edge: Edge) {
     }
 }
 
+fn apply_modifier_trigger(down: &mut Down, wanted: Trigger, actual: Trigger, on: bool) {
+    if wanted == actual {
+        down.trigger = if on { Some(actual) } else { None };
+    }
+}
+
 #[allow(dead_code)]
 fn matches_shortcut(wanted: Shortcut, down: Down) -> bool {
-    let fn_ok = if wanted.trigger == Trigger::Fn {
-        true
-    } else {
-        wanted.fn_key == down.mods.fn_key
-    };
     wanted.ctrl == down.mods.ctrl
         && wanted.alt == down.mods.alt
         && wanted.shift == down.mods.shift
         && wanted.super_key == down.mods.super_key
-        && fn_ok
+        && wanted.fn_key == down.mods.fn_key
         && down.trigger == Some(wanted.trigger)
 }
 
@@ -196,6 +207,30 @@ mod tests {
         assert_eq!(tracker.push(KeyId::Fn, Edge::Down), None);
         assert_eq!(
             tracker.push(KeyId::Fn, Edge::Up),
+            Some(HotkeyEvent::Released)
+        );
+    }
+
+    #[test]
+    fn super_alone_and_ctrl_super_emit_press_and_release() {
+        let mut tracker = ChordTracker::new(Shortcut::parse("Win").unwrap());
+        assert_eq!(
+            tracker.push(KeyId::Super, Edge::Down),
+            Some(HotkeyEvent::Pressed)
+        );
+        assert_eq!(
+            tracker.push(KeyId::Super, Edge::Up),
+            Some(HotkeyEvent::Released)
+        );
+
+        let mut tracker = ChordTracker::new(Shortcut::parse("Ctrl+Win").unwrap());
+        assert_eq!(tracker.push(KeyId::Ctrl, Edge::Down), None);
+        assert_eq!(
+            tracker.push(KeyId::Super, Edge::Down),
+            Some(HotkeyEvent::Pressed)
+        );
+        assert_eq!(
+            tracker.push(KeyId::Ctrl, Edge::Up),
             Some(HotkeyEvent::Released)
         );
     }

@@ -36,6 +36,7 @@ impl AppPhase {
 
 pub enum OnboardStatus {
     Idle,
+    Activating,
     Fetching { last: Progress },
     Failed { reason: String },
 }
@@ -45,4 +46,5 @@ pub struct Progress {
     pub file: String,
     pub bytes: u64,
     pub total: Option<u64>,
+    pub bytes_per_second: Option<u64>,
 }

@@ -2,6 +2,10 @@ use crate::HotkeyError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Trigger {
+    Ctrl,
+    Alt,
+    Shift,
+    Super,
     Space,
     Escape,
     Tab,
@@ -40,20 +44,44 @@ impl Shortcut {
         let mut super_key = false;
         let mut fn_token = false;
         let mut trigger: Option<Trigger> = None;
+        let mut last_modifier: Option<Trigger> = None;
 
         let mut saw_part = false;
+        let mut key_count = 0;
         for part in raw.split('+') {
             let token = part.trim();
             if token.is_empty() {
                 return Err(HotkeyError::InvalidShortcut(raw.to_string()));
             }
             saw_part = true;
+            key_count += 1;
+            if key_count > 3 {
+                return Err(HotkeyError::TooManyKeys(key_count));
+            }
             match parse_token(token)? {
-                Token::Ctrl => ctrl = true,
-                Token::Alt => alt = true,
-                Token::Shift => shift = true,
-                Token::Super => super_key = true,
-                Token::Fn => fn_token = true,
+                Token::Ctrl if !ctrl => {
+                    ctrl = true;
+                    last_modifier = Some(Trigger::Ctrl);
+                }
+                Token::Alt if !alt => {
+                    alt = true;
+                    last_modifier = Some(Trigger::Alt);
+                }
+                Token::Shift if !shift => {
+                    shift = true;
+                    last_modifier = Some(Trigger::Shift);
+                }
+                Token::Super if !super_key => {
+                    super_key = true;
+                    last_modifier = Some(Trigger::Super);
+                }
+                Token::Fn if !fn_token => {
+                    fn_token = true;
+                    last_modifier = Some(Trigger::Fn);
+                }
+                Token::Ctrl | Token::Alt | Token::Shift | Token::Super | Token::Fn => {
+                    return Err(HotkeyError::InvalidShortcut(raw.to_string()));
+                }
                 Token::Trigger(next) => {
                     if trigger.is_some() {
                         return Err(HotkeyError::InvalidShortcut(raw.to_string()));
@@ -66,19 +94,16 @@ impl Shortcut {
             return Err(HotkeyError::InvalidShortcut(raw.to_string()));
         }
 
-        let (fn_key, trigger) = match (fn_token, trigger) {
-            (true, Some(trigger)) => (true, trigger),
-            (true, None) => (false, Trigger::Fn),
-            (false, Some(trigger)) => (false, trigger),
-            (false, None) => return Err(HotkeyError::InvalidShortcut(raw.to_string())),
-        };
+        let trigger = trigger
+            .or(last_modifier)
+            .ok_or_else(|| HotkeyError::InvalidShortcut(raw.to_string()))?;
 
         Ok(Shortcut {
             ctrl,
             alt,
             shift,
             super_key,
-            fn_key,
+            fn_key: fn_token,
             trigger,
         })
     }
@@ -153,7 +178,7 @@ mod tests {
     fn parse_fn_alone_and_as_modifier() {
         let fn_only = Shortcut::parse("Fn").unwrap();
         assert_eq!(fn_only.trigger, Trigger::Fn);
-        assert!(!fn_only.fn_key);
+        assert!(fn_only.fn_key);
 
         let fn_space = Shortcut::parse("fn+space").unwrap();
         assert!(fn_space.fn_key);
@@ -161,11 +186,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_empty_and_two_triggers() {
+    fn parse_rejects_malformed_chords_and_two_triggers() {
         assert!(Shortcut::parse("").is_err());
         assert!(Shortcut::parse("Ctrl+").is_err());
         assert!(Shortcut::parse("Ctrl+Space+A").is_err());
-        assert!(Shortcut::parse("Ctrl+Alt").is_err());
+        assert!(Shortcut::parse("Ctrl+Alt").is_ok());
+    }
+
+    #[test]
+    fn parse_modifier_only_chords_and_limit_to_three_keys() {
+        let win = Shortcut::parse("Win").unwrap();
+        assert!(win.super_key);
+        assert_eq!(win.trigger, Trigger::Super);
+
+        let ctrl_win = Shortcut::parse("Ctrl+Win").unwrap();
+        assert!(ctrl_win.ctrl && ctrl_win.super_key);
+        assert_eq!(ctrl_win.trigger, Trigger::Super);
+
+        assert!(Shortcut::parse("Ctrl+Alt+Shift+Space").is_err());
+        assert!(Shortcut::parse("Ctrl+Ctrl").is_err());
     }
 
     #[test]

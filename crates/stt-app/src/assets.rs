@@ -11,6 +11,8 @@ impl AssetSource for Assets {
             "fluent/cube.svg" => Some(include_bytes!("../assets/fluent/cube.svg")),
             "fluent/theme.svg" => Some(include_bytes!("../assets/fluent/theme.svg")),
             "fluent/chevron-down.svg" => Some(include_bytes!("../assets/fluent/chevron-down.svg")),
+            "fluent/download.svg" => Some(include_bytes!("../assets/fluent/download.svg")),
+            "fluent/delete.svg" => Some(include_bytes!("../assets/fluent/delete.svg")),
             _ => None,
         };
         Ok(bytes.map(Cow::Borrowed))
