@@ -1,17 +1,25 @@
 # Platform matrix
 
-One row per platform. Each row names the candidate mechanism for text injection, the global hotkey, and the overlay. Wayland is a first-class row, not a variant of X11. PR-4 verifies these mechanisms and owns the full OS integration spec.
+One row per platform that ships. Each shipping row names the mechanism for text injection, the global hotkey, and the overlay. Linux ships on X11 only: the session must export `DISPLAY`. A Wayland-only session is refused at startup.
 
 | Platform | Text injection | Global hotkey | Overlay |
 | --- | --- | --- | --- |
 | macOS | `CGEvent` keyboard events with Unicode text, clipboard paste as fallback | Quartz event tap reports key down and key up | Borderless non-activating `NSWindow` at floating level |
 | Windows | `SendInput` with `KEYEVENTF_UNICODE`, clipboard paste as fallback | Low-level keyboard hook `WH_KEYBOARD_LL` reports key down and key up | Topmost layered window with `WS_EX_NOACTIVATE` |
 | Linux X11 | XTEST fake key events, clipboard paste as fallback | XRecord extension reports key down and key up | Override-redirect window |
-| Linux Wayland | `zwp_virtual_keyboard_v1` where the compositor allows it, clipboard paste as fallback | XDG GlobalShortcuts portal delivers press and release | Layer surface with `zwlr_layer_shell_v1` where the compositor supports it |
+
+## Wayland
+
+Wayland is not a supported platform yet. `stt-hotkey` and `stt-inject` refuse a Wayland-only session before opening a backend. The mechanisms below stay candidates for a later port.
+
+| Platform | Text injection | Global hotkey | Overlay |
+| --- | --- | --- | --- |
+| Linux Wayland | not shipped (`zwp_virtual_keyboard_v1` is the candidate) | not shipped (XDG GlobalShortcuts is the candidate) | not shipped (`zwlr_layer_shell_v1` is the candidate) |
 
 ## Notes
 
 - macOS requires accessibility permission for the event tap and for injection.
-- Wayland capabilities vary by compositor. The portal and the layer-shell protocol both need compositor support.
+- A Linux session with `DISPLAY` set uses the X11 row, including when `WAYLAND_DISPLAY` is also set.
+- A Linux session with only `WAYLAND_DISPLAY` fails with the requirement for an X11 `DISPLAY`.
 - The clipboard fallback pastes with the target app's paste shortcut. PR-4 specifies when each fallback applies.
-- Each mechanism maps onto the `TextInjector` and `GlobalHotkey` traits from `stt-core`. PR-4 owns that mapping.
+- Each shipping mechanism maps onto the `TextInjector` and `GlobalHotkey` traits from `stt-core`. PR-4 owns that mapping.

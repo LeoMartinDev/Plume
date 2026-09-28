@@ -10,8 +10,6 @@ use stt_core::BoxError;
 #[cfg(any(test, target_os = "macos"))]
 mod macos;
 mod ops;
-#[cfg(any(test, target_os = "linux"))]
-mod wayland;
 #[cfg(any(test, target_os = "windows"))]
 mod windows;
 #[cfg(target_os = "linux")]
@@ -30,8 +28,6 @@ pub struct NativeInjector {
 enum Inner {
     #[cfg(target_os = "linux")]
     X11(Box<x11::X11Injector>),
-    #[cfg(target_os = "linux")]
-    Wayland(wayland::WaylandInjector),
     #[cfg(target_os = "macos")]
     Mac(macos::MacInjector),
     #[cfg(target_os = "windows")]
@@ -59,8 +55,7 @@ impl NativeInjector {
     /// Connect to the session's injection mechanism.
     ///
     /// Linux uses X11 XTEST when `DISPLAY` is set. A Wayland-only session
-    /// (no `DISPLAY`) yields an injector whose methods return
-    /// [`InjectError::Unsupported`] and name the virtual-keyboard portal.
+    /// (no `DISPLAY`) fails here, before an injector exists.
     pub fn connect() -> Result<Self, BoxError> {
         connect_os()
     }
@@ -68,20 +63,13 @@ impl NativeInjector {
 
 #[cfg(target_os = "linux")]
 fn connect_os() -> Result<NativeInjector, BoxError> {
-    if std::env::var_os("DISPLAY").is_some() {
-        return Ok(NativeInjector {
-            inner: Inner::X11(Box::new(x11::X11Injector::connect()?)),
-        });
-    }
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        return Ok(NativeInjector {
-            inner: Inner::Wayland(wayland::WaylandInjector),
-        });
-    }
-    Err(InjectError::Unsupported {
-        reason: "neither DISPLAY nor WAYLAND_DISPLAY is set",
-    }
-    .into())
+    require_x11_session(
+        std::env::var_os("DISPLAY").as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+    )?;
+    Ok(NativeInjector {
+        inner: Inner::X11(Box::new(x11::X11Injector::connect()?)),
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -103,8 +91,6 @@ impl TextInjector for NativeInjector {
         match &mut self.inner {
             #[cfg(target_os = "linux")]
             Inner::X11(injector) => injector.insert(text),
-            #[cfg(target_os = "linux")]
-            Inner::Wayland(injector) => injector.insert(text),
             #[cfg(target_os = "macos")]
             Inner::Mac(injector) => injector.insert(text),
             #[cfg(target_os = "windows")]
@@ -116,12 +102,79 @@ impl TextInjector for NativeInjector {
         match &mut self.inner {
             #[cfg(target_os = "linux")]
             Inner::X11(injector) => injector.replace_last(old, new),
-            #[cfg(target_os = "linux")]
-            Inner::Wayland(injector) => injector.replace_last(old, new),
             #[cfg(target_os = "macos")]
             Inner::Mac(injector) => injector.replace_last(old, new),
             #[cfg(target_os = "windows")]
             Inner::Win(injector) => injector.replace_last(old, new),
         }
+    }
+}
+
+#[cfg(any(test, target_os = "linux"))]
+const LINUX_REQUIRES_X11: &str =
+    "Linux dictation requires an X11 session (DISPLAY). Wayland is not supported yet.";
+
+#[cfg(any(test, target_os = "linux"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxSession {
+    X11,
+    WaylandOnly,
+    Headless,
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn linux_session(
+    display: Option<&std::ffi::OsStr>,
+    wayland: Option<&std::ffi::OsStr>,
+) -> LinuxSession {
+    if display.is_some() {
+        LinuxSession::X11
+    } else if wayland.is_some() {
+        LinuxSession::WaylandOnly
+    } else {
+        LinuxSession::Headless
+    }
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn require_x11_session(
+    display: Option<&std::ffi::OsStr>,
+    wayland: Option<&std::ffi::OsStr>,
+) -> Result<(), InjectError> {
+    match linux_session(display, wayland) {
+        LinuxSession::X11 => Ok(()),
+        LinuxSession::WaylandOnly => Err(InjectError::Unsupported {
+            reason: LINUX_REQUIRES_X11,
+        }),
+        LinuxSession::Headless => Err(InjectError::Unsupported {
+            reason: "neither DISPLAY nor WAYLAND_DISPLAY is set",
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::*;
+
+    #[test]
+    fn wayland_only_session_is_refused_before_an_injector_exists() {
+        let err = require_x11_session(None, Some(OsStr::new("wayland-0"))).unwrap_err();
+        assert_eq!(err.to_string(), LINUX_REQUIRES_X11);
+    }
+
+    #[test]
+    fn display_selects_x11_even_when_wayland_is_set() {
+        require_x11_session(Some(OsStr::new(":0")), Some(OsStr::new("wayland-0"))).unwrap();
+    }
+
+    #[test]
+    fn empty_env_stays_headless() {
+        let err = require_x11_session(None, None).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "neither DISPLAY nor WAYLAND_DISPLAY is set"
+        );
     }
 }

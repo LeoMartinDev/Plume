@@ -2,7 +2,7 @@
 
 ## The product in one sentence
 
-stt-gpui is a desktop push-to-talk dictation app. Hold a global shortcut, speak, and the text streams into the focused app on macOS, Windows, and Linux.
+stt-gpui is a desktop push-to-talk dictation app. Hold a global shortcut, speak, and the text streams into the focused app on macOS, Windows, and Linux (X11).
 
 ## Who it is for
 
