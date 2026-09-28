@@ -273,10 +273,10 @@ fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>) {
 }
 
 fn session_visible(state: SessionState) -> bool {
-    matches!(
-        state,
-        SessionState::Recording | SessionState::Streaming | SessionState::Finalizing
-    )
+    // Releasing push-to-talk ends the visible capture immediately. Whisper
+    // can take a noticeable time to produce its final transcript, but that
+    // work should not leave the recording indicator on screen.
+    matches!(state, SessionState::Recording | SessionState::Streaming)
 }
 
 fn place_bubble(window: &Window, visible: bool) {
@@ -368,7 +368,7 @@ mod tests {
         assert!(!session_visible(SessionState::Idle));
         assert!(session_visible(SessionState::Recording));
         assert!(session_visible(SessionState::Streaming));
-        assert!(session_visible(SessionState::Finalizing));
+        assert!(!session_visible(SessionState::Finalizing));
         assert!(!session_visible(SessionState::Cancelled));
     }
 

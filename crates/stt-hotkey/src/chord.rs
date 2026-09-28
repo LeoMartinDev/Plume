@@ -73,13 +73,34 @@ impl ChordTracker {
 
     pub(crate) fn push(&mut self, id: KeyId, edge: Edge) -> Option<HotkeyEvent> {
         apply_id(&mut self.down, self.wanted.trigger, id, edge);
-        emit(&mut self.engaged, matches_shortcut(self.wanted, self.down))
+        self.emit(id, edge)
     }
 
     pub(crate) fn push_macos(&mut self, mods: Mods, id: KeyId, edge: Edge) -> Option<HotkeyEvent> {
         self.down.mods = mods;
         apply_id(&mut self.down, self.wanted.trigger, id, edge);
-        emit(&mut self.engaged, matches_shortcut(self.wanted, self.down))
+        self.emit(id, edge)
+    }
+
+    /// A capture begins only when the whole chord matches.  Once it has
+    /// begun, however, its lifetime belongs to the trigger key.  Modifier
+    /// state can be reported out of order by platform hooks (and may change
+    /// while a chord is held); treating that as a release made a bubble flash
+    /// on screen and stopped recording immediately.
+    fn emit(&mut self, id: KeyId, edge: Edge) -> Option<HotkeyEvent> {
+        if self.engaged {
+            if matches!(edge, Edge::Up) && key_is_trigger(id, self.wanted.trigger) {
+                self.engaged = false;
+                return Some(HotkeyEvent::Released);
+            }
+            return None;
+        }
+        if matches_shortcut(self.wanted, self.down) {
+            self.engaged = true;
+            Some(HotkeyEvent::Pressed)
+        } else {
+            None
+        }
     }
 }
 
@@ -136,18 +157,15 @@ fn matches_shortcut(wanted: Shortcut, down: Down) -> bool {
 }
 
 #[allow(dead_code)]
-fn emit(engaged: &mut bool, now: bool) -> Option<HotkeyEvent> {
-    match (*engaged, now) {
-        (false, true) => {
-            *engaged = true;
-            Some(HotkeyEvent::Pressed)
-        }
-        (true, false) => {
-            *engaged = false;
-            Some(HotkeyEvent::Released)
-        }
-        _ => None,
-    }
+fn key_is_trigger(id: KeyId, trigger: Trigger) -> bool {
+    matches!(
+        (id, trigger),
+        (KeyId::Ctrl, Trigger::Ctrl)
+            | (KeyId::Alt, Trigger::Alt)
+            | (KeyId::Shift, Trigger::Shift)
+            | (KeyId::Super, Trigger::Super)
+            | (KeyId::Fn, Trigger::Fn)
+    ) || matches!(id, KeyId::Trigger(actual) if actual == trigger)
 }
 
 #[cfg(test)]
@@ -187,6 +205,22 @@ mod tests {
     }
 
     #[test]
+    fn chord_stays_engaged_until_its_trigger_is_released() {
+        let mut tracker = ChordTracker::new(ctrl_space());
+        assert_eq!(tracker.push(KeyId::Ctrl, Edge::Down), None);
+        assert_eq!(
+            tracker.push(KeyId::Trigger(Trigger::Space), Edge::Down),
+            Some(HotkeyEvent::Pressed)
+        );
+        // A modifier event after capture begins must not end the session.
+        assert_eq!(tracker.push(KeyId::Ctrl, Edge::Up), None);
+        assert_eq!(
+            tracker.push(KeyId::Trigger(Trigger::Space), Edge::Up),
+            Some(HotkeyEvent::Released)
+        );
+    }
+
+    #[test]
     fn extra_shift_blocks_ctrl_space() {
         let mut tracker = ChordTracker::new(ctrl_space());
         tracker.push(KeyId::Ctrl, Edge::Down);
@@ -212,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn super_alone_and_ctrl_super_emit_press_and_release() {
+    fn super_alone_and_ctrl_super_release_on_the_trigger() {
         let mut tracker = ChordTracker::new(Shortcut::parse("Win").unwrap());
         assert_eq!(
             tracker.push(KeyId::Super, Edge::Down),
@@ -229,8 +263,9 @@ mod tests {
             tracker.push(KeyId::Super, Edge::Down),
             Some(HotkeyEvent::Pressed)
         );
+        assert_eq!(tracker.push(KeyId::Ctrl, Edge::Up), None);
         assert_eq!(
-            tracker.push(KeyId::Ctrl, Edge::Up),
+            tracker.push(KeyId::Super, Edge::Up),
             Some(HotkeyEvent::Released)
         );
     }

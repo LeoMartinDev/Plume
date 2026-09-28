@@ -31,17 +31,7 @@ fn transcribe_whisper(
     audio: AudioStream,
     language: i64,
 ) -> Result<String, BoxError> {
-    let mut samples = Vec::new();
-    for chunk in audio {
-        if chunk.sample_rate != 16_000 {
-            return Err(format!(
-                "whisper expects 16000 Hz audio, got {} Hz",
-                chunk.sample_rate
-            )
-            .into());
-        }
-        samples.extend(chunk.samples);
-    }
+    let samples = collect_whisper_samples(audio)?;
     if samples.is_empty() {
         return Ok(String::new());
     }
@@ -73,9 +63,34 @@ fn transcribe_whisper(
     Ok(text.trim().to_string())
 }
 
+/// Whisper consumes 16 kHz PCM. Audio inputs commonly run at 44.1 or 48 kHz,
+/// so normalise here instead of aborting the live session on its first buffer.
+fn collect_whisper_samples(audio: AudioStream) -> Result<Vec<f32>, BoxError> {
+    let mut samples = Vec::new();
+    for chunk in audio {
+        if chunk.sample_rate == 0 {
+            return Err("whisper received audio with sample rate 0".into());
+        }
+        samples.extend(decode::resample_to_16k(&chunk.samples, chunk.sample_rate));
+    }
+    Ok(samples)
+}
+
 #[cfg(test)]
 mod whisper_tests {
     use super::*;
+    use stt_core::AudioChunk;
+
+    #[test]
+    fn whisper_resamples_a_48khz_microphone_stream() {
+        let audio: AudioStream = Box::new(std::iter::once(AudioChunk {
+            samples: vec![0.25; 480],
+            sample_rate: 48_000,
+        }));
+        let samples = collect_whisper_samples(audio).expect("48 kHz audio is supported");
+        assert_eq!(samples.len(), 160);
+        assert!(samples.iter().all(|sample| (*sample - 0.25).abs() < 1e-6));
+    }
 
     #[test]
     #[ignore]
