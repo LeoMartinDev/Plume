@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use stt_audio::Mic;
@@ -89,6 +92,13 @@ fn describe_target_error(err: &TargetError) -> String {
     format!("target: {err}")
 }
 
+#[derive(Debug)]
+pub(crate) struct Completion {
+    id: u64,
+    joins_previous: bool,
+    result: Result<String, String>,
+}
+
 pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     hold: Option<Chord>,
     hold_raw: String,
@@ -96,8 +106,12 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     cancel_spec: ChordSpec,
     engine: E,
     engine_rx: mpsc::Receiver<E>,
-    completion_tx: mpsc::Sender<Result<String, String>>,
-    completion_rx: mpsc::Receiver<Result<String, String>>,
+    completion_tx: mpsc::Sender<Completion>,
+    completion_rx: mpsc::Receiver<Completion>,
+    next_capture_id: u64,
+    next_commit_id: u64,
+    pending: BTreeMap<u64, Completion>,
+    group_has_text: bool,
     target: Target<I>,
     bubbles: BubbleSink,
     levels: mpsc::SyncSender<f32>,
@@ -111,8 +125,8 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         cancel_spec: ChordSpec,
         engine: E,
         engine_rx: mpsc::Receiver<E>,
-        completion_tx: mpsc::Sender<Result<String, String>>,
-        completion_rx: mpsc::Receiver<Result<String, String>>,
+        completion_tx: mpsc::Sender<Completion>,
+        completion_rx: mpsc::Receiver<Completion>,
         target: Target<I>,
         bubbles: BubbleSink,
         levels: mpsc::SyncSender<f32>,
@@ -126,6 +140,10 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             engine_rx,
             completion_tx,
             completion_rx,
+            next_capture_id: 0,
+            next_commit_id: 0,
+            pending: BTreeMap::new(),
+            group_has_text: false,
             target,
             bubbles,
             levels,
@@ -237,28 +255,64 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
         };
         let (gate, pump, mic_pump) = capture::open_gate(mic, self.levels.clone());
         std::thread::spawn(move || mic_pump.run());
+        let id = self.next_capture_id;
+        self.next_capture_id += 1;
+        let joins_previous = id > self.next_commit_id;
         let engine = self.engine.clone();
         let completion_tx = self.completion_tx.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let decode_cancelled = cancelled.clone();
         std::thread::spawn(move || {
-            let result = decode_final(&engine, gate.into_audio_stream());
-            let _ = completion_tx.send(result);
+            let mut result = decode_final(&engine, gate.into_audio_stream());
+            if decode_cancelled.load(Ordering::Acquire) {
+                result = Ok(String::new());
+            }
+            let _ = completion_tx.send(Completion {
+                id,
+                joins_previous,
+                result,
+            });
         });
-        let outcome = Self::live_loop(&mut hold, &self.bubbles, &mut dictation, pump, guard);
+        let outcome = Self::live_loop(
+            &mut hold,
+            &self.bubbles,
+            &mut dictation,
+            pump,
+            guard,
+            cancelled,
+        );
         self.hold = Some(hold);
         outcome
     }
 
     fn drain_completions(&mut self) {
         while let Ok(completion) = self.completion_rx.try_recv() {
-            match completion {
+            self.pending.insert(completion.id, completion);
+        }
+        while let Some(completion) =
+            take_next_completion(&mut self.pending, &mut self.next_commit_id)
+        {
+            if !completion.joins_previous {
+                self.group_has_text = false;
+            }
+            match completion.result {
                 Ok(text) if text.is_empty() => eprintln!("stt-session: empty release"),
-                Ok(text) => match self.target.apply_edit(&Edit::Insert(text.clone())) {
-                    Ok(()) => {
-                        self.target.reset();
-                        eprintln!("stt-session: committed {} chars", text.len());
+                Ok(text) => {
+                    let text = prepare_insertion(
+                        text,
+                        completion.joins_previous,
+                        &mut self.group_has_text,
+                    );
+                    match self.target.apply_edit(&Edit::Insert(text.clone())) {
+                        Ok(()) => {
+                            self.target.reset();
+                            eprintln!("stt-session: committed {} chars", text.len());
+                        }
+                        Err(err) => {
+                            eprintln!("stt-session: aborted: {}", describe_target_error(&err))
+                        }
                     }
-                    Err(err) => eprintln!("stt-session: aborted: {}", describe_target_error(&err)),
-                },
+                }
                 Err(err) => eprintln!("stt-session: aborted: {err}"),
             }
         }
@@ -270,11 +324,13 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
         dictation: &mut Dictation,
         pump: AudioPump,
         mut guard: CancelGuard,
+        cancelled: Arc<AtomicBool>,
     ) -> Outcome {
         let mut pump = Some(pump);
         loop {
             if guard.cancelled() {
                 dictation.cancel();
+                cancelled.store(true, Ordering::Release);
                 if let Some(pump) = pump.take() {
                     pump.close();
                 }
@@ -292,6 +348,26 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
             std::thread::sleep(POLL_QUANTUM);
         }
     }
+}
+
+fn take_next_completion(
+    pending: &mut BTreeMap<u64, Completion>,
+    next_commit_id: &mut u64,
+) -> Option<Completion> {
+    let completion = pending.remove(next_commit_id)?;
+    *next_commit_id += 1;
+    Some(completion)
+}
+
+fn prepare_insertion(mut text: String, joins_previous: bool, group_has_text: &mut bool) -> String {
+    if !joins_previous {
+        *group_has_text = false;
+    }
+    if *group_has_text && !text.starts_with(char::is_whitespace) {
+        text.insert(0, ' ');
+    }
+    *group_has_text = true;
+    text
 }
 
 fn decode_final<E: AsrEngine>(engine: &E, audio: stt_core::AudioStream) -> Result<String, String> {
@@ -371,6 +447,57 @@ mod tests {
             sample_rate: 16_000,
         }));
         assert_eq!(decode_final(&FinalEngine, audio).as_deref(), Ok("done"));
+    }
+
+    #[test]
+    fn joined_captures_get_one_separator_and_new_groups_do_not() {
+        let mut group_has_text = false;
+        assert_eq!(
+            prepare_insertion("First.".into(), false, &mut group_has_text),
+            "First."
+        );
+        assert_eq!(
+            prepare_insertion("Second.".into(), true, &mut group_has_text),
+            " Second."
+        );
+        assert_eq!(
+            prepare_insertion("New field.".into(), false, &mut group_has_text),
+            "New field."
+        );
+    }
+
+    #[test]
+    fn joined_capture_keeps_an_existing_leading_separator() {
+        let mut group_has_text = true;
+        assert_eq!(
+            prepare_insertion("\nNext line".into(), true, &mut group_has_text),
+            "\nNext line"
+        );
+    }
+
+    #[test]
+    fn out_of_order_completion_waits_for_the_previous_capture() {
+        let mut pending = BTreeMap::new();
+        pending.insert(
+            1,
+            Completion {
+                id: 1,
+                joins_previous: true,
+                result: Ok("second".into()),
+            },
+        );
+        let mut next = 0;
+        assert!(take_next_completion(&mut pending, &mut next).is_none());
+        pending.insert(
+            0,
+            Completion {
+                id: 0,
+                joins_previous: false,
+                result: Ok("first".into()),
+            },
+        );
+        assert_eq!(take_next_completion(&mut pending, &mut next).unwrap().id, 0);
+        assert_eq!(take_next_completion(&mut pending, &mut next).unwrap().id, 1);
     }
 
     #[test]
