@@ -6,7 +6,7 @@ use stt_overlay::Bubble;
 
 use crate::chords::Chord;
 use crate::config::Config;
-use crate::drive::{BubbleSink, Idle};
+use crate::drive::{run_decoder, BubbleSink, Idle, DECODE_QUEUE_CAPACITY};
 use crate::target::Target;
 use crate::StartupError;
 
@@ -70,6 +70,11 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
     let (hold_tx, hold_rx) = mpsc::channel();
     let (engine_tx, engine_rx) = mpsc::channel();
     let (completion_tx, completion_rx) = mpsc::channel();
+    let (decode_tx, decode_rx) = mpsc::sync_channel(DECODE_QUEUE_CAPACITY);
+    std::thread::Builder::new()
+        .name("stt-decoder".to_string())
+        .spawn(move || run_decoder(decode_rx, completion_tx))
+        .map_err(|err| StartupError::backend(err.into()))?;
     let hold_raw = config.hold.as_str().to_string();
     let worker = Idle::new(
         hold,
@@ -78,7 +83,7 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         config.cancel,
         engine,
         engine_rx,
-        completion_tx,
+        decode_tx,
         completion_rx,
         Target::new(injector),
         BubbleSink::new(bubble_tx),

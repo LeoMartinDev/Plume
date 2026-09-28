@@ -13,6 +13,7 @@ use crate::chords::{CancelGuard, Chord, ChordSpec};
 use crate::target::{Target, TargetError};
 
 pub(crate) const POLL_QUANTUM: Duration = Duration::from_millis(5);
+pub(crate) const DECODE_QUEUE_CAPACITY: usize = 8;
 
 pub(crate) struct BubbleSink {
     tx: mpsc::Sender<Bubble>,
@@ -99,6 +100,14 @@ pub(crate) struct Completion {
     result: Result<String, String>,
 }
 
+pub(crate) struct DecodeJob<E> {
+    id: u64,
+    joins_previous: bool,
+    engine: E,
+    audio: stt_core::AudioStream,
+    cancelled: Arc<AtomicBool>,
+}
+
 pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     hold: Option<Chord>,
     hold_raw: String,
@@ -106,7 +115,7 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     cancel_spec: ChordSpec,
     engine: E,
     engine_rx: mpsc::Receiver<E>,
-    completion_tx: mpsc::Sender<Completion>,
+    decode_tx: mpsc::SyncSender<DecodeJob<E>>,
     completion_rx: mpsc::Receiver<Completion>,
     next_capture_id: u64,
     next_commit_id: u64,
@@ -125,7 +134,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         cancel_spec: ChordSpec,
         engine: E,
         engine_rx: mpsc::Receiver<E>,
-        completion_tx: mpsc::Sender<Completion>,
+        decode_tx: mpsc::SyncSender<DecodeJob<E>>,
         completion_rx: mpsc::Receiver<Completion>,
         target: Target<I>,
         bubbles: BubbleSink,
@@ -138,7 +147,7 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             cancel_spec,
             engine,
             engine_rx,
-            completion_tx,
+            decode_tx,
             completion_rx,
             next_capture_id: 0,
             next_commit_id: 0,
@@ -254,25 +263,29 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
             }
         };
         let (gate, pump, mic_pump) = capture::open_gate(mic, self.levels.clone());
-        std::thread::spawn(move || mic_pump.run());
         let id = self.next_capture_id;
-        self.next_capture_id += 1;
         let joins_previous = id > self.next_commit_id;
-        let engine = self.engine.clone();
-        let completion_tx = self.completion_tx.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let decode_cancelled = cancelled.clone();
-        std::thread::spawn(move || {
-            let mut result = decode_final(&engine, gate.into_audio_stream());
-            if decode_cancelled.load(Ordering::Acquire) {
-                result = Ok(String::new());
-            }
-            let _ = completion_tx.send(Completion {
-                id,
-                joins_previous,
-                result,
+        let job = DecodeJob {
+            id,
+            joins_previous,
+            engine: self.engine.clone(),
+            audio: gate.into_audio_stream(),
+            cancelled: cancelled.clone(),
+        };
+        if let Err(err) = self.decode_tx.try_send(job) {
+            cancelled.store(true, Ordering::Release);
+            pump.close();
+            dictation.cancel();
+            self.bubbles.push_from(&dictation);
+            self.hold = Some(hold);
+            return Outcome::Aborted(match err {
+                mpsc::TrySendError::Full(_) => "decode queue is full".to_string(),
+                mpsc::TrySendError::Disconnected(_) => "decode worker is unavailable".to_string(),
             });
-        });
+        }
+        self.next_capture_id += 1;
+        std::thread::spawn(move || mic_pump.run());
         let outcome = Self::live_loop(
             &mut hold,
             &self.bubbles,
@@ -346,6 +359,28 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
                 return Outcome::Released;
             }
             std::thread::sleep(POLL_QUANTUM);
+        }
+    }
+}
+
+pub(crate) fn run_decoder<E: AsrEngine>(
+    jobs: mpsc::Receiver<DecodeJob<E>>,
+    completions: mpsc::Sender<Completion>,
+) {
+    for job in jobs {
+        let mut result = decode_final(&job.engine, job.audio);
+        if job.cancelled.load(Ordering::Acquire) {
+            result = Ok(String::new());
+        }
+        if completions
+            .send(Completion {
+                id: job.id,
+                joins_previous: job.joins_previous,
+                result,
+            })
+            .is_err()
+        {
+            return;
         }
     }
 }
@@ -432,11 +467,11 @@ mod tests {
         }
     }
 
-    struct FinalEngine;
+    struct FinalEngine(&'static str);
 
     impl AsrEngine for FinalEngine {
         fn stream(&self, _audio: AudioStream) -> HypothesisStream {
-            Box::new(std::iter::once(Ok(final_hyp("done"))))
+            Box::new(std::iter::once(Ok(final_hyp(self.0))))
         }
     }
 
@@ -446,7 +481,33 @@ mod tests {
             samples: vec![0.0; 16],
             sample_rate: 16_000,
         }));
-        assert_eq!(decode_final(&FinalEngine, audio).as_deref(), Ok("done"));
+        assert_eq!(
+            decode_final(&FinalEngine("done"), audio).as_deref(),
+            Ok("done")
+        );
+    }
+
+    #[test]
+    fn decoder_worker_processes_jobs_fifo() {
+        let (job_tx, job_rx) = mpsc::sync_channel(2);
+        let (completion_tx, completion_rx) = mpsc::channel();
+        for (id, text) in [(0, "first"), (1, "second")] {
+            job_tx
+                .send(DecodeJob {
+                    id,
+                    joins_previous: id > 0,
+                    engine: FinalEngine(text),
+                    audio: Box::new(std::iter::empty()),
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                })
+                .unwrap();
+        }
+        drop(job_tx);
+        run_decoder(job_rx, completion_tx);
+        let first = completion_rx.recv().unwrap();
+        let second = completion_rx.recv().unwrap();
+        assert_eq!((first.id, first.result.as_deref()), (0, Ok("first")));
+        assert_eq!((second.id, second.result.as_deref()), (1, Ok("second")));
     }
 
     #[test]
