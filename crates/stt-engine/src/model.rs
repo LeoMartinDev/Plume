@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ort::session::Session;
+use ort::session::{builder::SessionBuilder, Session};
 use stt_core::BoxError;
 use whisper_rs::{WhisperContext, WhisperContextParameters};
 
@@ -120,9 +120,12 @@ pub struct Engine {
 impl Engine {
     pub fn open(dir: ModelDir) -> Result<Self, BoxError> {
         let _ = ort::init().commit();
-        let encoder = Session::builder()?.commit_from_file(dir.path().join("encoder.onnx"))?;
-        let decoder = Session::builder()?.commit_from_file(dir.path().join("decoder.onnx"))?;
-        let joint = Session::builder()?.commit_from_file(dir.path().join("joint.onnx"))?;
+        let encoder =
+            accelerated_session_builder()?.commit_from_file(dir.path().join("encoder.onnx"))?;
+        let decoder =
+            accelerated_session_builder()?.commit_from_file(dir.path().join("decoder.onnx"))?;
+        let joint =
+            accelerated_session_builder()?.commit_from_file(dir.path().join("joint.onnx"))?;
 
         let signal = tensor_shape(&encoder, "encoder", "audio_signal")?;
         let want = vec![1, (CACHE_MEL + CHUNK_MEL) as i64, 128];
@@ -215,6 +218,47 @@ impl Engine {
     }
 }
 
+fn accelerated_session_builder() -> Result<SessionBuilder, ort::Error> {
+    let mut builder = Session::builder()?;
+
+    // DirectML requires memory patterns to be disabled. Registration is
+    // deliberately best-effort: ORT logs the failure and retains its CPU EP.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder
+            .with_memory_pattern(false)?
+            .with_execution_providers([
+                #[cfg(feature = "cuda")]
+                ort::ep::CUDA::default().build(),
+                ort::ep::DirectML::default().build(),
+            ])?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.with_execution_providers([
+            #[cfg(feature = "cuda")]
+            ort::ep::CUDA::default().build(),
+            ort::ep::CoreML::default().build(),
+        ])?;
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        #[cfg(any(feature = "cuda", feature = "rocm"))]
+        {
+            builder = builder.with_execution_providers([
+                #[cfg(feature = "cuda")]
+                ort::ep::CUDA::default().build(),
+                #[cfg(feature = "rocm")]
+                ort::ep::ROCm::default().build(),
+            ])?;
+        }
+    }
+
+    Ok(builder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +303,26 @@ mod tests {
         assert_eq!(Language::Auto.encoder_id(), 101);
         assert_eq!(Language::French.encoder_id(), 8);
         assert_eq!(Language::English.encoder_id(), 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_runtime_exposes_directml() {
+        use ort::ep::ExecutionProvider;
+
+        let _ = ort::init().commit();
+        assert!(
+            ort::ep::DirectML::default().is_available().unwrap(),
+            "the packaged ONNX Runtime must include DirectML"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_whisper_prefers_vulkan_and_can_fall_back_to_cpu() {
+        assert!(
+            WhisperContextParameters::default().use_gpu,
+            "the Windows build must compile Whisper with Vulkan support"
+        );
     }
 }
