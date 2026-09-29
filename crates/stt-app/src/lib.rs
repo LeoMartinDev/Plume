@@ -2,6 +2,7 @@ pub mod assets;
 pub mod catalog;
 pub mod dirs;
 pub mod download;
+pub mod history;
 pub mod hold;
 pub mod lock;
 pub mod phase;
@@ -22,12 +23,12 @@ use crate::phase::{AppPhase, OnboardStatus};
 use crate::prefs::{Prefs, PrefsLoad};
 use crate::settings::{
     open_settings, settings_window_accepts_download, settings_window_engine_target,
-    settings_window_prefs, settings_window_register_download, settings_window_show_fetch_failed,
+    settings_window_prefs, settings_window_record_result, settings_window_show_fetch_failed,
     settings_window_show_live, settings_window_show_progress, settings_window_show_refused,
     settings_window_show_swapped,
 };
 
-/// Product entry. Settings window first. Compositor starts after a proven pack.
+/// Product entry. Model loading starts immediately; the compositor follows once proven.
 pub fn product_main() {
     let _lock = match AppLock::acquire() {
         Ok(lock) => lock,
@@ -37,17 +38,21 @@ pub fn product_main() {
         }
     };
     stt_overlay::prepare_display();
-    Application::new().with_assets(Assets).run(|cx| {
-        let loaded = prefs::load();
-        let (prefs, warning) = match loaded {
-            PrefsLoad::Fresh(prefs) | PrefsLoad::Loaded(prefs) => (prefs, None),
-            PrefsLoad::Quarantined { prefs, warning } => (prefs, Some(warning)),
-        };
-        let status = if catalog::is_complete(prefs.model, &prefs.model.data_dir()) {
-            OnboardStatus::Activating
-        } else {
-            OnboardStatus::Idle
-        };
+    let loaded = prefs::load();
+    let (prefs, warning) = match loaded {
+        PrefsLoad::Fresh(prefs) | PrefsLoad::Loaded(prefs) => (prefs, None),
+        PrefsLoad::Quarantined { prefs, warning } => (prefs, Some(warning)),
+    };
+    let status = if catalog::is_complete(prefs.model, &prefs.model.data_dir()) {
+        OnboardStatus::Activating
+    } else {
+        OnboardStatus::Idle
+    };
+    let mut downloads = crate::download::DownloadRequestTracker::default();
+    let request = downloads.register(prefs.model);
+    let startup_events = start_reconcile(prefs.clone(), request, false);
+
+    Application::new().with_assets(Assets).run(move |cx| {
         open_settings(
             cx,
             AppPhase::Onboarding {
@@ -55,22 +60,15 @@ pub fn product_main() {
                 status,
                 warning,
             },
+            downloads,
         );
         cx.activate(true);
-        boot_after_window_opens(cx, prefs);
+        drain_download(cx, startup_events);
     });
 }
 
 pub fn begin_pack(cx: &mut App, prefs: Prefs, request: DownloadRequest) {
     spawn_reconcile(cx, prefs, request, true);
-}
-
-fn boot_after_window_opens(cx: &mut App, prefs: Prefs) {
-    let Some(request) = settings_window_register_download(cx, prefs.model) else {
-        log_line("stt-app: initial reconcile request not registered");
-        return;
-    };
-    spawn_reconcile(cx, prefs, request, false);
 }
 
 fn spawn_reconcile(
@@ -79,6 +77,15 @@ fn spawn_reconcile(
     request: DownloadRequest,
     fetch_if_incomplete: bool,
 ) {
+    let rx = start_reconcile(prefs, request, fetch_if_incomplete);
+    drain_download(cx, rx);
+}
+
+fn start_reconcile(
+    prefs: Prefs,
+    request: DownloadRequest,
+    fetch_if_incomplete: bool,
+) -> mpsc::Receiver<DownloadEvent> {
     let dest = prefs.model.data_dir();
     let offer = prefs.model.offer();
     let (tx, rx) = mpsc::channel();
@@ -107,7 +114,7 @@ fn spawn_reconcile(
             }
         }
     });
-    drain_download(cx, rx);
+    rx
 }
 
 enum DrainPoll {
@@ -214,18 +221,47 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
                 return;
             }
         };
-    let ready = stt_session::Ready::from_open(config, engine);
+    let ready = stt_session::Ready::from_open(config, engine).with_insertion(
+        stt_session::InsertionConfig {
+            mode: prefs.insertion_mode(),
+            copy_on_failure: prefs.copy_on_failure(),
+        },
+    );
     match stt_session::start(ready) {
         Ok(live) => {
             log_line("stt-app: compositor started");
             stt_overlay::attach(cx, live.bubbles, live.levels);
-            settings_window_show_live(cx, live.hold, live.engine, language_target);
+            settings_window_show_live(cx, live.hold, live.engine, language_target, live.insertion);
+            drain_results(cx, live.results);
         }
         Err(err) => {
             log_line(format!("stt-app: compositor refused: {err}"));
             settings_window_show_refused(cx, err.to_string());
         }
     }
+}
+
+fn drain_results(cx: &mut App, rx: mpsc::Receiver<stt_session::DictationResult>) {
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_millis(16))
+            .await;
+        loop {
+            match rx.try_recv() {
+                Ok(result) => {
+                    if cx
+                        .update(|cx| settings_window_record_result(cx, result))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]

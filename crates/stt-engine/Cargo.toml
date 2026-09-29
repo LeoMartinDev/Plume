@@ -17,6 +17,8 @@ rustfft = "6"
 
 # DirectML and Vulkan cover NVIDIA, AMD, and Intel on Windows. Both engines
 # keep their CPU backend, so the same build also runs without a usable GPU.
+# Vulkan is included by default on Windows so Whisper can use it when a
+# compatible driver and device are present.
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 whisper-rs = { version = "0.16", features = ["vulkan"] }

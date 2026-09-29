@@ -1,6 +1,32 @@
 # Design QA
 
-final result: passed
+final result: blocked
+
+## History grouped-list pass — 2026-09-29
+
+- Source visual truth: `C:\Users\leoma\AppData\Local\Temp\codex-clipboard-77ecaee0-67bc-4da7-a7c6-ffaf0ad84a56.png`
+- Intended state: Light theme, History page with three recent transcription entries.
+- Implementation capture: blocked. The native `stt-app` build cannot start in this environment because `whisper-rs-sys` requires a configured Vulkan SDK.
+- Viewport and density: unavailable; no implementation screenshot was produced.
+
+### Intended changes
+
+- Replace the per-entry cards with one shared `ListGroup` card and hairline separators.
+- Keep application name and relative date as muted, small metadata.
+- Replace text Copy/Delete buttons with 24 px Fluent icon buttons while retaining the same copy and deletion handlers.
+
+### Findings
+
+- [P1] Native visual comparison blocked.
+  Evidence: `cargo check -p stt-app` stops in `whisper-rs-sys` before the settings window can be launched, reporting that `VULKAN_SDK` is not configured.
+  Fix: rerun the native app after installing/configuring the Vulkan SDK, capture the History page at the supplied reference viewport, and compare the grouped list plus hover states.
+
+### Implementation checklist
+
+- [x] Group entries into one card with dividers.
+- [x] Make app name and date visually secondary.
+- [x] Use Fluent copy and delete icon buttons.
+- [ ] Capture and compare the native History view after the Vulkan build prerequisite is available.
 
 ## Visual truth
 

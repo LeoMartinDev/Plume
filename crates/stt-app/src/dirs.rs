@@ -49,6 +49,10 @@ impl AppDirs {
         self.local_data.join("lock")
     }
 
+    pub fn history_path(&self) -> PathBuf {
+        self.local_data.join("history.json")
+    }
+
     pub fn config(&self) -> &Path {
         &self.config
     }
@@ -78,6 +82,7 @@ mod tests {
             PathBuf::from("/data/packs/light")
         );
         assert_eq!(dirs.lock_path(), PathBuf::from("/data/lock"));
+        assert_eq!(dirs.history_path(), PathBuf::from("/data/history.json"));
     }
 
     #[test]

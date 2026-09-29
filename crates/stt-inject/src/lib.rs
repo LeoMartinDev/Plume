@@ -23,6 +23,7 @@ compile_error!("stt-inject supports linux, macos, and windows");
 /// Native injector for the current OS session.
 pub struct NativeInjector {
     inner: Inner,
+    clipboard: Option<arboard::Clipboard>,
 }
 
 enum Inner {
@@ -69,6 +70,7 @@ fn connect_os() -> Result<NativeInjector, BoxError> {
     )?;
     Ok(NativeInjector {
         inner: Inner::X11(Box::new(x11::X11Injector::connect()?)),
+        clipboard: arboard::Clipboard::new().ok(),
     })
 }
 
@@ -76,6 +78,7 @@ fn connect_os() -> Result<NativeInjector, BoxError> {
 fn connect_os() -> Result<NativeInjector, BoxError> {
     Ok(NativeInjector {
         inner: Inner::Mac(macos::MacInjector),
+        clipboard: arboard::Clipboard::new().ok(),
     })
 }
 
@@ -83,6 +86,7 @@ fn connect_os() -> Result<NativeInjector, BoxError> {
 fn connect_os() -> Result<NativeInjector, BoxError> {
     Ok(NativeInjector {
         inner: Inner::Win(windows::WinInjector),
+        clipboard: arboard::Clipboard::new().ok(),
     })
 }
 
@@ -106,6 +110,92 @@ impl TextInjector for NativeInjector {
             Inner::Mac(injector) => injector.replace_last(old, new),
             #[cfg(target_os = "windows")]
             Inner::Win(injector) => injector.replace_last(old, new),
+        }
+    }
+
+    fn insert_with_mode(
+        &mut self,
+        text: &str,
+        mode: stt_core::InsertionMode,
+    ) -> Result<stt_core::InjectionReport, BoxError> {
+        let (application, target) = self.target_info();
+        match target {
+            stt_core::TargetAssessment::Sensitive => {
+                return Err(InjectError::Message("focused field is sensitive".into()).into())
+            }
+            stt_core::TargetAssessment::NonEditable => {
+                return Err(InjectError::Message("focused field is read-only".into()).into())
+            }
+            stt_core::TargetAssessment::Editable | stt_core::TargetAssessment::Unknown => {}
+        }
+
+        let method = match mode {
+            stt_core::InsertionMode::Typing => {
+                self.insert(text)?;
+                stt_core::InsertionMethod::Typing
+            }
+            stt_core::InsertionMode::Clipboard => {
+                self.set_clipboard(text)?;
+                self.paste()?;
+                stt_core::InsertionMethod::Clipboard
+            }
+            stt_core::InsertionMode::Auto => match self.set_clipboard(text) {
+                Ok(()) => {
+                    // Once dispatch begins we cannot know whether the target consumed part of the
+                    // shortcut. Do not type a second copy if posting the shortcut reports an error.
+                    self.paste()?;
+                    stt_core::InsertionMethod::Clipboard
+                }
+                Err(clipboard_error) => {
+                    eprintln!("stt-inject: clipboard unavailable, using typing: {clipboard_error}");
+                    self.insert(text)?;
+                    stt_core::InsertionMethod::Typing
+                }
+            },
+        };
+        Ok(stt_core::InjectionReport {
+            method,
+            application,
+            target,
+        })
+    }
+
+    fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
+        self.set_clipboard(text)
+    }
+}
+
+impl NativeInjector {
+    fn set_clipboard(&mut self, text: &str) -> Result<(), BoxError> {
+        let clipboard = self
+            .clipboard
+            .as_mut()
+            .ok_or_else(|| InjectError::Message("system clipboard is unavailable".into()))?;
+        clipboard
+            .set_text(text.to_string())
+            .map_err(|err| InjectError::Message(format!("clipboard: {err}")))?;
+        Ok(())
+    }
+
+    fn paste(&mut self) -> Result<(), BoxError> {
+        match &mut self.inner {
+            #[cfg(target_os = "linux")]
+            Inner::X11(injector) => injector.paste(),
+            #[cfg(target_os = "macos")]
+            Inner::Mac(injector) => injector.paste(),
+            #[cfg(target_os = "windows")]
+            Inner::Win(injector) => injector.paste(),
+        }
+    }
+
+    fn target_info(&self) -> (Option<String>, stt_core::TargetAssessment) {
+        match &self.inner {
+            #[cfg(target_os = "linux")]
+            Inner::X11(injector) => injector.target_info(),
+            #[cfg(target_os = "macos")]
+            Inner::Mac(injector) => injector.target_info(),
+            #[cfg(target_os = "windows")]
+            Inner::Win(injector) => injector.target_info(),
         }
     }
 }

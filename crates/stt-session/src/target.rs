@@ -1,4 +1,4 @@
-use stt_core::{BoxError, Edit, TextInjector};
+use stt_core::{BoxError, Edit, InjectionReport, InsertionMode, TextInjector};
 
 pub(crate) struct Target<I: TextInjector> {
     injector: I,
@@ -13,11 +13,25 @@ impl<I: TextInjector> Target<I> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_edit(&mut self, edit: &Edit) -> Result<(), TargetError> {
+        self.apply_edit_with_mode(edit, InsertionMode::Typing)
+            .map(|_| ())
+    }
+
+    pub(crate) fn apply_edit_with_mode(
+        &mut self,
+        edit: &Edit,
+        mode: InsertionMode,
+    ) -> Result<Option<InjectionReport>, TargetError> {
         match edit {
             Edit::Insert(text) => {
-                self.injector.insert(text).map_err(TargetError::Inject)?;
+                let report = self
+                    .injector
+                    .insert_with_mode(text, mode)
+                    .map_err(TargetError::Inject)?;
                 self.inserted.push_str(text);
+                return Ok(Some(report));
             }
             Edit::Replace { old, new } => {
                 if !self.inserted.ends_with(old.as_str()) {
@@ -32,7 +46,11 @@ impl<I: TextInjector> Target<I> {
                 self.inserted.push_str(new);
             }
         }
-        Ok(())
+        Ok(None)
+    }
+
+    pub(crate) fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
+        self.injector.copy_text(text)
     }
 
     #[cfg(test)]

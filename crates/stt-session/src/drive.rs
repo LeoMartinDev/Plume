@@ -10,6 +10,7 @@ use stt_overlay::Bubble;
 
 use crate::capture::{self, AudioPump};
 use crate::chords::{CancelGuard, Chord, ChordSpec};
+use crate::ready::{DictationResult, InsertionConfig};
 use crate::target::{Target, TargetError};
 
 pub(crate) const POLL_QUANTUM: Duration = Duration::from_millis(5);
@@ -115,6 +116,9 @@ pub(crate) struct Idle<E: AsrEngine, I: TextInjector> {
     cancel_spec: ChordSpec,
     engine: E,
     engine_rx: mpsc::Receiver<E>,
+    insertion: InsertionConfig,
+    insertion_rx: mpsc::Receiver<InsertionConfig>,
+    result_tx: mpsc::Sender<DictationResult>,
     decode_tx: mpsc::SyncSender<DecodeJob<E>>,
     completion_rx: mpsc::Receiver<Completion>,
     next_capture_id: u64,
@@ -134,6 +138,9 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
         cancel_spec: ChordSpec,
         engine: E,
         engine_rx: mpsc::Receiver<E>,
+        insertion: InsertionConfig,
+        insertion_rx: mpsc::Receiver<InsertionConfig>,
+        result_tx: mpsc::Sender<DictationResult>,
         decode_tx: mpsc::SyncSender<DecodeJob<E>>,
         completion_rx: mpsc::Receiver<Completion>,
         target: Target<I>,
@@ -147,6 +154,9 @@ impl<E: AsrEngine, I: TextInjector> Idle<E, I> {
             cancel_spec,
             engine,
             engine_rx,
+            insertion,
+            insertion_rx,
+            result_tx,
             decode_tx,
             completion_rx,
             next_capture_id: 0,
@@ -211,6 +221,9 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
         loop {
             while let Ok(engine) = self.engine_rx.try_recv() {
                 self.engine = engine;
+            }
+            while let Ok(insertion) = self.insertion_rx.try_recv() {
+                self.insertion = insertion;
             }
             self.drain_completions();
             self.retarget_hold();
@@ -316,13 +329,30 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> Idle<E, I> {
                         completion.joins_previous,
                         &mut self.group_has_text,
                     );
-                    match self.target.apply_edit(&Edit::Insert(text.clone())) {
-                        Ok(()) => {
+                    match self
+                        .target
+                        .apply_edit_with_mode(&Edit::Insert(text.clone()), self.insertion.mode)
+                    {
+                        Ok(Some(report)) => {
                             self.target.reset();
                             eprintln!("stt-session: committed {} chars", text.len());
+                            let _ = self.result_tx.send(DictationResult {
+                                text,
+                                injection: Ok(report),
+                                copied_on_failure: false,
+                            });
                         }
+                        Ok(None) => unreachable!("insert must return an injection report"),
                         Err(err) => {
-                            eprintln!("stt-session: aborted: {}", describe_target_error(&err))
+                            let reason = describe_target_error(&err);
+                            let copied = self.insertion.copy_on_failure
+                                && self.target.copy_text(&text).is_ok();
+                            eprintln!("stt-session: aborted: {reason}");
+                            let _ = self.result_tx.send(DictationResult {
+                                text,
+                                injection: Err(reason),
+                                copied_on_failure: copied,
+                            });
                         }
                     }
                 }

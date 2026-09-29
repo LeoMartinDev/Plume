@@ -7,6 +7,10 @@ use crate::ops::{insert_strokes, replace_strokes};
 const KVK_RETURN: u16 = 0x24;
 const KVK_TAB: u16 = 0x30;
 const KVK_DELETE: u16 = 0x33;
+#[cfg(target_os = "macos")]
+const KVK_COMMAND: u16 = 0x37;
+#[cfg(target_os = "macos")]
+const KVK_V: u16 = 0x09;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MacStroke {
@@ -51,6 +55,7 @@ mod sys {
     use crate::InjectError;
 
     pub(super) fn post(strokes: &[MacStroke]) -> Result<(), BoxError> {
+        let mut events = Vec::with_capacity(strokes.len());
         for stroke in strokes {
             let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
                 .map_err(|()| InjectError::Message("CGEventSource::new failed".into()))?;
@@ -60,6 +65,9 @@ mod sys {
                 let mut utf8 = [0u8; 4];
                 event.set_string(ch.encode_utf8(&mut utf8));
             }
+            events.push(event);
+        }
+        for event in events {
             event.post(CGEventTapLocation::HID);
         }
         Ok(())
@@ -68,6 +76,38 @@ mod sys {
 
 #[cfg(target_os = "macos")]
 pub(crate) struct MacInjector;
+
+#[cfg(target_os = "macos")]
+impl MacInjector {
+    pub(crate) fn paste(&mut self) -> Result<(), stt_core::BoxError> {
+        sys::post(&[
+            MacStroke {
+                keycode: KVK_COMMAND,
+                down: true,
+                unicode: None,
+            },
+            MacStroke {
+                keycode: KVK_V,
+                down: true,
+                unicode: None,
+            },
+            MacStroke {
+                keycode: KVK_V,
+                down: false,
+                unicode: None,
+            },
+            MacStroke {
+                keycode: KVK_COMMAND,
+                down: false,
+                unicode: None,
+            },
+        ])
+    }
+
+    pub(crate) fn target_info(&self) -> (Option<String>, stt_core::TargetAssessment) {
+        (None, stt_core::TargetAssessment::Unknown)
+    }
+}
 
 #[cfg(target_os = "macos")]
 impl stt_core::TextInjector for MacInjector {

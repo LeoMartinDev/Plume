@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::catalog::ModelId;
 use serde::{Deserialize, Deserializer, Serialize};
+use stt_session::InsertionMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scheme {
@@ -75,6 +76,8 @@ pub struct Prefs {
     pub model: ModelId,
     appearance: AppearancePref,
     language: LanguagePref,
+    insertion_mode: InsertionMode,
+    copy_on_failure: bool,
 }
 
 impl Prefs {
@@ -85,6 +88,8 @@ impl Prefs {
             model: ModelId::default(),
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
+            insertion_mode: InsertionMode::Auto,
+            copy_on_failure: true,
         }
     }
 
@@ -110,6 +115,22 @@ impl Prefs {
 
     pub fn set_language(&mut self, language: LanguagePref) {
         self.language = language;
+    }
+
+    pub fn insertion_mode(&self) -> InsertionMode {
+        self.insertion_mode
+    }
+
+    pub fn set_insertion_mode(&mut self, mode: InsertionMode) {
+        self.insertion_mode = mode;
+    }
+
+    pub fn copy_on_failure(&self) -> bool {
+        self.copy_on_failure
+    }
+
+    pub fn set_copy_on_failure(&mut self, enabled: bool) {
+        self.copy_on_failure = enabled;
     }
 
     pub fn try_set_hold(&mut self, hold: &str) -> Result<(), stt_session::ConfigError> {
@@ -199,6 +220,10 @@ struct WireIn {
     appearance: AppearanceWire,
     #[serde(default)]
     language: LanguageWire,
+    #[serde(default = "default_insertion_mode")]
+    insertion_mode: String,
+    #[serde(default = "default_copy_on_failure")]
+    copy_on_failure: bool,
 }
 
 #[derive(Serialize)]
@@ -208,6 +233,16 @@ struct WireOut {
     model: String,
     appearance: &'static str,
     language: &'static str,
+    insertion_mode: &'static str,
+    copy_on_failure: bool,
+}
+
+fn default_insertion_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_copy_on_failure() -> bool {
+    true
 }
 
 pub fn prefs_path() -> PathBuf {
@@ -245,6 +280,8 @@ pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
         model: prefs.model.as_str().to_string(),
         appearance: prefs.appearance().as_str(),
         language: prefs.language().as_str(),
+        insertion_mode: prefs.insertion_mode().as_str(),
+        copy_on_failure: prefs.copy_on_failure(),
     };
     let body = toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))?;
     let tmp = path.with_extension("toml.tmp");
@@ -265,6 +302,12 @@ fn parse_wire(raw: &str) -> Result<Prefs, String> {
         model,
         appearance: wire.appearance.0,
         language: wire.language.0,
+        insertion_mode: match wire.insertion_mode.as_str() {
+            "clipboard" => InsertionMode::Clipboard,
+            "typing" => InsertionMode::Typing,
+            _ => InsertionMode::Auto,
+        },
+        copy_on_failure: wire.copy_on_failure,
     })
 }
 
@@ -413,6 +456,23 @@ mod tests {
                 assert_eq!(loaded.language(), LanguagePref::French);
             }
             _ => panic!("saved language must load"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn insertion_settings_round_trip() {
+        let path = temp_prefs("insertion-round");
+        let mut prefs = Prefs::default_fresh();
+        prefs.set_insertion_mode(InsertionMode::Typing);
+        prefs.set_copy_on_failure(false);
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => {
+                assert_eq!(loaded.insertion_mode(), InsertionMode::Typing);
+                assert!(!loaded.copy_on_failure());
+            }
+            _ => panic!("saved insertion settings must load"),
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

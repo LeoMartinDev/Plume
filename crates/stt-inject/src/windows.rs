@@ -13,6 +13,10 @@ pub(crate) enum WinStroke {
     ReturnUp,
     TabDown,
     TabUp,
+    ControlDown,
+    ControlUp,
+    VDown,
+    VUp,
 }
 
 pub(crate) fn win_strokes(strokes: &[Stroke]) -> Vec<WinStroke> {
@@ -46,11 +50,27 @@ pub(crate) fn win_strokes(strokes: &[Stroke]) -> Vec<WinStroke> {
 #[cfg(target_os = "windows")]
 mod sys {
     use std::mem::size_of;
+    use std::path::Path;
 
     use stt_core::BoxError;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_DocumentControlTypeId,
+        UIA_EditControlTypeId, UIA_ValuePatternId,
+    };
+    use windows_sys::Win32::Foundation::{CloseHandle, RECT};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-        VK_BACK, VK_RETURN, VK_TAB,
+        VK_BACK, VK_CONTROL, VK_RETURN, VK_TAB, VK_V,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW,
+        GetWindowThreadProcessId, GUITHREADINFO, GWL_STYLE,
     };
 
     use super::WinStroke;
@@ -88,6 +108,10 @@ mod sys {
             WinStroke::ReturnUp => (VK_RETURN, 0, KEYEVENTF_KEYUP),
             WinStroke::TabDown => (VK_TAB, 0, 0),
             WinStroke::TabUp => (VK_TAB, 0, KEYEVENTF_KEYUP),
+            WinStroke::ControlDown => (VK_CONTROL, 0, 0),
+            WinStroke::ControlUp => (VK_CONTROL, 0, KEYEVENTF_KEYUP),
+            WinStroke::VDown => (VK_V, 0, 0),
+            WinStroke::VUp => (VK_V, 0, KEYEVENTF_KEYUP),
         };
         INPUT {
             r#type: INPUT_KEYBOARD,
@@ -102,10 +126,147 @@ mod sys {
             },
         }
     }
+
+    pub(super) fn target_info() -> (Option<String>, stt_core::TargetAssessment) {
+        let native = native_target_info();
+        if native.1 != stt_core::TargetAssessment::Unknown {
+            return native;
+        }
+        if let Some(info) = uia_target_info() {
+            return info;
+        }
+
+        native
+    }
+
+    /// UI Automation covers browser, Electron, Office and other non-native editors.
+    /// It is intentionally limited to metadata: no text or window title is read.
+    fn uia_target_info() -> Option<(Option<String>, stt_core::TargetAssessment)> {
+        unsafe {
+            // UI Automation works in either apartment. RPC_E_CHANGED_MODE only means that the
+            // caller already initialized this thread with another apartment model.
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let element = automation.GetFocusedElement().ok()?;
+            let process_id = element.CurrentProcessId().ok()? as u32;
+            let application = process_name(process_id);
+            let read_only = element
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .ok()
+                .and_then(|pattern| pattern.CurrentIsReadOnly().ok())
+                .is_some_and(|read_only| read_only.as_bool());
+
+            let target = if element.CurrentIsPassword().ok()?.as_bool() {
+                stt_core::TargetAssessment::Sensitive
+            } else if !element.CurrentIsEnabled().ok()?.as_bool() || read_only {
+                stt_core::TargetAssessment::NonEditable
+            } else {
+                let control_type = element.CurrentControlType().ok()?;
+                let focusable = element.CurrentIsKeyboardFocusable().ok()?.as_bool();
+                if focusable
+                    && (control_type == UIA_EditControlTypeId
+                        || control_type == UIA_DocumentControlTypeId)
+                {
+                    stt_core::TargetAssessment::Editable
+                } else {
+                    stt_core::TargetAssessment::Unknown
+                }
+            };
+            Some((application, target))
+        }
+    }
+
+    /// Classic Win32 fallback. Unlike UI Automation, this exposes the read-only style on native
+    /// edit controls, so keep it even when UIA is available.
+    fn native_target_info() -> (Option<String>, stt_core::TargetAssessment) {
+        let foreground = unsafe { GetForegroundWindow() };
+        if foreground.is_null() {
+            return (None, stt_core::TargetAssessment::Unknown);
+        }
+
+        let mut process_id = 0;
+        let thread_id = unsafe { GetWindowThreadProcessId(foreground, &mut process_id) };
+        let application = process_name(process_id);
+        let mut info = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            flags: 0,
+            hwndActive: std::ptr::null_mut(),
+            hwndFocus: std::ptr::null_mut(),
+            hwndCapture: std::ptr::null_mut(),
+            hwndMenuOwner: std::ptr::null_mut(),
+            hwndMoveSize: std::ptr::null_mut(),
+            hwndCaret: std::ptr::null_mut(),
+            rcCaret: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+        };
+        if unsafe { GetGUIThreadInfo(thread_id, &mut info) } == 0 || info.hwndFocus.is_null() {
+            return (application, stt_core::TargetAssessment::Unknown);
+        }
+
+        let mut class = [0u16; 128];
+        let len = unsafe { GetClassNameW(info.hwndFocus, class.as_mut_ptr(), class.len() as i32) };
+        if len <= 0 {
+            return (application, stt_core::TargetAssessment::Unknown);
+        }
+        let class = String::from_utf16_lossy(&class[..len as usize]).to_ascii_lowercase();
+        if !class.contains("edit") {
+            return (application, stt_core::TargetAssessment::Unknown);
+        }
+
+        let style = unsafe { GetWindowLongW(info.hwndFocus, GWL_STYLE) } as u32;
+        const ES_PASSWORD: u32 = 0x0020;
+        const ES_READONLY: u32 = 0x0800;
+        let target = if style & ES_PASSWORD != 0 {
+            stt_core::TargetAssessment::Sensitive
+        } else if style & ES_READONLY != 0 {
+            stt_core::TargetAssessment::NonEditable
+        } else {
+            stt_core::TargetAssessment::Editable
+        };
+        (application, target)
+    }
+
+    fn process_name(process_id: u32) -> Option<String> {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if handle.is_null() {
+            return None;
+        }
+        let mut path = vec![0u16; 1024];
+        let mut len = path.len() as u32;
+        let ok = unsafe { QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut len) };
+        unsafe { CloseHandle(handle) };
+        if ok == 0 {
+            return None;
+        }
+        Path::new(&String::from_utf16_lossy(&path[..len as usize]))
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+    }
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) struct WinInjector;
+
+#[cfg(target_os = "windows")]
+impl WinInjector {
+    pub(crate) fn paste(&mut self) -> Result<(), stt_core::BoxError> {
+        sys::post(&[
+            WinStroke::ControlDown,
+            WinStroke::VDown,
+            WinStroke::VUp,
+            WinStroke::ControlUp,
+        ])
+    }
+
+    pub(crate) fn target_info(&self) -> (Option<String>, stt_core::TargetAssessment) {
+        sys::target_info()
+    }
+}
 
 #[cfg(target_os = "windows")]
 impl stt_core::TextInjector for WinInjector {

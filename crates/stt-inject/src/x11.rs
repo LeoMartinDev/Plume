@@ -1,6 +1,8 @@
 use stt_core::{BoxError, TextInjector};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ConnectionExt as XProtoExt, KEY_PRESS_EVENT, KEY_RELEASE_EVENT};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt as XProtoExt, Window, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+};
 use x11rb::protocol::xtest::ConnectionExt as XTestExt;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
@@ -14,15 +16,18 @@ const XK_TAB: u32 = 0xff09;
 const XK_RETURN: u32 = 0xff0d;
 const XK_SHIFT_L: u32 = 0xffe1;
 const XK_SHIFT_R: u32 = 0xffe2;
+const XK_CONTROL_L: u32 = 0xffe3;
+const XK_CONTROL_R: u32 = 0xffe4;
 const UNICODE_KEYSYM_BASE: u32 = 0x0100_0000;
 
 pub(crate) struct X11Injector {
     conn: RustConnection,
+    root: Window,
 }
 
 impl X11Injector {
     pub(crate) fn connect() -> Result<Self, BoxError> {
-        let (conn, _) = x11rb::connect(None)?;
+        let (conn, screen_num) = x11rb::connect(None)?;
         let ext = conn
             .query_extension(x11rb::protocol::xtest::X11_EXTENSION_NAME.as_bytes())?
             .reply()?;
@@ -32,7 +37,8 @@ impl X11Injector {
             )
             .into());
         }
-        Ok(Self { conn })
+        let root = conn.setup().roots[screen_num].root;
+        Ok(Self { conn, root })
     }
 
     fn play(&mut self, strokes: &[Stroke]) -> Result<(), BoxError> {
@@ -66,6 +72,59 @@ impl X11Injector {
         self.conn.sync()?;
         Ok(())
     }
+
+    pub(crate) fn paste(&mut self) -> Result<(), BoxError> {
+        let map = Keymap::load(&self.conn)?;
+        let (v, needs_shift) = map.lookup(u32::from('v'))?;
+        if needs_shift {
+            return Err(
+                InjectError::Message("lowercase v requires Shift on this keymap".into()).into(),
+            );
+        }
+        fake_key(&self.conn, KEY_PRESS_EVENT, map.control)?;
+        fake_key(&self.conn, KEY_PRESS_EVENT, v)?;
+        fake_key(&self.conn, KEY_RELEASE_EVENT, v)?;
+        fake_key(&self.conn, KEY_RELEASE_EVENT, map.control)?;
+        self.conn.sync()?;
+        Ok(())
+    }
+
+    pub(crate) fn target_info(&self) -> (Option<String>, stt_core::TargetAssessment) {
+        (
+            self.active_application().ok().flatten(),
+            stt_core::TargetAssessment::Unknown,
+        )
+    }
+
+    fn active_application(&self) -> Result<Option<String>, BoxError> {
+        let active_atom = self
+            .conn
+            .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
+            .reply()?
+            .atom;
+        let active = self
+            .conn
+            .get_property(false, self.root, active_atom, AtomEnum::WINDOW, 0, 1)?
+            .reply()?
+            .value32()
+            .and_then(|mut values| values.next());
+        let Some(window) = active else {
+            return Ok(None);
+        };
+        let class = self
+            .conn
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 1024)?
+            .reply()?
+            .value;
+        let names: Vec<&[u8]> = class
+            .split(|byte| *byte == 0)
+            .filter(|name| !name.is_empty())
+            .collect();
+        Ok(names
+            .get(1)
+            .or_else(|| names.first())
+            .map(|name| String::from_utf8_lossy(name).into_owned()))
+    }
 }
 
 impl TextInjector for X11Injector {
@@ -83,6 +142,7 @@ struct Keymap {
     per: usize,
     keysyms: Vec<u32>,
     shift: u8,
+    control: u8,
     backspace: u8,
 }
 
@@ -109,11 +169,16 @@ impl Keymap {
                 InjectError::Message("BackSpace is not on the current X11 keymap".into())
             })?
             .0;
+        let control = lookup_keysym(&keysyms, min, per, XK_CONTROL_L)
+            .or_else(|| lookup_keysym(&keysyms, min, per, XK_CONTROL_R))
+            .ok_or_else(|| InjectError::Message("Control is not on the current X11 keymap".into()))?
+            .0;
         Ok(Self {
             min,
             per,
             keysyms,
             shift,
+            control,
             backspace,
         })
     }
