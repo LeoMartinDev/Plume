@@ -19,14 +19,12 @@ const N_MELS: usize = 128;
 const PREEMPH: f32 = 0.97;
 const LOG_GUARD: f32 = 5.960_464_5e-8;
 const MAX_SYMBOLS: usize = 10;
-const CHUNK_NEED: usize = 55 * HOP + N_FFT / 2;
-
 fn samples_needed(chunk: usize) -> usize {
-    chunk * CHUNK_SAMPLES + CHUNK_NEED
+    (chunk + 1) * CHUNK_SAMPLES
 }
 
 fn chunks_for_samples(n: usize) -> usize {
-    (n / HOP + 1).div_ceil(CHUNK_MEL)
+    n.div_ceil(CHUNK_SAMPLES)
 }
 
 pub(crate) fn resample_to_16k(samples: &[f32], from: u32) -> Vec<f32> {
@@ -179,7 +177,10 @@ impl Mel {
 
     fn chunk_frames(&self, pcm: &[f32], chunk: usize) -> Vec<f32> {
         let bins = N_FFT / 2 + 1;
-        let base = chunk as isize * CHUNK_SAMPLES as isize - (N_FFT / 2) as isize;
+        // The 400-sample Hann window is centered inside the 512-point FFT.
+        // With the FFT's 256-sample centering pad, its first sample therefore
+        // starts 200 samples before the frame center, not 256 samples before it.
+        let base = chunk as isize * CHUNK_SAMPLES as isize - (WIN / 2) as isize;
         let at = |i: isize| -> f32 {
             if i < 0 || i >= pcm.len() as isize {
                 0.0
@@ -250,7 +251,9 @@ impl NemotronStream {
             pcm: Vec::new(),
             eof: false,
             next_chunk: 0,
-            mel_tail: vec![0.0; CACHE_MEL * N_MELS],
+            // Missing feature frames are log-mel silence. Zero here would mean
+            // an energy of 1.0 and corrupt the first encoder chunk.
+            mel_tail: vec![LOG_GUARD.ln(); CACHE_MEL * N_MELS],
             cache_channel,
             cache_time,
             cache_len: 0,
@@ -415,12 +418,13 @@ mod tests {
 
     #[test]
     fn chunk_boundaries_cover_whole_utterance_stft() {
-        assert_eq!(samples_needed(0), 9056);
-        assert_eq!(samples_needed(1), 9056 + 8960);
+        assert_eq!(samples_needed(0), 8960);
+        assert_eq!(samples_needed(1), 17920);
         assert_eq!(chunks_for_samples(1), 1);
-        assert_eq!(chunks_for_samples(8960), 2);
+        assert_eq!(chunks_for_samples(8960), 1);
+        assert_eq!(chunks_for_samples(8961), 2);
         assert_eq!(chunks_for_samples(16000), 2);
-        assert_eq!(chunks_for_samples(17920), 3);
+        assert_eq!(chunks_for_samples(17920), 2);
     }
 
     #[test]

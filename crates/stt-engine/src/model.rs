@@ -120,12 +120,9 @@ pub struct Engine {
 impl Engine {
     pub fn open(dir: ModelDir) -> Result<Self, BoxError> {
         let _ = ort::init().commit();
-        let encoder =
-            accelerated_session_builder()?.commit_from_file(dir.path().join("encoder.onnx"))?;
-        let decoder =
-            accelerated_session_builder()?.commit_from_file(dir.path().join("decoder.onnx"))?;
-        let joint =
-            accelerated_session_builder()?.commit_from_file(dir.path().join("joint.onnx"))?;
+        let encoder = open_session(dir.path().join("encoder.onnx"))?;
+        let decoder = open_session(dir.path().join("decoder.onnx"))?;
+        let joint = open_session(dir.path().join("joint.onnx"))?;
 
         let signal = tensor_shape(&encoder, "encoder", "audio_signal")?;
         let want = vec![1, (CACHE_MEL + CHUNK_MEL) as i64, 128];
@@ -218,6 +215,24 @@ impl Engine {
     }
 }
 
+fn open_session(path: impl AsRef<Path>) -> Result<Session, ort::Error> {
+    let path = path.as_ref();
+    match accelerated_session_builder()?.commit_from_file(path) {
+        Ok(session) => Ok(session),
+        Err(accelerated_error) => {
+            // Provider registration can succeed even when DirectML/CoreML cannot
+            // compile a particular graph (notably Nemotron's INT4 operators).
+            // Rebuilding the session without an explicit provider lets ORT use
+            // its CPU backend instead of making the installed model unusable.
+            eprintln!(
+                "stt-engine: accelerated ONNX session failed for {}; retrying on CPU: {accelerated_error}",
+                path.display()
+            );
+            Session::builder()?.commit_from_file(path)
+        }
+    }
+}
+
 fn accelerated_session_builder() -> Result<SessionBuilder, ort::Error> {
     let mut builder = Session::builder()?;
 
@@ -303,6 +318,14 @@ mod tests {
         assert_eq!(Language::Auto.encoder_id(), 101);
         assert_eq!(Language::French.encoder_id(), 8);
         assert_eq!(Language::English.encoder_id(), 0);
+    }
+
+    #[test]
+    #[ignore]
+    fn downloaded_nemotron_pack_opens_with_provider_fallback() {
+        let model = std::env::var("STT_NEMOTRON_MODEL").expect("STT_NEMOTRON_MODEL");
+        let dir = ModelDir::open(model).expect("complete Nemotron model directory");
+        Engine::open(dir).expect("open Nemotron model");
     }
 
     #[cfg(target_os = "windows")]
