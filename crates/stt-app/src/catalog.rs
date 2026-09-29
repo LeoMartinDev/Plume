@@ -101,7 +101,7 @@ const CATALOG: &[ModelEntry] = &[
         name: "Nemotron 3.5 Compact",
         size: "793 MB",
         languages: "35 languages",
-        guidance: "Shortest wait after speaking",
+        guidance: "Fastest response",
         engine: EngineKind::Nemotron,
         repo: "onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4",
         revision: "8364d9e2dd9da23789b480bdbba9e423717e42ee",

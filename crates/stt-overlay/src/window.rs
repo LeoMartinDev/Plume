@@ -110,12 +110,12 @@ fn bottom_center_bounds(window_size: Size<Pixels>, cx: &App) -> Bounds<Pixels> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn overlay_titlebar() -> Option<TitlebarOptions> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn overlay_titlebar() -> Option<TitlebarOptions> {
     Some(TitlebarOptions {
         title: Some(WINDOW_TITLE.into()),
@@ -145,7 +145,7 @@ pub fn prepare_display() {
 pub fn run() {
     prepare_display();
     Application::new().run(|cx: &mut App| {
-        open_popup(cx);
+        open_popup(cx, true);
         print_opened_line();
         cx.activate(true);
     });
@@ -163,7 +163,7 @@ pub fn run_with(bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Receiver<f32>) {
 /// PopUp plus 16 ms poller inside an application that is already running.
 /// Title stays WINDOW_TITLE. kind PopUp, focus false.
 pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Receiver<f32>) {
-    let handle = open_popup(cx);
+    let handle = open_popup(cx, false);
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor()
             .timer(Duration::from_millis(16))
@@ -220,7 +220,7 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
     .detach();
 }
 
-fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {
+fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView> {
     let window_size = size(
         px(BUBBLE_WIDTH + SHADOW_MARGIN * 2.),
         px(BUBBLE_HEIGHT + SHADOW_MARGIN * 2.),
@@ -234,6 +234,10 @@ fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {
                 app_id: Some("stt-overlay".into()),
                 kind: WindowKind::PopUp,
                 focus: false,
+                // GPUI needs the macOS panel mapped once before AppKit can
+                // reliably order it in again. Hide it below before the event
+                // loop draws the first frame. Windows can start hidden.
+                show: initially_visible || !cfg!(windows),
                 is_movable: false,
                 is_resizable: false,
                 is_minimizable: false,
@@ -252,23 +256,28 @@ fn open_popup(cx: &mut App) -> WindowHandle<BubbleView> {
         )
         .expect("open overlay window");
     hide_server_frame(WINDOW_TITLE);
-    place_overlay(cx, handle);
+    #[cfg(target_os = "macos")]
+    let _ = handle.update(cx, |_view, window, _cx| macos::configure(window));
+    place_overlay(cx, handle, initially_visible);
     cx.spawn(async move |cx: &mut AsyncApp| {
         for delay in [40, 150, 400] {
             cx.background_executor()
                 .timer(Duration::from_millis(delay))
                 .await;
             hide_server_frame(WINDOW_TITLE);
-            let _ = cx.update(|cx| place_overlay(cx, handle));
+            let _ = cx.update(|cx| place_overlay(cx, handle, initially_visible));
         }
     })
     .detach();
     handle
 }
 
-fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>) {
+fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>, preview_visible: bool) {
     let _ = handle.update(cx, |view, window, _cx| {
-        place_bubble(window, session_visible(view.bubble.state()));
+        place_bubble(
+            window,
+            preview_visible || session_visible(view.bubble.state()),
+        );
     });
 }
 
@@ -282,8 +291,68 @@ fn session_visible(state: SessionState) -> bool {
 fn place_bubble(window: &Window, visible: bool) {
     #[cfg(windows)]
     stack::place(window, visible);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    macos::place(window, visible);
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     let _ = (window, visible);
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use cocoa::{
+        appkit::{NSColor, NSWindow, NSWindowStyleMask},
+        base::{id, nil, NO},
+    };
+    use gpui::Window;
+    use objc::{runtime::Sel, Message};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    fn native_window(window: &Window) -> Option<id> {
+        let handle = HasWindowHandle::window_handle(window).ok()?;
+        let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        let view = handle.ns_view.as_ptr() as id;
+        let native: id = unsafe { (&*view).send_message(Sel::register("window"), ()).ok()? };
+        (!native.is_null()).then_some(native)
+    }
+
+    pub(crate) fn configure(window: &Window) {
+        let Some(native) = native_window(window) else {
+            return;
+        };
+        // GPUI's titlebar=None still creates a titled NSPanel. Keep its
+        // non-activating bit while removing the title and window chrome.
+        unsafe {
+            let Ok(style) = (&*native).send_message::<_, u64>(Sel::register("styleMask"), ())
+            else {
+                return;
+            };
+            let chrome = NSWindowStyleMask::NSTitledWindowMask
+                | NSWindowStyleMask::NSClosableWindowMask
+                | NSWindowStyleMask::NSMiniaturizableWindowMask
+                | NSWindowStyleMask::NSResizableWindowMask
+                | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            let borderless = style & !chrome.bits();
+            let _ = (&*native).send_message::<_, ()>(Sel::register("setStyleMask:"), (borderless,));
+            native.setHasShadow_(NO);
+            native.setOpaque_(NO);
+            native.setBackgroundColor_(NSColor::clearColor(nil));
+        }
+    }
+
+    pub(crate) fn place(window: &Window, visible: bool) {
+        let Some(native) = native_window(window) else {
+            return;
+        };
+        unsafe {
+            if visible {
+                native.orderFrontRegardless();
+            } else {
+                native.orderOut_(nil);
+            }
+        }
+    }
 }
 
 #[cfg(windows)]

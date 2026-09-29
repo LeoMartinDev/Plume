@@ -83,11 +83,6 @@ fn catalog_model_row(
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    let language = match prefs.language() {
-        LanguagePref::Auto => entry.languages.to_string(),
-        LanguagePref::French => "French supported".to_string(),
-        LanguagePref::English => "English supported".to_string(),
-    };
     let progress = match phase {
         AppPhase::Onboarding {
             prefs,
@@ -98,9 +93,17 @@ fn catalog_model_row(
     };
     let detail = match progress {
         Some(progress) => download_status(progress).unwrap_or_default(),
-        None => format!("{} · {} · {}", entry.size, language, entry.guidance),
+        None => match prefs.language() {
+            LanguagePref::Auto => {
+                format!("{} · {} · {}", entry.size, entry.languages, entry.guidance)
+            }
+            LanguagePref::French | LanguagePref::English => {
+                format!("{} · {}", entry.size, entry.guidance)
+            }
+        },
     };
     let (label, enabled) = catalog_model_action(phase, entry.id);
+    let in_use = matches!(phase, AppPhase::Live { .. }) && prefs.model == entry.id;
     let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
     let can_delete = installed && !request_active;
     div()
@@ -115,6 +118,7 @@ fn catalog_model_row(
         .items_center()
         .justify_between()
         .gap(px(16.))
+        .when(in_use, |el| el.bg(tokens.accent_soft))
         .child(
             div()
                 .flex_1()
@@ -183,7 +187,7 @@ fn catalog_model_button(
     enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    let download_action = matches!(label.as_ref(), "Download" | "Retry");
+    let status = matches!(label.as_ref(), "In use" | "In memory");
     div()
         .id(SharedString::from(format!("model-{}-action", id.as_str())))
         .h(px(32.))
@@ -192,11 +196,18 @@ fn catalog_model_button(
         .items_center()
         .justify_center()
         .rounded(px(6.))
-        .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.fill)
+        .when(!status, |el| {
+            el.border_1().border_color(tokens.hairline).bg(tokens.fill)
+        })
         .text_sm()
-        .text_color(if enabled { tokens.text } else { tokens.muted })
+        .text_color(if status {
+            tokens.status
+        } else if enabled {
+            tokens.text
+        } else {
+            tokens.muted
+        })
+        .when(status, |el| el.font_weight(FontWeight::MEDIUM))
         .when(enabled, |el| {
             el.cursor_pointer()
                 .hover(|style| style.bg(tokens.fill_hover))
@@ -208,15 +219,7 @@ fn catalog_model_button(
                     crate::begin_pack(cx, prefs, request);
                 }))
         })
-        .when(download_action, |el| {
-            el.child(
-                svg()
-                    .path("fluent/download.svg")
-                    .size(px(16.))
-                    .text_color(if enabled { tokens.text } else { tokens.muted }),
-            )
-        })
-        .when(!download_action, |el| el.child(label))
+        .child(label)
 }
 
 fn catalog_model_delete_button(
@@ -328,13 +331,13 @@ fn language_row(
         .flex()
         .flex_row()
         .items_center()
-        .justify_between()
         .gap(px(16.))
-        .child(div().text_sm().child("Language"))
+        .child(div().flex_1().min_w_0().text_sm().child("Language"))
         .child(
             div()
                 .id("language-select")
                 .w(px(156.))
+                .flex_shrink_0()
                 .h(px(32.))
                 .px(px(10.))
                 .flex()

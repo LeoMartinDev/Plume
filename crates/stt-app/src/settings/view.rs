@@ -10,6 +10,8 @@ use super::dictation::dictation_page;
 use super::history_view::history_page;
 use super::model::model_page;
 use super::{SettingsSection, SettingsView};
+#[cfg(target_os = "macos")]
+use super::{MACOS_TITLEBAR_HEIGHT, SETTINGS_TITLE};
 
 const THEMES: [(AppearancePref, &str); 3] = [
     (AppearancePref::Auto, "System"),
@@ -63,6 +65,66 @@ fn sync_native_titlebar(window: &Window, palette: Palette) {
 #[cfg(not(windows))]
 fn sync_native_titlebar(_window: &Window, _palette: Palette) {}
 
+#[cfg(target_os = "macos")]
+fn drag_macos_titlebar(window: &Window) {
+    use cocoa::{
+        appkit::NSApplication,
+        base::{id, nil},
+    };
+    use objc::{runtime::Sel, Message};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    unsafe {
+        let native_view = handle.ns_view.as_ptr() as id;
+        let Ok(native_window) = (&*native_view).send_message::<_, id>(Sel::register("window"), ())
+        else {
+            return;
+        };
+        if native_window.is_null() {
+            return;
+        }
+        let app = NSApplication::sharedApplication(nil);
+        let Ok(event) = (&*app).send_message::<_, id>(Sel::register("currentEvent"), ()) else {
+            return;
+        };
+        if !event.is_null() {
+            let _ = (&*native_window)
+                .send_message::<_, ()>(Sel::register("performWindowDragWithEvent:"), (event,));
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
+    use gpui::MouseButton;
+
+    div()
+        .id("settings-titlebar")
+        .h(px(MACOS_TITLEBAR_HEIGHT))
+        .w_full()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .pl(px(84.))
+        .bg(tokens.chrome)
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
+        .child(SETTINGS_TITLE)
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.titlebar_double_click();
+            } else {
+                drag_macos_titlebar(window);
+            }
+        })
+}
+
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prefs = self.phase.prefs().clone();
@@ -80,14 +142,12 @@ impl Render for SettingsView {
             SettingsSection::History => history_page(self, &tokens, cx),
         };
 
-        div()
-            .id("settings-shell")
-            .size_full()
+        let body = div()
             .flex()
             .flex_row()
+            .flex_1()
+            .min_h_0()
             .overflow_hidden()
-            .bg(tokens.chrome)
-            .text_color(tokens.text)
             .child(sidebar(self.section, &tokens, cx))
             .child(
                 div()
@@ -110,7 +170,19 @@ impl Render for SettingsView {
                             .child(content),
                     )
                     .child(scrollbar(self.content_scroll.clone(), tokens.muted)),
-            )
+            );
+
+        let shell = div()
+            .id("settings-shell")
+            .size_full()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .bg(tokens.chrome)
+            .text_color(tokens.text);
+        #[cfg(target_os = "macos")]
+        let shell = shell.child(macos_titlebar(&tokens));
+        shell.child(body)
     }
 }
 
@@ -236,7 +308,7 @@ fn nav_item(
 pub(super) fn page(title: &'static str, body: impl IntoElement) -> AnyElement {
     div()
         .w_full()
-        .max_w(px(420.))
+        .max_w(px(480.))
         .flex()
         .flex_col()
         .gap(px(16.))
@@ -275,7 +347,7 @@ fn appearance_page(
             .items_center()
             .justify_between()
             .gap(px(16.))
-            .child(div().text_sm().child("Theme"))
+            .child(div().flex_1().min_w_0().text_sm().child("Theme"))
             .child(Segmented::new(
                 *tokens,
                 selected,

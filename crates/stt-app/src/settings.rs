@@ -8,6 +8,7 @@ use gpui::{
     Context, FocusHandle, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, ScrollHandle,
     Subscription, Window,
 };
+use std::time::Duration;
 use stt_engine::{Language, LanguageTarget};
 use stt_session::{EngineTarget, HoldTarget, InsertionConfig, InsertionMode, InsertionTarget};
 
@@ -25,6 +26,8 @@ pub use window::{
 };
 
 pub const SETTINGS_TITLE: &str = "stt";
+#[cfg(target_os = "macos")]
+const MACOS_TITLEBAR_HEIGHT: f32 = 32.;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsSection {
@@ -70,6 +73,8 @@ pub struct SettingsView {
     downloads: DownloadRequestTracker,
     history: crate::history::HistoryStore,
     history_error: Option<String>,
+    copied_history_id: Option<u64>,
+    copy_feedback_serial: u64,
     _appearance: Subscription,
 }
 
@@ -292,8 +297,29 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn copy_history(&mut self, text: String, cx: &mut Context<Self>) {
-        self.history_error = crate::history::copy_text(&text).err();
+    fn copy_history(&mut self, id: u64, text: String, cx: &mut Context<Self>) {
+        match crate::history::copy_text(&text) {
+            Ok(()) => {
+                self.history_error = None;
+                self.copied_history_id = Some(id);
+                self.copy_feedback_serial = self.copy_feedback_serial.wrapping_add(1);
+                let serial = self.copy_feedback_serial;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    let _ = this.update(cx, |view, cx| {
+                        if view.copy_feedback_serial == serial {
+                            view.copied_history_id = None;
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+            Err(error) => {
+                self.history_error = Some(error);
+                self.copied_history_id = None;
+            }
+        }
         cx.notify();
     }
 

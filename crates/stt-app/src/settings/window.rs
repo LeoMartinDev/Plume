@@ -18,9 +18,11 @@ use crate::prefs::Prefs;
 use super::{SettingsSection, SettingsView, SETTINGS_TITLE};
 
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
+const SETTINGS_CONTENT_HEIGHT: f32 = 410.;
 
 pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTracker) {
-    let bounds = Bounds::centered(None, size(px(720.), px(480.)), cx);
+    let height = SETTINGS_CONTENT_HEIGHT + if cfg!(target_os = "macos") { 32. } else { 0. };
+    let bounds = Bounds::centered(None, size(px(720.), px(height)), cx);
     let history_path = crate::dirs::AppDirs::resolve().history_path();
     let (history, history_error) = match crate::history::HistoryStore::load(history_path.clone()) {
         Ok(history) => (history, None),
@@ -35,6 +37,7 @@ pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTr
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(SETTINGS_TITLE.into()),
+                    appears_transparent: cfg!(target_os = "macos"),
                     ..Default::default()
                 }),
                 app_id: Some("stt-app".into()),
@@ -74,6 +77,8 @@ pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTr
                         downloads,
                         history,
                         history_error,
+                        copied_history_id: None,
+                        copy_feedback_serial: 0,
                         _appearance,
                     }
                 })

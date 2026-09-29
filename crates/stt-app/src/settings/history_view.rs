@@ -14,29 +14,17 @@ pub(super) fn history_page(
         .flex()
         .flex_col()
         .gap(px(10.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child("Text only · kept for 30 days · maximum 500 entries"),
-                )
-                .when(!entries.is_empty(), |row| {
-                    row.child(action_button(
-                        tokens,
-                        "history-clear",
-                        "Clear all",
-                        cx,
-                        |this, cx| {
-                            this.clear_history(cx);
-                        },
-                    ))
-                }),
-        )
+        .when(!entries.is_empty(), |list| {
+            list.child(div().w_full().flex().justify_end().child(action_button(
+                tokens,
+                "history-clear",
+                "Clear all",
+                cx,
+                |this, cx| {
+                    this.clear_history(cx);
+                },
+            )))
+        })
         .when(entries.is_empty(), |list| {
             list.child(
                 settings_group(tokens)
@@ -52,6 +40,7 @@ pub(super) fn history_page(
                 ListGroup::new(*tokens).children(entries.into_iter().map(|entry| {
                     let copy_text = entry.text.clone();
                     let id = entry.id;
+                    let copied = view.copied_history_id == Some(id);
                     div()
                         .w_full()
                         .px(px(14.))
@@ -87,20 +76,20 @@ pub(super) fn history_page(
                                     div()
                                         .flex()
                                         .items_center()
-                                        .gap(px(2.))
+                                        .gap(px(8.))
                                         .child(
                                             div()
                                                 .text_xs()
                                                 .text_color(tokens.muted)
                                                 .child(crate::history::age_label(entry.created_at)),
                                         )
-                                        .child(icon_button(
+                                        .child(copy_button(
                                             tokens,
-                                            ("history-copy", id),
-                                            "fluent/copy.svg",
+                                            id,
+                                            copied,
                                             cx,
                                             move |this, cx| {
-                                                this.copy_history(copy_text.clone(), cx);
+                                                this.copy_history(id, copy_text.clone(), cx);
                                             },
                                         ))
                                         .child(icon_button(
@@ -177,5 +166,40 @@ fn icon_button(
         .cursor_pointer()
         .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
         .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
-        .child(svg().path(icon).size(px(15.)))
+        .child(svg().path(icon).size(px(15.)).text_color(tokens.muted))
+}
+
+fn copy_button(
+    tokens: &Tokens,
+    id: u64,
+    copied: bool,
+    cx: &mut Context<SettingsView>,
+    on_click: impl Fn(&mut SettingsView, &mut Context<SettingsView>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(("history-copy", id))
+        .h(px(24.))
+        .min_w(px(24.))
+        .px(px(if copied { 4. } else { 0. }))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .text_xs()
+        .text_color(if copied { tokens.status } else { tokens.muted })
+        .cursor_pointer()
+        .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
+        .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
+        .when_else(
+            copied,
+            |button| button.child("Copied"),
+            |button| {
+                button.child(
+                    svg()
+                        .path("fluent/copy.svg")
+                        .size(px(15.))
+                        .text_color(tokens.muted),
+                )
+            },
+        )
 }

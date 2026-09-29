@@ -151,7 +151,7 @@ impl RenderOnce for ListGroup {
             .overflow_hidden()
             .border_1()
             .border_color(tokens.hairline)
-            .bg(tokens.elevated)
+            .bg(tokens.group)
             .children(items)
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::chord::{Edge, Mods};
 use crate::shortcut::{KeyId, Trigger};
+use stt_core::HotkeyEvent;
 
 const FLAG_SHIFT: u64 = 0x0002_0000;
 const FLAG_CONTROL: u64 = 0x0004_0000;
@@ -120,9 +121,43 @@ pub(crate) fn decode_macos(kind: u32, keycode: u16, flags: u64) -> Option<(Mods,
     Some((mods, id, edge))
 }
 
+#[derive(Default)]
+struct CaptureFilter {
+    tracker: Option<crate::chord::ChordTracker>,
+    swallowed: Option<KeyId>,
+}
+
+impl CaptureFilter {
+    fn register(&mut self, shortcut: crate::shortcut::Shortcut) {
+        self.tracker = Some(crate::chord::ChordTracker::new(shortcut));
+        self.swallowed = None;
+    }
+
+    fn push(&mut self, kind: u32, keycode: u16, flags: u64) -> (Option<HotkeyEvent>, bool) {
+        let Some((mods, id, edge)) = decode_macos(kind, keycode, flags) else {
+            return (None, false);
+        };
+        let Some(tracker) = self.tracker.as_mut() else {
+            return (None, false);
+        };
+        let was_swallowed = self.swallowed == Some(id);
+        let signal = tracker.push_macos(mods, id, edge);
+        if signal == Some(HotkeyEvent::Pressed) {
+            self.swallowed = Some(id);
+        } else if was_swallowed && edge == Edge::Up {
+            self.swallowed = None;
+        }
+        (
+            signal,
+            was_swallowed || signal == Some(HotkeyEvent::Pressed),
+        )
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod backend {
-    use std::sync::mpsc::{self, Receiver, TryRecvError};
+    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+    use std::sync::{Arc, Mutex};
     use std::thread::{self, JoinHandle};
 
     use core_foundation::runloop::CFRunLoop;
@@ -132,102 +167,131 @@ mod backend {
     };
     use stt_core::{BoxError, GlobalHotkey, HotkeyEvent};
 
-    use super::{decode_macos, KIND_FLAGS_CHANGED, KIND_KEY_DOWN, KIND_KEY_UP};
-    use crate::chord::ChordTracker;
+    use super::CaptureFilter;
     use crate::shortcut::Shortcut;
     use crate::HotkeyError;
 
-    struct MacRaw {
-        kind: u32,
-        keycode: u16,
-        flags: u64,
-    }
-
     pub struct MacosHotkey {
-        events: Receiver<MacRaw>,
+        events: Receiver<HotkeyEvent>,
+        filter: Arc<Mutex<CaptureFilter>>,
         runloop: Option<CFRunLoop>,
         thread: Option<JoinHandle<()>>,
-        tracker: Option<ChordTracker>,
     }
 
     impl MacosHotkey {
         pub(crate) fn new() -> Result<Self, BoxError> {
             let (tx, rx) = mpsc::channel();
             let (ready_tx, ready_rx) = mpsc::channel();
+            let filter = Arc::new(Mutex::new(CaptureFilter::default()));
+            let thread_filter = Arc::clone(&filter);
             let thread = thread::spawn(move || {
-                let result = CGEventTap::with_enabled(
-                    CGEventTapLocation::HID,
-                    CGEventTapPlacement::HeadInsertEventTap,
-                    CGEventTapOptions::ListenOnly,
-                    vec![
-                        CGEventType::KeyDown,
-                        CGEventType::KeyUp,
-                        CGEventType::FlagsChanged,
-                    ],
-                    move |_proxy, etype, event| {
-                        let kind = match etype {
-                            CGEventType::KeyDown => KIND_KEY_DOWN,
-                            CGEventType::KeyUp => KIND_KEY_UP,
-                            CGEventType::FlagsChanged => KIND_FLAGS_CHANGED,
-                            _ => return CallbackResult::Keep,
-                        };
-                        let keycode = event
-                            .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
-                            as u16;
-                        let flags = event.get_flags().bits();
-                        let _ = tx.send(MacRaw {
-                            kind,
-                            keycode,
-                            flags,
-                        });
-                        CallbackResult::Keep
-                    },
-                    || {
-                        let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
-                        CFRunLoop::run_current();
-                    },
-                );
-                if result.is_err() {
-                    let _ = ready_tx.send(Err(HotkeyError::Os(
-                        "CGEventTapCreate failed; grant Accessibility permission".to_string(),
-                    )));
+                // A filtering session tap owns the configured shortcut, so
+                // Finder and other apps cannot act on the same key press.
+                // Keep passive monitoring as a fallback when macOS denies a
+                // filtering tap but permits Input Monitoring.
+                for (location, options, mode) in [
+                    (
+                        CGEventTapLocation::Session,
+                        CGEventTapOptions::Default,
+                        "filtering",
+                    ),
+                    (
+                        CGEventTapLocation::HID,
+                        CGEventTapOptions::ListenOnly,
+                        "passive",
+                    ),
+                ] {
+                    if run_tap(
+                        location,
+                        options,
+                        mode,
+                        tx.clone(),
+                        Arc::clone(&thread_filter),
+                        &ready_tx,
+                    ) {
+                        return;
+                    }
                 }
+                let _ = ready_tx.send(Err(HotkeyError::Os(
+                    "CGEventTapCreate failed; grant Accessibility permission".to_string(),
+                )));
             });
             let runloop = ready_rx
                 .recv()
                 .map_err(|err| HotkeyError::Os(err.to_string()))??;
             Ok(MacosHotkey {
                 events: rx,
+                filter,
                 runloop: Some(runloop),
                 thread: Some(thread),
-                tracker: None,
             })
         }
     }
 
+    fn run_tap(
+        location: CGEventTapLocation,
+        options: CGEventTapOptions,
+        mode: &'static str,
+        tx: Sender<HotkeyEvent>,
+        filter: Arc<Mutex<CaptureFilter>>,
+        ready_tx: &Sender<Result<CFRunLoop, HotkeyError>>,
+    ) -> bool {
+        CGEventTap::with_enabled(
+            location,
+            CGEventTapPlacement::HeadInsertEventTap,
+            options,
+            vec![
+                CGEventType::KeyDown,
+                CGEventType::KeyUp,
+                CGEventType::FlagsChanged,
+            ],
+            move |_proxy, etype, event| {
+                let kind = match etype {
+                    CGEventType::KeyDown => super::KIND_KEY_DOWN,
+                    CGEventType::KeyUp => super::KIND_KEY_UP,
+                    CGEventType::FlagsChanged => super::KIND_FLAGS_CHANGED,
+                    _ => return CallbackResult::Keep,
+                };
+                let keycode =
+                    event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+                let flags = event.get_flags().bits();
+                let Ok(mut filter) = filter.lock() else {
+                    return CallbackResult::Keep;
+                };
+                let (signal, swallow) = filter.push(kind, keycode, flags);
+                drop(filter);
+                if let Some(signal) = signal {
+                    let _ = tx.send(signal);
+                }
+                if swallow {
+                    CallbackResult::Drop
+                } else {
+                    CallbackResult::Keep
+                }
+            },
+            || {
+                eprintln!("stt-hotkey: macOS {mode} keyboard tap ready");
+                let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
+                CFRunLoop::run_current();
+            },
+        )
+        .is_ok()
+    }
+
     impl GlobalHotkey for MacosHotkey {
         fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
-            self.tracker = Some(ChordTracker::new(Shortcut::parse(shortcut)?));
+            self.filter
+                .lock()
+                .expect("macOS shortcut filter")
+                .register(Shortcut::parse(shortcut)?);
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
 
         fn next_event(&mut self) -> Option<HotkeyEvent> {
-            let tracker = self.tracker.as_mut()?;
-            loop {
-                match self.events.try_recv() {
-                    Ok(raw) => {
-                        if let Some((mods, id, edge)) =
-                            decode_macos(raw.kind, raw.keycode, raw.flags)
-                        {
-                            if let Some(event) = tracker.push_macos(mods, id, edge) {
-                                return Some(event);
-                            }
-                        }
-                    }
-                    Err(TryRecvError::Empty) => return None,
-                    Err(TryRecvError::Disconnected) => return None,
-                }
+            match self.events.try_recv() {
+                Ok(event) => Some(event),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
             }
         }
     }
@@ -287,6 +351,60 @@ mod tests {
         assert_eq!(
             tracker.push_macos(mods, id, edge),
             Some(HotkeyEvent::Released)
+        );
+    }
+
+    #[test]
+    fn super_shift_f_hold_uses_command_and_shift_flags() {
+        let mut tracker = ChordTracker::new(Shortcut::parse("Super+Shift+f").unwrap());
+        for (kind, keycode, flags, expected) in [
+            (KIND_FLAGS_CHANGED, 0x37, FLAG_COMMAND, None),
+            (KIND_FLAGS_CHANGED, 0x38, FLAG_COMMAND | FLAG_SHIFT, None),
+            (
+                KIND_KEY_DOWN,
+                0x03,
+                FLAG_COMMAND | FLAG_SHIFT,
+                Some(HotkeyEvent::Pressed),
+            ),
+            (
+                KIND_KEY_UP,
+                0x03,
+                FLAG_COMMAND | FLAG_SHIFT,
+                Some(HotkeyEvent::Released),
+            ),
+        ] {
+            let (mods, id, edge) = decode_macos(kind, keycode, flags).unwrap();
+            assert_eq!(tracker.push_macos(mods, id, edge), expected);
+        }
+    }
+
+    #[test]
+    fn filter_consumes_only_the_registered_chord_until_key_up() {
+        let mut filter = CaptureFilter::default();
+        filter.register(Shortcut::parse("Super+Shift+f").unwrap());
+        let modifiers = FLAG_COMMAND | FLAG_SHIFT;
+        assert_eq!(
+            filter.push(KIND_FLAGS_CHANGED, 0x37, FLAG_COMMAND),
+            (None, false)
+        );
+        assert_eq!(
+            filter.push(KIND_FLAGS_CHANGED, 0x38, modifiers),
+            (None, false)
+        );
+        assert_eq!(filter.push(KIND_KEY_DOWN, 0x00, modifiers), (None, false));
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x03, modifiers),
+            (Some(HotkeyEvent::Pressed), true)
+        );
+        assert_eq!(filter.push(KIND_KEY_DOWN, 0x03, modifiers), (None, true));
+        assert_eq!(
+            filter.push(KIND_KEY_UP, 0x03, modifiers),
+            (Some(HotkeyEvent::Released), true)
+        );
+        assert_eq!(filter.push(KIND_KEY_UP, 0x00, modifiers), (None, false));
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x03, modifiers),
+            (Some(HotkeyEvent::Pressed), true)
         );
     }
 

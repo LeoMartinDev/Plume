@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 arboard = "3.6"
 dirs = "6"
-gpui = "=0.2.2"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 stt-engine = { path = "../stt-engine" }
@@ -15,6 +15,11 @@ stt-session = { path = "../stt-session" }
 stt-ui = { path = "../stt-ui" }
 toml = "0.8"
 ureq = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+raw-window-handle = "0.6.2"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6.2"

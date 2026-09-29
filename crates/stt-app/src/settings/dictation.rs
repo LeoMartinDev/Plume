@@ -64,6 +64,8 @@ pub(super) fn dictation_page(
                     })
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .flex()
                             .flex_col()
                             .gap(px(2.))
@@ -159,6 +161,8 @@ fn insertion_mode_row(
         .gap(px(14.))
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .gap(px(2.))
@@ -174,6 +178,7 @@ fn insertion_mode_row(
             div()
                 .id("insertion-select")
                 .w(px(156.))
+                .flex_shrink_0()
                 .h(px(32.))
                 .px(px(10.))
                 .flex()
@@ -283,6 +288,8 @@ fn copy_on_failure_row(
         .gap(px(14.))
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .gap(px(2.))
