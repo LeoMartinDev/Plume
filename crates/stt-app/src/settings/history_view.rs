@@ -37,7 +37,7 @@ pub(super) fn history_page(
         })
         .when(!entries.is_empty(), |list| {
             list.child(
-                ListGroup::new(*tokens).children(entries.into_iter().map(|entry| {
+                ListGroup::new(*tokens).children(entries.into_iter().map(move |entry| {
                     let copy_text = entry.text.clone();
                     let id = entry.id;
                     let copied = view.copied_history_id == Some(id);
@@ -80,8 +80,16 @@ pub(super) fn history_page(
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .text_color(tokens.muted)
-                                                .child(crate::history::age_label(entry.created_at)),
+                                                .text_color(if copied {
+                                                    tokens.accent
+                                                } else {
+                                                    tokens.muted
+                                                })
+                                                .child(if copied {
+                                                    "Copied".to_string()
+                                                } else {
+                                                    crate::history::age_label(entry.created_at)
+                                                }),
                                         )
                                         .child(copy_button(
                                             tokens,

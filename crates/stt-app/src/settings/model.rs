@@ -47,7 +47,11 @@ fn model_catalog(
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    settings_group(tokens).flex().flex_col().children(
+    settings_group(tokens)
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .children(
         catalog::entries()
             .iter()
             .enumerate()
@@ -103,9 +107,9 @@ fn catalog_model_row(
         },
     };
     let (label, enabled) = catalog_model_action(phase, entry.id);
-    let in_use = matches!(phase, AppPhase::Live { .. }) && prefs.model == entry.id;
     let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
     let can_delete = installed && !request_active;
+    let is_current = phase.prefs().model == entry.id;
     div()
         .id(SharedString::from(format!("model-{}", entry.id.as_str())))
         .w_full()
@@ -118,7 +122,9 @@ fn catalog_model_row(
         .items_center()
         .justify_between()
         .gap(px(16.))
-        .when(in_use, |el| el.bg(tokens.accent_soft))
+        // Sélection instantanée : le fond suit prefs.model dès le clic,
+        // sans attendre la fin du chargement moteur ("In use").
+        .when(is_current, |el| el.bg(tokens.accent_soft))
         .child(
             div()
                 .flex_1()
