@@ -206,13 +206,7 @@ fn catalog_model_button(
             el.border_1().border_color(tokens.hairline).bg(tokens.fill)
         })
         .text_sm()
-        .text_color(if status {
-            tokens.status
-        } else if enabled {
-            tokens.text
-        } else {
-            tokens.muted
-        })
+        .text_color(if enabled { tokens.text } else { tokens.muted })
         .when(status, |el| el.font_weight(FontWeight::MEDIUM))
         .when(enabled, |el| {
             el.cursor_pointer()
