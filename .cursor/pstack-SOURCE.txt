@@ -1,5 +1,0 @@
-Vendored from the pstack Cursor plugin v0.15.1
-https://github.com/cursor/plugins/tree/main/pstack
-License: MIT (see pstack-LICENSE)
-Skills: .cursor/skills/
-Agents: .cursor/agents/
