@@ -7,6 +7,7 @@ pub enum ModelId {
     Nemotron35Compact,
     WhisperBase,
     WhisperSmall,
+    WhisperLargeV3Turbo,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +30,12 @@ pub struct ModelEntry {
     pub size: &'static str,
     pub languages: &'static str,
     pub guidance: &'static str,
+    /// 1..=5, 5 = fastest. Relative order on a typical desktop GPU.
+    pub speed: u8,
+    /// 1..=5, 5 = most accurate for everyday FR dictation.
+    pub accuracy: u8,
+    /// True when the engine streams partial hypotheses word by word.
+    pub streaming: bool,
     pub engine: EngineKind,
     pub repo: &'static str,
     pub revision: &'static str,
@@ -95,6 +102,12 @@ const WHISPER_SMALL_FILES: &[ModelFile] = &[ModelFile {
     bytes: 487_601_967,
 }];
 
+const WHISPER_LARGE_V3_TURBO_FILES: &[ModelFile] = &[ModelFile {
+    remote: "ggml-large-v3-turbo.bin",
+    local: "model.bin",
+    bytes: 1_624_555_275,
+}];
+
 const CATALOG: &[ModelEntry] = &[
     ModelEntry {
         id: ModelId::Nemotron35Compact,
@@ -102,6 +115,9 @@ const CATALOG: &[ModelEntry] = &[
         size: "793 MB",
         languages: "35 languages",
         guidance: "Fastest response",
+        speed: 5,
+        accuracy: 3,
+        streaming: true,
         engine: EngineKind::Nemotron,
         repo: "onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4",
         revision: "8364d9e2dd9da23789b480bdbba9e423717e42ee",
@@ -113,6 +129,9 @@ const CATALOG: &[ModelEntry] = &[
         size: "142 MB",
         languages: "99 languages",
         guidance: "Smallest download",
+        speed: 4,
+        accuracy: 2,
+        streaming: false,
         engine: EngineKind::Whisper,
         repo: "ggerganov/whisper.cpp",
         revision: "5359861c739e955e79d9a303bcbc70fb988958b1",
@@ -123,11 +142,28 @@ const CATALOG: &[ModelEntry] = &[
         name: "Whisper Small",
         size: "466 MB",
         languages: "99 languages",
-        guidance: "Better accuracy",
+        guidance: "Balanced",
+        speed: 3,
+        accuracy: 4,
+        streaming: false,
         engine: EngineKind::Whisper,
         repo: "ggerganov/whisper.cpp",
         revision: "5359861c739e955e79d9a303bcbc70fb988958b1",
         files: WHISPER_SMALL_FILES,
+    },
+    ModelEntry {
+        id: ModelId::WhisperLargeV3Turbo,
+        name: "Whisper Large-v3-Turbo",
+        size: "1.5 GB",
+        languages: "99 languages",
+        guidance: "Best accuracy · Fr+En",
+        speed: 2,
+        accuracy: 5,
+        streaming: false,
+        engine: EngineKind::Whisper,
+        repo: "ggerganov/whisper.cpp",
+        revision: "5359861c739e955e79d9a303bcbc70fb988958b1",
+        files: WHISPER_LARGE_V3_TURBO_FILES,
     },
 ];
 
@@ -137,14 +173,14 @@ impl ModelId {
             Self::Nemotron35Compact => "nemotron-3.5-compact",
             Self::WhisperBase => "whisper-base",
             Self::WhisperSmall => "whisper-small",
+            Self::WhisperLargeV3Turbo => "whisper-large-v3-turbo",
         }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
+    }    pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "light" | "nemotron-3.5-compact" => Some(Self::Nemotron35Compact),
             "whisper-base" => Some(Self::WhisperBase),
             "whisper-small" => Some(Self::WhisperSmall),
+            "whisper-large-v3-turbo" => Some(Self::WhisperLargeV3Turbo),
             _ => None,
         }
     }
@@ -154,6 +190,23 @@ impl ModelId {
             .iter()
             .find(|entry| entry.id == self)
             .expect("catalog ids always have an entry")
+    }
+
+    /// True when the model covers the pinned settings language.
+    /// All four current packs cover French and English (Nemotron: 35
+    /// languages, Whisper: 99), so this only dims future packs that
+    /// are English-only or French-only.
+    pub fn supports(self, language: crate::prefs::LanguagePref) -> bool {
+        use crate::prefs::LanguagePref;
+        match language {
+            LanguagePref::Auto => true,
+            LanguagePref::French | LanguagePref::English => match self {
+                Self::Nemotron35Compact
+                | Self::WhisperBase
+                | Self::WhisperSmall
+                | Self::WhisperLargeV3Turbo => true,
+            },
+        }
     }
 
     pub fn data_dir(self) -> std::path::PathBuf {
@@ -196,13 +249,19 @@ mod tests {
 
     #[test]
     fn catalog_has_named_models_with_choice_metadata() {
-        assert_eq!(entries().len(), 3);
+        assert_eq!(entries().len(), 4);
         for entry in entries() {
             assert!(!entry.name.is_empty());
             assert!(!entry.size.is_empty());
             assert!(!entry.languages.is_empty());
             assert!(!entry.guidance.is_empty());
             assert!(!entry.files.is_empty());
+            assert!((1..=5).contains(&entry.speed), "speed 1..=5 for {}", entry.name);
+            assert!(
+                (1..=5).contains(&entry.accuracy),
+                "accuracy 1..=5 for {}",
+                entry.name
+            );
         }
     }
 
@@ -211,5 +270,15 @@ mod tests {
         assert_eq!(ModelId::parse("light"), Some(ModelId::Nemotron35Compact));
         assert_eq!(ModelId::parse("medium"), None);
         assert_eq!(ModelId::parse("large"), None);
+    }
+
+    #[test]
+    fn every_model_covers_french_and_english() {
+        use crate::prefs::LanguagePref;
+        for entry in entries() {
+            assert!(entry.id.supports(LanguagePref::Auto));
+            assert!(entry.id.supports(LanguagePref::French));
+            assert!(entry.id.supports(LanguagePref::English));
+        }
     }
 }

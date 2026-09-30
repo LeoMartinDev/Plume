@@ -47,11 +47,8 @@ fn model_catalog(
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    settings_group(tokens)
-        .flex()
-        .flex_col()
-        .overflow_hidden()
-        .children(
+    let count = catalog::entries().len();
+    settings_group(tokens).flex().flex_col().children(
         catalog::entries()
             .iter()
             .enumerate()
@@ -60,6 +57,8 @@ fn model_catalog(
                     entry,
                     &view.phase,
                     view.downloads.is_active_for(entry.id),
+                    index == 0,
+                    index + 1 == count,
                     tokens,
                     prefs,
                     cx,
@@ -83,6 +82,8 @@ fn catalog_model_row(
     entry: &ModelEntry,
     phase: &AppPhase,
     request_active: bool,
+    is_first: bool,
+    is_last: bool,
     tokens: &Tokens,
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
@@ -95,26 +96,26 @@ fn catalog_model_row(
         } if prefs.model == entry.id => Some(last),
         _ => None,
     };
-    let detail = match progress {
-        Some(progress) => download_status(progress).unwrap_or_default(),
-        None => match prefs.language() {
-            LanguagePref::Auto => {
-                format!("{} · {} · {}", entry.size, entry.languages, entry.guidance)
-            }
-            LanguagePref::French | LanguagePref::English => {
-                format!("{} · {}", entry.size, entry.guidance)
-            }
-        },
-    };
+    let downloading: Option<SharedString> = progress
+        .and_then(download_status)
+        .map(SharedString::from);
+    let supported = entry.id.supports(prefs.language());
     let (label, enabled) = catalog_model_action(phase, entry.id);
+    // A pack that does not cover the pinned language cannot be selected.
+    let (label, enabled) = if supported {
+        (label, enabled)
+    } else {
+        ("Unsupported".into(), false)
+    };
     let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
     let can_delete = installed && !request_active;
     let is_current = phase.prefs().model == entry.id;
+    let detail = entry.size;
     div()
         .id(SharedString::from(format!("model-{}", entry.id.as_str())))
         .w_full()
         .relative()
-        .min_h(px(68.))
+        .min_h(px(88.))
         .px(px(14.))
         .py(px(10.))
         .flex()
@@ -124,31 +125,63 @@ fn catalog_model_row(
         .gap(px(16.))
         // Sélection instantanée : le fond suit prefs.model dès le clic,
         // sans attendre la fin du chargement moteur ("In use").
-        .when(is_current, |el| el.bg(tokens.accent_soft))
+        // Les coins arrondis sont portés par la ligne elle-même selon sa
+        // position, pour épouser la carte sans clip qui casserait bordures
+        // et angles.
+        .when(is_current && supported, |el| {
+            let el = el.bg(tokens.accent_soft);
+            if is_first && is_last {
+                el.rounded(px(10.))
+            } else if is_first {
+                el.rounded_t(px(10.))
+            } else if is_last {
+                el.rounded_b(px(10.))
+            } else {
+                el
+            }
+        })
+        // Pack hors langue épinglée : grisé, non cliquable.
+        .when(!supported, |el| el.opacity(0.45))
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
                 .flex()
                 .flex_col()
-                .gap(px(3.))
+                .gap(px(5.))
                 .child(
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .child(entry.name),
                 )
-                .child(
-                    div()
-                        .w_full()
-                        .h(px(16.))
-                        .flex()
-                        .items_center()
-                        .truncate()
+                .child(match downloading {
+                    Some(text) => div()
                         .text_xs()
                         .text_color(tokens.muted)
-                        .child(detail),
-                ),
+                        .child(text)
+                        .into_any_element(),
+                    None => div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(tokens.muted)
+                                .child(detail),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(14.))
+                                .child(spec_meter("Speed", entry.speed, tokens))
+                                .child(spec_meter("Accuracy", entry.accuracy, tokens)),
+                        )
+                        .into_any_element(),
+                }),
         )
         .child(
             div()
@@ -162,6 +195,36 @@ fn catalog_model_row(
         .children(progress.and_then(|progress| catalog_model_progress(progress, tokens)))
 }
 
+/// 5 uniform rounded bars, neutral theme colors (no accent blue).
+/// `value` is 1..=5, more filled bars = faster / more accurate.
+fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoElement {
+    let value = value.clamp(1, 5);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .child(div().text_xs().text_color(tokens.muted).child(label))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3.))
+                .children((0..5).map(move |i| {
+                    div()
+                        .w(px(4.))
+                        .h(px(14.))
+                        .rounded(px(2.))
+                        .bg(if i < value {
+                            tokens.text
+                        } else {
+                            tokens.hairline
+                        })
+                })),
+        )
+}
+
 fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
     let installed = catalog::is_complete(id, &id.data_dir());
     if phase.prefs().model == id {
@@ -169,7 +232,9 @@ fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
             AppPhase::Live { .. } => (if installed { "In use" } else { "In memory" }.into(), false),
             AppPhase::Onboarding { status, .. } => match status {
                 OnboardStatus::Idle => ("Download".into(), true),
-                OnboardStatus::Activating => ("Use".into(), false),
+                // Modèle installé en cours d'activation : affiché "In use"
+                // dès le clic, comme le fond bleu (le moteur suit en ~2s).
+                OnboardStatus::Activating => ("In use".into(), false),
                 OnboardStatus::Fetching { .. } => ("Downloading".into(), false),
                 OnboardStatus::Failed { .. } => ("Retry".into(), true),
             },
