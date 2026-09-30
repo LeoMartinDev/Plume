@@ -91,10 +91,10 @@ pub(super) fn history_page(
                                                     crate::history::age_label(entry.created_at)
                                                 }),
                                         )
-                                        .child(copy_button(
+                                        .child(icon_button(
                                             tokens,
-                                            id,
-                                            copied,
+                                            ("history-copy", id),
+                                            "fluent/copy.svg",
                                             cx,
                                             move |this, cx| {
                                                 this.copy_history(id, copy_text.clone(), cx);
@@ -175,39 +175,4 @@ fn icon_button(
         .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
         .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
         .child(svg().path(icon).size(px(15.)).text_color(tokens.muted))
-}
-
-fn copy_button(
-    tokens: &Tokens,
-    id: u64,
-    copied: bool,
-    cx: &mut Context<SettingsView>,
-    on_click: impl Fn(&mut SettingsView, &mut Context<SettingsView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(("history-copy", id))
-        .h(px(24.))
-        .min_w(px(24.))
-        .px(px(if copied { 4. } else { 0. }))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.))
-        .text_xs()
-        .text_color(if copied { tokens.status } else { tokens.muted })
-        .cursor_pointer()
-        .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
-        .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
-        .when_else(
-            copied,
-            |button| button.child("Copied"),
-            |button| {
-                button.child(
-                    svg()
-                        .path("fluent/copy.svg")
-                        .size(px(15.))
-                        .text_color(tokens.muted),
-                )
-            },
-        )
 }
