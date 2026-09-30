@@ -213,9 +213,9 @@ fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoEleme
                 .gap(px(3.))
                 .children((0..5).map(move |i| {
                     div()
-                        .w(px(4.))
-                        .h(px(14.))
-                        .rounded(px(2.))
+                        .w(px(3.))
+                        .h(px(7.))
+                        .rounded(px(1.))
                         .bg(if i < value {
                             tokens.text
                         } else {
