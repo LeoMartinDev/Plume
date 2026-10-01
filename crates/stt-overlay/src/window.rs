@@ -22,17 +22,18 @@ const BUBBLE_BOTTOM_GAP: f32 = 48.;
 
 struct BubbleView {
     bubble: Bubble,
-    level: f32,
+    bars: [f32; 8],
     target_level: f32,
+    phase: f32,
     last_animation_frame: Instant,
 }
 
 impl Render for BubbleView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let level = if speaking(self.bubble.state()) {
-            self.level
+        let (bars, phase) = if speaking(self.bubble.state()) {
+            (self.bars, self.phase)
         } else {
-            0.0
+            ([0.0; 8], 0.0)
         };
         div()
             .flex()
@@ -58,7 +59,7 @@ impl Render for BubbleView {
                             spread_radius: px(1.),
                         },
                     ])
-                    .child(BubbleFrame::new(level)),
+                    .child(BubbleFrame::new(0.0).bars(bars).phase(phase)),
             )
     }
 }
@@ -67,19 +68,21 @@ fn speaking(state: SessionState) -> bool {
     matches!(state, SessionState::Recording | SessionState::Streaming)
 }
 
-fn smooth_level(current: f32, target: f32, elapsed: Duration) -> f32 {
+/// Exponential smoothing towards the audio target. Slightly different lags
+/// per bar so they spread during transients instead of pumping in lockstep.
+fn smooth_level_tuned(
+    current: f32,
+    target: f32,
+    elapsed: Duration,
+    attack: f32,
+    release: f32,
+) -> f32 {
     let target = target.clamp(0.0, 1.0);
     let delta = target - current;
     if delta.abs() < 0.002 {
         return target;
     }
-    let time_constant = if delta > 0.0 {
-        0.04
-    } else if target <= 0.02 {
-        0.04
-    } else {
-        0.085
-    };
+    let time_constant = if delta > 0.0 { attack } else { release };
     let seconds = elapsed.as_secs_f32().min(0.05);
     let response = 1.0 - (-seconds / time_constant).exp();
     let next = current + delta * response;
@@ -88,6 +91,15 @@ fn smooth_level(current: f32, target: f32, elapsed: Duration) -> f32 {
     } else {
         next
     }
+}
+
+fn bar_attack(index: usize) -> f32 {
+    0.03 * (1.0 + 0.15 * index as f32)
+}
+
+fn bar_release(index: usize, target: f32) -> f32 {
+    let base = if target <= 0.02 { 0.04 } else { 0.085 };
+    base * (1.0 + 0.15 * index as f32)
 }
 
 fn bottom_center_bounds(window_size: Size<Pixels>, cx: &App) -> Bounds<Pixels> {
@@ -193,8 +205,9 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                     let still_speaking = speaking(bubble.state());
                     view.bubble = bubble;
                     if !still_speaking {
-                        view.level = 0.0;
+                        view.bars = [0.0; 8];
                         view.target_level = 0.0;
+                        view.phase = 0.0;
                     }
                     place_bubble(window, session_visible(view.bubble.state()));
                     changed = true;
@@ -205,11 +218,19 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                     }
                 }
                 if speaking(view.bubble.state()) {
-                    let next = smooth_level(view.level, view.target_level, elapsed);
-                    if next != view.level {
-                        view.level = next;
-                        changed = true;
+                    view.phase += elapsed.as_secs_f32();
+                    for (index, bar) in view.bars.iter_mut().enumerate() {
+                        *bar = smooth_level_tuned(
+                            *bar,
+                            view.target_level,
+                            elapsed,
+                            bar_attack(index),
+                            bar_release(index, view.target_level),
+                        );
                     }
+                    // The traveling wave is time-driven: repaint every 16 ms
+                    // tick while speaking, even when the audio level is steady.
+                    changed = true;
                 }
                 if changed {
                     cx.notify();
@@ -248,8 +269,9 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
             |_window, cx| {
                 cx.new(|_cx| BubbleView {
                     bubble: Bubble::from_dictation(&Dictation::new()),
-                    level: 0.0,
+                    bars: [0.0; 8],
                     target_level: 0.0,
+                    phase: 0.0,
                     last_animation_frame: Instant::now(),
                 })
             },
@@ -430,7 +452,7 @@ mod tests {
 
     use stt_core::SessionState;
 
-    use super::{session_visible, smooth_level};
+    use super::{bar_attack, session_visible, smooth_level_tuned};
 
     #[test]
     fn bubble_shows_only_while_a_session_runs() {
@@ -444,26 +466,39 @@ mod tests {
     #[test]
     fn voice_level_is_responsive_in_both_directions() {
         let frame = Duration::from_millis(16);
-        let rising = smooth_level(0.0, 1.0, frame);
-        let falling = smooth_level(1.0, 0.0, frame);
+        let rising = smooth_level_tuned(0.0, 1.0, frame, 0.04, 0.085);
+        let falling = smooth_level_tuned(1.0, 0.0, frame, 0.04, 0.04);
         assert!(rising > 0.32 && rising < 0.34);
         assert!(falling > 0.67 && falling < 0.68);
-        assert_eq!(smooth_level(0.5, 0.501, frame), 0.501);
+        assert_eq!(smooth_level_tuned(0.5, 0.501, frame, 0.04, 0.085), 0.501);
     }
 
     #[test]
     fn voice_level_snaps_cleanly_to_silence() {
         let frame = Duration::from_millis(16);
-        assert_eq!(smooth_level(0.08, 0.0, frame), 0.0);
-        assert!(smooth_level(0.5, 0.0, frame) > 0.3);
+        assert_eq!(smooth_level_tuned(0.08, 0.0, frame, 0.04, 0.04), 0.0);
+        assert!(smooth_level_tuned(0.5, 0.0, frame, 0.04, 0.04) > 0.3);
     }
 
     #[test]
     fn voice_smoothing_uses_elapsed_time_and_caps_long_frames() {
-        let one_frame = smooth_level(0.0, 1.0, Duration::from_millis(16));
-        let two_frames = smooth_level(0.0, 1.0, Duration::from_millis(32));
-        let capped = smooth_level(0.0, 1.0, Duration::from_secs(1));
+        let one_frame = smooth_level_tuned(0.0, 1.0, Duration::from_millis(16), 0.04, 0.085);
+        let two_frames = smooth_level_tuned(0.0, 1.0, Duration::from_millis(32), 0.04, 0.085);
+        let capped = smooth_level_tuned(0.0, 1.0, Duration::from_secs(1), 0.04, 0.085);
         assert!(two_frames > one_frame);
-        assert_eq!(capped, smooth_level(0.0, 1.0, Duration::from_millis(50)));
+        assert_eq!(
+            capped,
+            smooth_level_tuned(0.0, 1.0, Duration::from_millis(50), 0.04, 0.085)
+        );
+    }
+
+    #[test]
+    fn voice_bars_lag_differently_per_bar() {
+        let frame = Duration::from_millis(16);
+        let fast = smooth_level_tuned(0.0, 1.0, frame, bar_attack(0), 0.085);
+        let slow = smooth_level_tuned(0.0, 1.0, frame, bar_attack(7), 0.085);
+        assert!(bar_attack(7) > bar_attack(0));
+        assert!(fast > slow);
+        assert!(slow > 0.0);
     }
 }
