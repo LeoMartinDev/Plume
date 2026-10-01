@@ -299,9 +299,9 @@ impl RenderOnce for AccentButton {
 }
 
 /// Mirrored voice bars: symmetric envelope (small-tall-small) so the pill
-/// reads as a waveform. Each bar carries its own smoothed level with a
-/// slightly different lag, plus a traveling sine (`phase`) so bars cross
-/// instead of moving in lockstep.
+/// reads as a waveform. Bar heights are a pure function of the audio level:
+/// no time-driven wave, so bars hold still on a steady note and sit flat in
+/// silence. During transients the per-bar lag in the overlay spreads them.
 const BAR_SHAPE: [f32; 8] = [0.35, 0.6, 0.85, 1.0, 1.0, 0.85, 0.6, 0.35];
 const BAR_MIN: f32 = 3.0;
 const BAR_MAX: f32 = 20.0;
@@ -322,7 +322,6 @@ fn bubble_chrome() -> BubbleChrome {
 pub struct BubbleFrame {
     chrome: BubbleChrome,
     bars: [f32; 8],
-    phase: f32,
 }
 
 impl BubbleFrame {
@@ -330,17 +329,11 @@ impl BubbleFrame {
         BubbleFrame {
             chrome: bubble_chrome(),
             bars: [level; 8],
-            phase: 0.0,
         }
     }
 
     pub fn bars(mut self, bars: [f32; 8]) -> Self {
         self.bars = bars;
-        self
-    }
-
-    pub fn phase(mut self, phase: f32) -> Self {
-        self.phase = phase;
         self
     }
 }
@@ -358,11 +351,11 @@ impl RenderOnce for BubbleFrame {
             .size_full()
             .rounded_full()
             .bg(self.chrome.fill)
-            .child(voice_dots(self.bars, self.phase, mark))
+            .child(voice_dots(self.bars, mark))
     }
 }
 
-fn voice_dots(bars: [f32; 8], phase: f32, color: Rgba) -> Div {
+fn voice_dots(bars: [f32; 8], color: Rgba) -> Div {
     div()
         .flex()
         .flex_row()
@@ -371,13 +364,13 @@ fn voice_dots(bars: [f32; 8], phase: f32, color: Rgba) -> Div {
         .justify_center()
         .gap(px(4.))
         .h(px(20.))
-        .children((0..BAR_SHAPE.len()).map(|index| voice_bar(index, bars[index], phase, color)))
+        .children((0..BAR_SHAPE.len()).map(|index| voice_bar(index, bars[index], color)))
 }
 
-fn voice_bar(index: usize, level: f32, phase: f32, color: Rgba) -> Div {
+fn voice_bar(index: usize, level: f32, color: Rgba) -> Div {
     div()
         .w(px(4.))
-        .h(px(bar_height(index, level, phase)))
+        .h(px(bar_height(index, level)))
         .rounded(px(2.))
         .bg(color)
 }
@@ -388,18 +381,8 @@ fn visual_level(level: f32) -> f32 {
         .sqrt()
 }
 
-/// Traveling wave: same voice level, but each bar is phase-shifted so bars
-/// cross instead of pumping in lockstep. Amplitude grows with voice so the
-/// pill breathes gently in pauses and dances while speaking.
-fn bar_wave(index: usize, level: f32, phase: f32) -> f32 {
-    (phase * 4.0 + index as f32 * 0.85).sin() * (0.8 + 2.2 * visual_level(level))
-}
-
-fn bar_height(index: usize, level: f32, phase: f32) -> f32 {
-    (BAR_MIN
-        + BAR_SHAPE[index] * visual_level(level) * (BAR_MAX - BAR_MIN)
-        + bar_wave(index, level, phase))
-    .clamp(2.0, BAR_MAX)
+fn bar_height(index: usize, level: f32) -> f32 {
+    (BAR_MIN + BAR_SHAPE[index] * visual_level(level) * (BAR_MAX - BAR_MIN)).clamp(2.0, BAR_MAX)
 }
 
 #[cfg(test)]
@@ -425,33 +408,27 @@ mod voice_tests {
     }
 
     #[test]
-    fn voice_bars_cross_instead_of_pumping_in_lockstep() {
-        // Same level, two phases: the tallest bar changes sides.
-        let tallest = |phase: f32| {
-            (0..8)
-                .max_by(|&a, &b| {
-                    bar_height(a, 0.4, phase)
-                        .partial_cmp(&bar_height(b, 0.4, phase))
-                        .unwrap()
-                })
-                .unwrap()
-        };
-        assert_ne!(tallest(0.0), tallest(1.2));
+    fn voice_bars_are_flat_in_silence() {
+        let heights: Vec<f32> = (0..8).map(|bar| bar_height(bar, 0.0)).collect();
+        assert!(heights.iter().all(|&h| h == BAR_MIN));
     }
 
     #[test]
-    fn voice_bars_breathe_gently_in_silence() {
-        let a = bar_height(3, 0.0, 0.0);
-        let b = bar_height(3, 0.0, 0.9);
-        assert!((a - b).abs() > 0.2);
-        assert!((2.0..=BAR_MAX).contains(&a) && (2.0..=BAR_MAX).contains(&b));
+    fn voice_bars_hold_still_on_a_steady_note() {
+        // Pure function of level: repeated renders are identical, no drift.
+        for bar in 0..8 {
+            assert_eq!(bar_height(bar, 0.4), bar_height(bar, 0.4));
+        }
+        // Center taller than edges, deterministically.
+        assert!(bar_height(3, 0.5) > bar_height(0, 0.5));
+        assert_eq!(bar_height(3, 0.5), bar_height(4, 0.5));
     }
 
     #[test]
     fn voice_bars_stay_within_the_pill() {
         for bar in 0..8 {
-            for (level, phase) in [(0.0, 0.0), (0.5, 1.0), (1.0, 2.0)] {
-                assert!((2.0..=BAR_MAX).contains(&bar_height(bar, level, phase)));
+            for level in [0.0, 0.5, 1.0] {
+                assert!((2.0..=BAR_MAX).contains(&bar_height(bar, level)));
             }
         }
     }

@@ -24,16 +24,15 @@ struct BubbleView {
     bubble: Bubble,
     bars: [f32; 8],
     target_level: f32,
-    phase: f32,
     last_animation_frame: Instant,
 }
 
 impl Render for BubbleView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let (bars, phase) = if speaking(self.bubble.state()) {
-            (self.bars, self.phase)
+        let bars = if speaking(self.bubble.state()) {
+            self.bars
         } else {
-            ([0.0; 8], 0.0)
+            [0.0; 8]
         };
         div()
             .flex()
@@ -59,7 +58,7 @@ impl Render for BubbleView {
                             spread_radius: px(1.),
                         },
                     ])
-                    .child(BubbleFrame::new(0.0).bars(bars).phase(phase)),
+                    .child(BubbleFrame::new(0.0).bars(bars)),
             )
     }
 }
@@ -207,7 +206,6 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                     if !still_speaking {
                         view.bars = [0.0; 8];
                         view.target_level = 0.0;
-                        view.phase = 0.0;
                     }
                     place_bubble(window, session_visible(view.bubble.state()));
                     changed = true;
@@ -218,19 +216,19 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                     }
                 }
                 if speaking(view.bubble.state()) {
-                    view.phase += elapsed.as_secs_f32();
                     for (index, bar) in view.bars.iter_mut().enumerate() {
-                        *bar = smooth_level_tuned(
+                        let next = smooth_level_tuned(
                             *bar,
                             view.target_level,
                             elapsed,
                             bar_attack(index),
                             bar_release(index, view.target_level),
                         );
+                        if next != *bar {
+                            *bar = next;
+                            changed = true;
+                        }
                     }
-                    // The traveling wave is time-driven: repaint every 16 ms
-                    // tick while speaking, even when the audio level is steady.
-                    changed = true;
                 }
                 if changed {
                     cx.notify();
@@ -271,7 +269,6 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
                     bubble: Bubble::from_dictation(&Dictation::new()),
                     bars: [0.0; 8],
                     target_level: 0.0,
-                    phase: 0.0,
                     last_animation_frame: Instant::now(),
                 })
             },
