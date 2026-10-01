@@ -307,7 +307,7 @@ fn session_visible(state: SessionState) -> bool {
     matches!(state, SessionState::Recording | SessionState::Streaming)
 }
 
-fn place_bubble(window: &Window, visible: bool) {
+fn place_bubble(window: &mut Window, visible: bool) {
     #[cfg(windows)]
     stack::place(window, visible);
     #[cfg(target_os = "macos")]
@@ -378,17 +378,21 @@ mod macos {
 mod stack {
     use gpui::Window;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Foundation::{GetLastError, HWND};
     use windows_sys::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
         DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     };
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_SHOWWINDOW, SW_HIDE,
+        SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA,
     };
 
-    pub(crate) fn place(window: &Window, visible: bool) {
+    pub(crate) fn place(window: &mut Window, visible: bool) {
         let Ok(handle) = HasWindowHandle::window_handle(window) else {
             return;
         };
@@ -419,18 +423,84 @@ mod stack {
                 std::mem::size_of_val(&corner_preference) as u32,
             );
             if visible {
-                let _ = SetWindowPos(
-                    hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                );
+                // Taille via GPUI (renderer suivi) plutot que resize externe
+                // qui desynchronise le swapchain DirectX et rend la bulle
+                // invisible. La position reste native (pas d'API move GPUI).
+                window.resize(gpui::size(
+                    gpui::px(super::BUBBLE_WIDTH + super::SHADOW_MARGIN * 2.0),
+                    gpui::px(super::BUBBLE_HEIGHT + super::SHADOW_MARGIN * 2.0),
+                ));
+                match bottom_center_on_nearest_monitor(hwnd) {
+                    Some((x, y, w, h)) => {
+                        let ok = SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            x,
+                            y,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                        );
+                        // Force l'affichage sans activation : si SetWindowPos
+                        // seul ne suffit pas (fenetre demarree cachee), ce
+                        // second appel garantit que la bulle devient visible.
+                        let _ = ShowWindow(hwnd, SW_SHOWNA);
+                        eprintln!(
+                            "stt-overlay: place visible x={x} y={y} w={w} h={h} setwindowpos={ok} lasterror={} hwnd={hwnd:?}",
+                            GetLastError()
+                        );
+                    }
+                    None => {
+                        let ok = SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                        );
+                        let _ = ShowWindow(hwnd, SW_SHOWNA);
+                        eprintln!(
+                            "stt-overlay: place visible fallback setwindowpos={ok} lasterror={} hwnd={hwnd:?}",
+                            GetLastError()
+                        );
+                    }
+                }
             } else {
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
+        }
+    }
+
+    fn bottom_center_on_nearest_monitor(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+        unsafe {
+            // La fenetre demarre cachee avec une taille par defaut Windows
+            // (CW_USEDEFAULT). On impose donc la taille reelle de la bulle
+            // a chaque affichage, sinon GetWindowRect renvoie une grande
+            // taille et la bulle finit vers le centre de l'ecran.
+            let dpi = GetDpiForWindow(hwnd);
+            let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
+            let win_w = ((super::BUBBLE_WIDTH + super::SHADOW_MARGIN * 2.0) * scale).round() as i32;
+            let win_h =
+                ((super::BUBBLE_HEIGHT + super::SHADOW_MARGIN * 2.0) * scale).round() as i32;
+            if win_w <= 0 || win_h <= 0 {
+                return None;
+            }
+            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if monitor.is_null() {
+                return None;
+            }
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return None;
+            }
+            let work = info.rcWork;
+            let gap = ((super::BUBBLE_BOTTOM_GAP - super::SHADOW_MARGIN) * scale).round() as i32;
+            let x = work.left + (work.right - work.left - win_w) / 2;
+            let y = work.bottom - win_h - gap;
+            Some((x, y, win_w, win_h))
         }
     }
 }
