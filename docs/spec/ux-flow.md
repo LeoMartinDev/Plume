@@ -1,32 +1,33 @@
-# Dictation flow
+# UX flow
 
-This guide covers the four flows of a dictation session. Hold-to-talk handles short text. Toggle mode handles long dictation. Esc cancels. The cleanup pass rewrites the result. The [glossary](glossary.md) defines the session states these flows move through.
+The current desktop app supports hold-to-talk dictation, Esc cancellation and final-text insertion. The [glossary](glossary.md) distinguishes current behavior from planned capabilities.
 
 ## Dictate with hold-to-talk
 
-1. Click into the app that receives the text. This is the target app.
-2. Hold the global shortcut. The default is `Fn` where the OS reports it, or `Ctrl+Space` elsewhere. Both are configurable in settings.
-3. Speak. A bubble appears at the bottom center of the screen. Its animation reacts to your voice level.
-4. Watch the text stream word by word into the target app. A word already inserted can change while the engine refines its guess. This is live correction.
-5. Release the shortcut. The transcript finalizes and the bubble disappears.
-
-## Dictate a long session with toggle mode
-
-Hold-to-talk tires the hand during long dictation. Toggle mode records without a held key.
-
-1. Press the toggle shortcut once. Recording starts and the bubble appears.
-2. Speak for as long as you need. The text streams as in hold-to-talk.
-3. Press the toggle shortcut again. The transcript finalizes and the bubble disappears.
+1. Focus the target application and place the cursor where the text should go.
+2. Hold the global shortcut, `Ctrl+Space` by default. Change it in Settings → Dictation; `Fn` is rejected.
+3. Speak. The bubble appears and reacts to microphone levels. Partial hypotheses are not inserted into the target application.
+4. Release the shortcut. Capture ends and the bubble hides. The background decoder finishes, then the final transcript is inserted.
+5. If another capture began before earlier results were delivered, its text is delivered in capture order with a separator when needed.
 
 ## Cancel a session
 
-1. Press `Esc` while a session runs.
-2. The session is cancelled and produces no final transcript. Text the session already inserted is removed where the target app allows it.
+Press `Esc` while holding the shortcut. Capture ends and the cancelled job's result is discarded, including output that arrives later. No partial text needs to be removed. After release the capture is already queued for finalization; the current desktop flow does not cancel it through Esc.
 
-## Clean up a transcript with the local LLM
+## Insertion and history
 
-The cleanup pass rewrites the final transcript on release. It removes filler words, reformats the text, and adapts the style. It runs on the local machine and stays off until you enable it.
+Settings → Dictation selects Automatic, Paste or Typing insertion. Clipboard fallback can preserve final text when insertion fails. Settings → History shows insertion results, supports copy/delete/clear actions, and controls retention and maximum entries.
 
-1. Open settings and enable the cleanup pass.
-2. Dictate as usual.
-3. Release the shortcut. The local LLM rewrites the final transcript, and the cleaned text replaces the raw transcript in the target app.
+Changing a history limit saves it and immediately prunes older or excess transcriptions. Defaults are 30 days and 500 entries. Each setting offers three finite choices (7/30/90 days and 100/500/5,000 entries) plus Unlimited; the two limits can be disabled independently. Reducing limits deletes entries permanently. Save failures appear in the History page; the displayed list remains intact when history persistence fails.
+
+## Planned toggle mode
+
+A toggle shortcut for recording without holding a key is planned. The domain state machine contains toggle transitions, but the desktop runtime does not expose this interaction.
+
+## Planned cleanup pass
+
+A local LLM cleanup pass is planned. No cleanup model or setting is connected to the current production dictation flow.
+
+## Planned live correction
+
+The domain layer represents partial-text edits. Inserting and replacing partial hypotheses in the target application is not enabled in the current desktop flow.

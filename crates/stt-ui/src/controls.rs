@@ -404,7 +404,7 @@ mod voice_tests {
         for i in 0..4 {
             assert_eq!(BAR_SHAPE[i], BAR_SHAPE[7 - i]);
         }
-        assert!(BAR_SHAPE[3] >= BAR_SHAPE[0]);
+        const { assert!(BAR_SHAPE[3] >= BAR_SHAPE[0]) };
     }
 
     #[test]

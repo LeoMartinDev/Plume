@@ -1,7 +1,12 @@
-use std::path::{Path, PathBuf};
+mod storage;
+mod wire;
+pub(crate) use storage::save_at;
+pub use storage::{load, load_at, prefs_path, save};
+
+use std::path::PathBuf;
 
 use crate::catalog::ModelId;
-use serde::{Deserialize, Deserializer, Serialize};
+use crate::history_policy::HistoryPolicy;
 use stt_session::InsertionMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,7 +71,7 @@ impl AppearancePref {
     }
 }
 
-pub const DEFAULT_HOLD: &str = "Ctrl+Space";
+pub const DEFAULT_HOLD: &str = stt_session::Config::DEFAULT_HOLD;
 
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,19 +83,29 @@ pub struct Prefs {
     language: LanguagePref,
     insertion_mode: InsertionMode,
     copy_on_failure: bool,
+    history: HistoryPolicy,
 }
 
 impl Prefs {
     pub fn default_fresh() -> Self {
         Prefs {
             hold: DEFAULT_HOLD.to_string(),
-            cancel: "Esc".to_string(),
+            cancel: stt_session::Config::DEFAULT_CANCEL.to_string(),
             model: ModelId::default(),
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
             insertion_mode: InsertionMode::Auto,
             copy_on_failure: true,
+            history: HistoryPolicy::default(),
         }
+    }
+
+    pub fn history(&self) -> HistoryPolicy {
+        self.history
+    }
+
+    pub fn set_history(&mut self, policy: HistoryPolicy) {
+        self.history = policy;
     }
 
     pub fn hold(&self) -> &str {
@@ -146,6 +161,7 @@ impl Prefs {
 pub enum PrefsLoad {
     Fresh(Prefs),
     Loaded(Prefs),
+    LoadedWithWarnings { prefs: Prefs, warnings: Vec<String> },
     Quarantined { prefs: Prefs, warning: String },
 }
 
@@ -165,174 +181,6 @@ impl std::fmt::Display for PrefsError {
 }
 
 impl std::error::Error for PrefsError {}
-
-struct AppearanceWire(AppearancePref);
-
-impl Default for AppearanceWire {
-    fn default() -> Self {
-        Self(AppearancePref::Auto)
-    }
-}
-
-struct LanguageWire(LanguagePref);
-
-impl Default for LanguageWire {
-    fn default() -> Self {
-        Self(LanguagePref::Auto)
-    }
-}
-
-impl<'de> Deserialize<'de> for LanguageWire {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = toml::Value::deserialize(deserializer)?;
-        Ok(Self(match value {
-            toml::Value::String(raw) => match raw.as_str() {
-                "fr" => LanguagePref::French,
-                "en" => LanguagePref::English,
-                _ => LanguagePref::Auto,
-            },
-            _ => LanguagePref::Auto,
-        }))
-    }
-}
-
-impl<'de> Deserialize<'de> for AppearanceWire {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = toml::Value::deserialize(deserializer)?;
-        Ok(Self(match value {
-            toml::Value::String(raw) => match raw.as_str() {
-                "light" => AppearancePref::Fixed(Scheme::Light),
-                "dark" => AppearancePref::Fixed(Scheme::Dark),
-                _ => AppearancePref::Auto,
-            },
-            _ => AppearancePref::Auto,
-        }))
-    }
-}
-
-#[derive(Deserialize)]
-struct WireIn {
-    hold: String,
-    cancel: String,
-    #[serde(alias = "pack")]
-    model: String,
-    #[serde(default)]
-    appearance: AppearanceWire,
-    #[serde(default)]
-    language: LanguageWire,
-    #[serde(default = "default_insertion_mode")]
-    insertion_mode: String,
-    #[serde(default = "default_copy_on_failure")]
-    copy_on_failure: bool,
-}
-
-#[derive(Serialize)]
-struct WireOut {
-    hold: String,
-    cancel: String,
-    model: String,
-    appearance: &'static str,
-    language: &'static str,
-    insertion_mode: &'static str,
-    copy_on_failure: bool,
-}
-
-fn default_insertion_mode() -> String {
-    "auto".to_string()
-}
-
-fn default_copy_on_failure() -> bool {
-    true
-}
-
-pub fn prefs_path() -> PathBuf {
-    crate::dirs::AppDirs::resolve().prefs_path()
-}
-
-pub fn load() -> PrefsLoad {
-    load_at(&prefs_path())
-}
-
-pub fn save(prefs: &Prefs) -> Result<(), PrefsError> {
-    save_at(&prefs_path(), prefs)
-}
-
-pub(crate) fn load_at(path: &Path) -> PrefsLoad {
-    match std::fs::read_to_string(path) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            PrefsLoad::Fresh(Prefs::default_fresh())
-        }
-        Err(err) => quarantine(path, format!("prefs unreadable: {err}")),
-        Ok(raw) => match parse_wire(&raw) {
-            Ok(prefs) => PrefsLoad::Loaded(prefs),
-            Err(warning) => quarantine(path, warning),
-        },
-    }
-}
-
-pub(crate) fn save_at(path: &Path, prefs: &Prefs) -> Result<(), PrefsError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(PrefsError::Io)?;
-    }
-    let wire = WireOut {
-        hold: prefs.hold.clone(),
-        cancel: prefs.cancel.clone(),
-        model: prefs.model.as_str().to_string(),
-        appearance: prefs.appearance().as_str(),
-        language: prefs.language().as_str(),
-        insertion_mode: prefs.insertion_mode().as_str(),
-        copy_on_failure: prefs.copy_on_failure(),
-    };
-    let body = toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))?;
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, body).map_err(PrefsError::Io)?;
-    std::fs::rename(&tmp, path).map_err(PrefsError::Io)?;
-    Ok(())
-}
-
-fn parse_wire(raw: &str) -> Result<Prefs, String> {
-    let wire: WireIn = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
-    let model = ModelId::parse(&wire.model)
-        .ok_or_else(|| format!("prefs model {} is unknown", wire.model))?;
-    stt_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
-        .map_err(|err| format!("prefs chords rejected: {err}"))?;
-    Ok(Prefs {
-        hold: wire.hold,
-        cancel: wire.cancel,
-        model,
-        appearance: wire.appearance.0,
-        language: wire.language.0,
-        insertion_mode: match wire.insertion_mode.as_str() {
-            "clipboard" => InsertionMode::Clipboard,
-            "typing" => InsertionMode::Typing,
-            _ => InsertionMode::Auto,
-        },
-        copy_on_failure: wire.copy_on_failure,
-    })
-}
-
-fn quarantine(path: &Path, warning: String) -> PrefsLoad {
-    let bad = unique_bad_path(path);
-    if path.exists() {
-        let _ = std::fs::rename(path, &bad);
-    }
-    PrefsLoad::Quarantined {
-        prefs: Prefs::default_fresh(),
-        warning,
-    }
-}
-
-fn unique_bad_path(path: &Path) -> PathBuf {
-    let primary = path.with_extension("toml.bad");
-    if !primary.exists() {
-        return primary;
-    }
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    path.with_extension(format!("toml.bad.{secs}"))
-}
 
 #[cfg(test)]
 mod tests {

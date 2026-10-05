@@ -15,6 +15,12 @@ use crate::Bubble;
 
 pub const WINDOW_TITLE: &str = "stt-overlay";
 
+const FRAME_RECHECK_DELAYS: [Duration; 3] = [
+    Duration::from_millis(40),
+    Duration::from_millis(150),
+    Duration::from_millis(400),
+];
+
 const BUBBLE_WIDTH: f32 = 96.;
 const BUBBLE_HEIGHT: f32 = 36.;
 const SHADOW_MARGIN: f32 = 12.;
@@ -145,7 +151,7 @@ pub fn prepare_display() {
     // gpui 0.2.2 picks Wayland whenever WAYLAND_DISPLAY is set, even on WSLg
     // where the working path is X11.
     // SAFETY: this runs on the OS main thread before gpui starts. The env
-    // compositor path may already have spawned Idle; that worker does not
+    // compositor path may already have spawned SessionRuntime; that worker does not
     // read WAYLAND_DISPLAY or ZED_HEADLESS after Chord::bind.
     unsafe {
         std::env::remove_var("WAYLAND_DISPLAY");
@@ -177,7 +183,7 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
     let handle = open_popup(cx, false);
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor()
-            .timer(Duration::from_millis(16))
+            .timer(stt_ui::UI_REFRESH_INTERVAL)
             .await;
         let mut latest = None;
         loop {
@@ -188,11 +194,8 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
             }
         }
         let mut level = None;
-        loop {
-            match levels.try_recv() {
-                Ok(next) => level = Some(next),
-                Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
-            }
+        while let Ok(next) = levels.try_recv() {
+            level = Some(next);
         }
         let _ = cx.update(|cx| {
             let _ = handle.update(cx, |view: &mut BubbleView, window, cx| {
@@ -279,10 +282,8 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
     let _ = handle.update(cx, |_view, window, _cx| macos::configure(window));
     place_overlay(cx, handle, initially_visible);
     cx.spawn(async move |cx: &mut AsyncApp| {
-        for delay in [40, 150, 400] {
-            cx.background_executor()
-                .timer(Duration::from_millis(delay))
-                .await;
+        for delay in FRAME_RECHECK_DELAYS {
+            cx.background_executor().timer(delay).await;
             hide_server_frame(WINDOW_TITLE);
             let _ = cx.update(|cx| place_overlay(cx, handle, initially_visible));
         }
@@ -532,7 +533,7 @@ mod tests {
 
     #[test]
     fn voice_level_is_responsive_in_both_directions() {
-        let frame = Duration::from_millis(16);
+        let frame = stt_ui::UI_REFRESH_INTERVAL;
         let rising = smooth_level_tuned(0.0, 1.0, frame, 0.04, 0.085);
         let falling = smooth_level_tuned(1.0, 0.0, frame, 0.04, 0.04);
         assert!(rising > 0.32 && rising < 0.34);
@@ -542,14 +543,14 @@ mod tests {
 
     #[test]
     fn voice_level_snaps_cleanly_to_silence() {
-        let frame = Duration::from_millis(16);
+        let frame = stt_ui::UI_REFRESH_INTERVAL;
         assert_eq!(smooth_level_tuned(0.08, 0.0, frame, 0.04, 0.04), 0.0);
         assert!(smooth_level_tuned(0.5, 0.0, frame, 0.04, 0.04) > 0.3);
     }
 
     #[test]
     fn voice_smoothing_uses_elapsed_time_and_caps_long_frames() {
-        let one_frame = smooth_level_tuned(0.0, 1.0, Duration::from_millis(16), 0.04, 0.085);
+        let one_frame = smooth_level_tuned(0.0, 1.0, stt_ui::UI_REFRESH_INTERVAL, 0.04, 0.085);
         let two_frames = smooth_level_tuned(0.0, 1.0, Duration::from_millis(32), 0.04, 0.085);
         let capped = smooth_level_tuned(0.0, 1.0, Duration::from_secs(1), 0.04, 0.085);
         assert!(two_frames > one_frame);
@@ -561,7 +562,7 @@ mod tests {
 
     #[test]
     fn voice_bars_lag_differently_per_bar() {
-        let frame = Duration::from_millis(16);
+        let frame = stt_ui::UI_REFRESH_INTERVAL;
         let fast = smooth_level_tuned(0.0, 1.0, frame, bar_attack(0), 0.085);
         let slow = smooth_level_tuned(0.0, 1.0, frame, bar_attack(7), 0.085);
         assert!(bar_attack(7) > bar_attack(0));

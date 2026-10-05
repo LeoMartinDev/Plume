@@ -11,32 +11,76 @@ use stt_session::{EngineTarget, HoldTarget, InsertionTarget};
 
 use crate::catalog::ModelId;
 use crate::download::{DownloadRequest, DownloadRequestTracker};
-use crate::hold::HoldCapture;
 use crate::phase::{AppPhase, Progress};
 use crate::prefs::Prefs;
+use crate::shortcut_capture::ShortcutCapture;
 
 use super::{SettingsSection, SettingsView, SETTINGS_TITLE};
 
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
+const CLOSE_DISPATCH_DELAY: Duration = Duration::from_millis(1);
 const SETTINGS_CONTENT_HEIGHT: f32 = 410.;
 
 pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTracker) {
+    open_settings_in(cx, phase, downloads, crate::dirs::AppDirs::resolve());
+}
+
+fn open_settings_in(
+    cx: &mut App,
+    phase: AppPhase,
+    downloads: DownloadRequestTracker,
+    dirs: crate::dirs::AppDirs,
+) {
+    open_settings_window(cx, phase, downloads, dirs, false)
+}
+
+/// Settings preview with isolated preferences/history and disabled model actions.
+pub fn open_settings_preview(cx: &mut App, prefs: Prefs, dirs: crate::dirs::AppDirs) {
+    open_settings_window(
+        cx,
+        AppPhase::Onboarding {
+            prefs,
+            status: crate::phase::OnboardStatus::Idle,
+            warning: None,
+        },
+        DownloadRequestTracker::default(),
+        dirs,
+        true,
+    );
+}
+
+fn open_settings_window(
+    cx: &mut App,
+    phase: AppPhase,
+    downloads: DownloadRequestTracker,
+    dirs: crate::dirs::AppDirs,
+    settings_preview: bool,
+) {
     let height = SETTINGS_CONTENT_HEIGHT + if cfg!(target_os = "macos") { 32. } else { 0. };
     let bounds = Bounds::centered(None, size(px(720.), px(height)), cx);
-    let history_path = crate::dirs::AppDirs::resolve().history_path();
-    let (history, history_error) = match crate::history::HistoryStore::load(history_path.clone()) {
-        Ok(history) => (history, None),
-        Err(error) => (
-            crate::history::HistoryStore::empty(history_path),
-            Some(error),
-        ),
-    };
+    let history_path = dirs.history_path();
+    let prefs_path = dirs.prefs_path();
+    let (history, history_error) =
+        match crate::history::HistoryStore::load(history_path.clone(), phase.prefs().history()) {
+            Ok(mut history) => {
+                let warning = history.take_load_warning();
+                (history, warning)
+            }
+            Err(error) => (
+                crate::history::HistoryStore::empty(history_path, phase.prefs().history()),
+                Some(error),
+            ),
+        };
     let handle = cx
         .open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(SETTINGS_TITLE.into()),
+                    title: Some(if settings_preview {
+                        "stt — Preview".into()
+                    } else {
+                        SETTINGS_TITLE.into()
+                    }),
                     appears_transparent: cfg!(target_os = "macos"),
                     ..Default::default()
                 }),
@@ -49,9 +93,7 @@ pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTr
             move |window, cx| {
                 window.on_window_should_close(cx, |_, cx| {
                     cx.spawn(async move |cx| {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(1))
-                            .await;
+                        cx.background_executor().timer(CLOSE_DISPATCH_DELAY).await;
                         let _ = cx.update(|cx| cx.quit());
                     })
                     .detach();
@@ -63,11 +105,17 @@ pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTr
                     });
                     SettingsView {
                         phase,
-                        section: SettingsSection::Model,
+                        prefs_path,
+                        settings_preview,
+                        section: if settings_preview {
+                            SettingsSection::History
+                        } else {
+                            SettingsSection::Model
+                        },
                         language_open: false,
                         insertion_open: false,
                         save_error: None,
-                        capture: HoldCapture::idle(),
+                        capture: ShortcutCapture::idle(),
                         hold_focus: cx.focus_handle().tab_stop(true),
                         content_scroll: ScrollHandle::new(),
                         hold_target: None,
@@ -77,6 +125,7 @@ pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTr
                         downloads,
                         history,
                         history_error,
+                        history_menu: None,
                         copied_history_id: None,
                         copy_feedback_serial: 0,
                         _appearance,

@@ -1,17 +1,19 @@
 mod capture;
 mod chords;
 mod config;
-mod drive;
-mod ready;
-mod target;
+mod decoder;
+mod delivery;
+mod destination;
+mod runtime;
+mod startup;
 
 use stt_core::BoxError;
 use stt_engine::{Engine, ModelDir};
 
 pub use config::{Config, ConfigError};
-pub use ready::{
+pub use startup::{
     start, DictationResult, EngineTarget, HoldTarget, InsertionConfig, InsertionTarget,
-    LiveSession, Ready,
+    LiveSession, PreparedSession,
 };
 pub use stt_core::{InjectionReport, InsertionMethod, InsertionMode, TargetAssessment};
 
@@ -54,7 +56,7 @@ impl std::error::Error for StartupError {
 pub fn run(config: Config) -> Result<(), StartupError> {
     let dir = ModelDir::open(config.model_dir()).map_err(StartupError::model)?;
     let engine = Engine::open(dir).map_err(StartupError::model)?;
-    let live = start(Ready::from_open(config, engine))?;
+    let live = start(PreparedSession::from_open(config, engine))?;
     stt_overlay::run_with(live.bubbles, live.levels);
     Ok(())
 }

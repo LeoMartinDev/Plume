@@ -1,25 +1,27 @@
 # Principles
 
-Five principles govern every decision in this program. When a design choice conflicts with one of them, the principle wins.
+The product aims to stay local-only, cross-platform, pluggable, free and easy to understand. Current behavior is documented in the root README and the UX flow; the original program plan is historical.
 
 ## Local-only forever
 
-Audio never leaves the machine. All recognition runs on the device. There is no cloud fallback, no account, and no audio upload of any kind.
+Recognition runs on the device. There is no cloud recognition fallback, account or audio upload. Model downloads require network access; dictation uses the installed models locally.
 
-This is the differentiator against Wispr Flow, which sends audio to the cloud. A user who dictates passwords, patient notes, or private messages can check the claim by watching the network. The app makes no network calls for recognition.
+## Cross-platform development
 
-## Cross-platform from day one
-
-macOS, Windows, and Linux ship in parallel. There is no port-later phase and no porting debt. Every change builds and runs on all three systems from the first commit. A one-OS MVP was considered and rejected.
+The CI builds and tests macOS, Windows and Linux. OS adapters are kept in separate modules. Linux currently uses X11; native Wayland support remains planned. A passing build does not replace live verification of native permissions, shortcuts, capture and insertion.
 
 ## Pluggable engine
 
-Speech recognition sits behind a Rust `AsrEngine` trait in `stt-core`. The engine is interchangeable in settings. No engine choice is permanent. PR-3 picks the default by comparing candidates against the trait.
+Speech recognition sits behind the dependency-free `AsrEngine` trait in `stt-core`. Settings selects among the local model catalogue. Model loading and decoding stay separate from microphone capture, shortcuts and text insertion.
 
 ## Free
 
-The app is free. Monetization is out of scope for this program.
+The app is free. Monetization is outside the current scope.
 
 ## Modern and minimal
 
-The bubble is the only permanent UI. It appears at the bottom center of the screen while a session runs and disappears when the session ends. There is no main window to manage. Settings cover the shortcut, the engine, and the cleanup pass, and stay out of the way.
+Settings groups dictation, models, appearance and history. The bubble appears during capture and reacts to voice levels; release hides it while decoding can continue in the background. Controls expose product choices rather than implementation details.
+
+## Readable implementation
+
+Modules have clear responsibilities and descriptive names. Preference types, serialization and storage are separate. Named constants remain with their owning component; user-configurable history limits are validated in one domain type. Tests exercise the decoder and delivery functions used by production.

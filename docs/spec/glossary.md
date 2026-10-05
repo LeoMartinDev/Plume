@@ -1,59 +1,63 @@
 # Glossary
 
-Domain terms used across the spec, in alphabetical order.
+These terms describe current behavior unless explicitly marked planned. The session state machine and partial hypothesis types are shared domain concepts; the desktop runtime uses final-text insertion.
 
-## AsrEngine
+## ASR engine
 
-The Rust trait in `stt-core` that abstracts the speech recognition engine. Any engine that implements the trait is interchangeable in settings.
+A local automatic speech recognition engine implementing `AsrEngine`: audio chunks go in, hypotheses come out. The production decoder consumes partial hypotheses and returns the first final transcript.
 
 ## Bubble
 
-The small overlay at the bottom center of the screen. It appears while a session runs, and its animation reacts to the voice level. The bubble is the only permanent UI element.
+The overlay shown while capturing speech. It reacts to microphone levels and hides after release or cancellation; background decoding can continue after it hides.
 
-## Cleanup pass
+## Cleanup pass — planned
 
-An optional rewrite of the final transcript by a local LLM. It runs on release, removes filler words, reformats the text, and adapts the style. It is configured in settings and off by default.
+An optional local LLM rewrite of the final transcript. No production cleanup pass is connected today.
 
 ## Final transcript
 
-The complete text of a session after the engine finishes. The target app keeps this text. If the cleanup pass is enabled, the final transcript is its input.
+The completed text returned by the engine. The desktop app inserts this text once and records its insertion outcome in history.
 
 ## Global hotkey
 
-The system-wide shortcut that controls a session while any app has focus. Two shortcuts exist. The hold-to-talk key records while held. The toggle key starts and stops recording without a held key.
+An OS shortcut received outside the focused app. Hold-to-talk defaults to `Ctrl+Space`; the active capture can be cancelled with `Esc`.
 
 ## Hold-to-talk
 
-The default interaction. The session records while the key is held and finalizes on release.
+Recording while a shortcut is held, followed by background finalization after release.
 
-## Live correction
+## Live correction — planned
 
-The replacement of a word already inserted in the target app when the partial hypothesis changes. The visible text self-corrects as the engine refines its guess.
+Replacement of text already inserted when a partial hypothesis changes. Domain edit types represent this, but the desktop runtime does not insert partial hypotheses.
 
 ## Partial hypothesis
 
-The engine's current best guess at the transcript while audio is still arriving. It streams word by word into the target app and can change until the session finalizes.
+An intermediate best guess at the text. It can change during recognition and is ignored by the final-only desktop insertion flow.
 
 ## Session
 
-One dictation run, from the hotkey press to finalization or cancel.
+A capture and its transcription result, from shortcut press through release/finalization or cancellation. Captures may overlap pending background decoding; results are delivered in capture order.
 
 ## Session state machine
 
-The five states every session moves through.
+The dependency-free domain model has five states:
 
-- `idle`. No session is active.
-- `recording`. The hotkey engaged and audio capture runs.
-- `streaming`. Partial hypotheses stream into the target app.
-- `finalizing`. The key released and the engine completes the final transcript.
-- `cancelled`. Esc ended the session. No final transcript is produced.
+- `idle`: no active domain session.
+- `recording`: capture has started.
+- `streaming`: the domain model has received partial hypotheses.
+- `finalizing`: capture has ended and the domain model awaits final text.
+- `cancelled`: the session discards hypotheses.
 
-A session starts in `idle`, returns to `idle` after finalizing, and ends in `cancelled` after Esc.
+The desktop capture coordinator publishes recording, finalizing and cancellation snapshots; it does not feed decoder hypotheses back into that model. Its background decoder and delivery components handle final results separately.
 
 ## Target app
 
-The focused application that receives the text.
+The focused application receiving final text when delivery occurs.
 
-## Toggle mode
+## Toggle mode — planned
 
-The interaction started by the toggle shortcut. Recording runs without a held key until the second press finalizes the session. Used for long dictation.
+Start and stop capture by successive presses. Domain transitions exist, but the desktop runtime exposes hold-to-talk only.
+
+## History policy
+
+Validated retention and size limits for locally saved transcriptions. Defaults are 30 days and 500 entries. Either limit can independently be Unlimited. Reducing limits prunes immediately; startup and new results also apply the policy.

@@ -13,9 +13,13 @@ pub(crate) enum WinStroke {
     ReturnUp,
     TabDown,
     TabUp,
+    #[cfg(target_os = "windows")]
     ControlDown,
+    #[cfg(target_os = "windows")]
     ControlUp,
+    #[cfg(target_os = "windows")]
     VDown,
+    #[cfg(target_os = "windows")]
     VUp,
 }
 

@@ -2,8 +2,9 @@ use std::path::Path;
 
 use stt_engine::{Engine, ModelDir};
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum ModelId {
+    #[default]
     Nemotron35Compact,
     WhisperBase,
     WhisperSmall,
@@ -175,7 +176,8 @@ impl ModelId {
             Self::WhisperSmall => "whisper-small",
             Self::WhisperLargeV3Turbo => "whisper-large-v3-turbo",
         }
-    }    pub fn parse(raw: &str) -> Option<Self> {
+    }
+    pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "light" | "nemotron-3.5-compact" => Some(Self::Nemotron35Compact),
             "whisper-base" => Some(Self::WhisperBase),
@@ -211,12 +213,6 @@ impl ModelId {
 
     pub fn data_dir(self) -> std::path::PathBuf {
         crate::dirs::AppDirs::resolve().model_dir(self)
-    }
-}
-
-impl Default for ModelId {
-    fn default() -> Self {
-        Self::Nemotron35Compact
     }
 }
 
@@ -256,7 +252,11 @@ mod tests {
             assert!(!entry.languages.is_empty());
             assert!(!entry.guidance.is_empty());
             assert!(!entry.files.is_empty());
-            assert!((1..=5).contains(&entry.speed), "speed 1..=5 for {}", entry.name);
+            assert!(
+                (1..=5).contains(&entry.speed),
+                "speed 1..=5 for {}",
+                entry.name
+            );
             assert!(
                 (1..=5).contains(&entry.accuracy),
                 "accuracy 1..=5 for {}",

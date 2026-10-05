@@ -1,20 +1,20 @@
 use stt_core::{BoxError, Edit, InjectionReport, InsertionMode, TextInjector};
 
-pub(crate) struct Target<I: TextInjector> {
+pub(crate) struct TextDestination<I: TextInjector> {
     injector: I,
     inserted: String,
 }
 
-impl<I: TextInjector> Target<I> {
+impl<I: TextInjector> TextDestination<I> {
     pub(crate) fn new(injector: I) -> Self {
-        Target {
+        TextDestination {
             injector,
             inserted: String::new(),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn apply_edit(&mut self, edit: &Edit) -> Result<(), TargetError> {
+    pub(crate) fn apply_edit(&mut self, edit: &Edit) -> Result<(), InsertionError> {
         self.apply_edit_with_mode(edit, InsertionMode::Typing)
             .map(|_| ())
     }
@@ -23,25 +23,25 @@ impl<I: TextInjector> Target<I> {
         &mut self,
         edit: &Edit,
         mode: InsertionMode,
-    ) -> Result<Option<InjectionReport>, TargetError> {
+    ) -> Result<Option<InjectionReport>, InsertionError> {
         match edit {
             Edit::Insert(text) => {
                 let report = self
                     .injector
                     .insert_with_mode(text, mode)
-                    .map_err(TargetError::Inject)?;
+                    .map_err(InsertionError::Inject)?;
                 self.inserted.push_str(text);
                 return Ok(Some(report));
             }
             Edit::Replace { old, new } => {
                 if !self.inserted.ends_with(old.as_str()) {
-                    return Err(TargetError::Desync {
+                    return Err(InsertionError::Desync {
                         expected_suffix: old.clone(),
                     });
                 }
                 self.injector
                     .replace_last(old, new)
-                    .map_err(TargetError::Inject)?;
+                    .map_err(InsertionError::Inject)?;
                 self.inserted.truncate(self.inserted.len() - old.len());
                 self.inserted.push_str(new);
             }
@@ -73,37 +73,37 @@ impl<I: TextInjector> Target<I> {
 }
 
 #[cfg(test)]
-impl<I: TextInjector> Target<I> {
+impl<I: TextInjector> TextDestination<I> {
     pub(crate) fn injector(&self) -> &I {
         &self.injector
     }
 }
 
 #[derive(Debug)]
-pub(crate) enum TargetError {
+pub(crate) enum InsertionError {
     Desync { expected_suffix: String },
     Inject(BoxError),
 }
 
-impl std::fmt::Display for TargetError {
+impl std::fmt::Display for InsertionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TargetError::Desync { expected_suffix } => {
+            InsertionError::Desync { expected_suffix } => {
                 write!(
                     f,
                     "target desync: {expected_suffix:?} is not a suffix of inserted text"
                 )
             }
-            TargetError::Inject(err) => write!(f, "inject failed: {err}"),
+            InsertionError::Inject(err) => write!(f, "inject failed: {err}"),
         }
     }
 }
 
-impl std::error::Error for TargetError {
+impl std::error::Error for InsertionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            TargetError::Desync { .. } => None,
-            TargetError::Inject(err) => Some(err.as_ref()),
+            InsertionError::Desync { .. } => None,
+            InsertionError::Inject(err) => Some(err.as_ref()),
         }
     }
 }
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn insert_appends_to_ledger_and_injector() {
-        let mut target = Target::new(RecordingInjector::new());
+        let mut target = TextDestination::new(RecordingInjector::new());
         target.apply_edit(&Edit::Insert("bonj".into())).unwrap();
         assert_eq!(target.inserted(), "bonj");
         assert_eq!(target.injector().ops(), &["insert:bonj"]);
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn replace_matching_suffix_swaps_ledger() {
-        let mut target = Target::new(RecordingInjector::new());
+        let mut target = TextDestination::new(RecordingInjector::new());
         target.apply_edit(&Edit::Insert("bonj".into())).unwrap();
         target
             .apply_edit(&Edit::Replace {
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn replace_mismatching_suffix_is_desync_without_injecting() {
-        let mut target = Target::new(RecordingInjector::new());
+        let mut target = TextDestination::new(RecordingInjector::new());
         target.apply_edit(&Edit::Insert("bonj".into())).unwrap();
         let err = target
             .apply_edit(&Edit::Replace {
@@ -176,14 +176,14 @@ mod tests {
                 new: "xyzzy".into(),
             })
             .unwrap_err();
-        assert!(matches!(err, TargetError::Desync { .. }), "got: {err}");
+        assert!(matches!(err, InsertionError::Desync { .. }), "got: {err}");
         assert_eq!(target.inserted(), "bonj");
         assert_eq!(target.injector().ops(), &["insert:bonj"]);
     }
 
     #[test]
     fn retract_replaces_inserted_with_empty() {
-        let mut target = Target::new(RecordingInjector::new());
+        let mut target = TextDestination::new(RecordingInjector::new());
         target.apply_edit(&Edit::Insert("bonj".into())).unwrap();
         target
             .apply_edit(&Edit::Replace {
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn retract_empty_injects_nothing() {
-        let mut target = Target::new(RecordingInjector::new());
+        let mut target = TextDestination::new(RecordingInjector::new());
         target.retract().unwrap();
         assert!(target.injector().ops().is_empty());
     }

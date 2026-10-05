@@ -17,12 +17,14 @@ pub enum ConfigError {
 }
 
 impl Config {
+    pub const DEFAULT_HOLD: &'static str = "Ctrl+Space";
+    pub const DEFAULT_CANCEL: &'static str = "Esc";
     /// Env boundary for the stt-session binary. Reads `STT_HOLD` (default
     /// `Ctrl+Space`), `STT_CANCEL` (default `Esc`), `STT_MODEL_DIR` (required).
     /// Rejects `Fn` on every OS: X11 refuses it, Windows swallows it.
     pub fn from_env() -> Result<Self, ConfigError> {
-        let hold = chord_from_env("STT_HOLD", "Ctrl+Space")?;
-        let cancel = chord_from_env("STT_CANCEL", "Esc")?;
+        let hold = chord_from_env("STT_HOLD", Self::DEFAULT_HOLD)?;
+        let cancel = chord_from_env("STT_CANCEL", Self::DEFAULT_CANCEL)?;
         let model_dir = std::env::var_os("STT_MODEL_DIR")
             .map(PathBuf::from)
             .ok_or(ConfigError::MissingModelDir)?;

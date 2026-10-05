@@ -115,4 +115,26 @@ mod whisper_tests {
             "unexpected transcript: {final_text:?}"
         );
     }
+
+    #[test]
+    #[ignore = "requires STT_WHISPER_MODEL pointing to a multilingual Whisper model"]
+    fn downloaded_whisper_model_transcribes_the_french_fixture() {
+        let model = std::env::var("STT_WHISPER_MODEL").expect("STT_WHISPER_MODEL");
+        let engine = Engine::open_whisper(model).expect("open Whisper model");
+        engine.set_language(Language::French);
+        let wav = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/fr-bonjour.wav");
+        let audio = audio_from_wav(&wav).expect("load fixture");
+        let final_text = engine
+            .stream(audio)
+            .find_map(|item| match item.expect("Whisper decode") {
+                Hypothesis::Final(transcript) => Some(transcript.text),
+                Hypothesis::Partial(_) => None,
+            })
+            .expect("final transcript");
+        let normalized = final_text.to_lowercase();
+        assert!(
+            normalized.contains("maladie") && normalized.contains("juillet"),
+            "unexpected transcript: {final_text:?}"
+        );
+    }
 }

@@ -6,9 +6,12 @@ use stt_overlay::Bubble;
 
 use crate::chords::Chord;
 use crate::config::Config;
-use crate::drive::{run_decoder, BubbleSink, Idle, DECODE_QUEUE_CAPACITY};
-use crate::target::Target;
+use crate::decoder::Decoder;
+use crate::delivery::TranscriptDelivery;
+use crate::runtime::{BubbleSink, RuntimeConfig, RuntimeUpdates, SessionOutputs, SessionRuntime};
 use crate::StartupError;
+
+const VOICE_LEVEL_QUEUE_CAPACITY: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InsertionConfig {
@@ -34,15 +37,15 @@ pub struct DictationResult {
 
 /// Proven pack plus parsed chords. The only value `start` accepts.
 /// There is no constructor that omits `Engine`.
-pub struct Ready {
+pub struct PreparedSession {
     config: Config,
     engine: Engine,
     insertion: InsertionConfig,
 }
 
-impl Ready {
+impl PreparedSession {
     pub fn from_open(config: Config, engine: Engine) -> Self {
-        Ready {
+        PreparedSession {
             config,
             engine,
             insertion: InsertionConfig::default(),
@@ -69,7 +72,7 @@ impl HoldTarget {
 }
 
 /// Detached compositor plus the overlay's incoming snapshots.
-/// Dropping this does not stop Idle. The process drop does, as today.
+/// Dropping this does not stop SessionRuntime. The process drop does, as today.
 pub struct LiveSession {
     pub bubbles: mpsc::Receiver<Bubble>,
     pub levels: mpsc::Receiver<f32>,
@@ -101,11 +104,11 @@ impl EngineTarget {
     }
 }
 
-/// Injector, hold bind, spawn Idle. Returns the Bubble receiver.
+/// Injector, hold bind, spawn SessionRuntime. Returns the Bubble receiver.
 /// Does not open a window. Does not read prefs. Does not load a pack.
 /// Call only after prepare_display. Bind then sees the forced X11 env.
-pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
-    let Ready {
+pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
+    let PreparedSession {
         config,
         engine,
         insertion,
@@ -115,33 +118,31 @@ pub fn start(ready: Ready) -> Result<LiveSession, StartupError> {
         StartupError::backend(format!("hold chord {}: {err}", config.hold.as_str()).into())
     })?;
     let (bubble_tx, bubble_rx) = mpsc::channel();
-    let (level_tx, level_rx) = mpsc::sync_channel(8);
+    let (level_tx, level_rx) = mpsc::sync_channel(VOICE_LEVEL_QUEUE_CAPACITY);
     let (hold_tx, hold_rx) = mpsc::channel();
     let (engine_tx, engine_rx) = mpsc::channel();
     let (insertion_tx, insertion_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
-    let (completion_tx, completion_rx) = mpsc::channel();
-    let (decode_tx, decode_rx) = mpsc::sync_channel(DECODE_QUEUE_CAPACITY);
-    std::thread::Builder::new()
-        .name("stt-decoder".to_string())
-        .spawn(move || run_decoder(decode_rx, completion_tx))
-        .map_err(|err| StartupError::backend(err.into()))?;
-    let hold_raw = config.hold.as_str().to_string();
-    let worker = Idle::new(
-        hold,
-        hold_raw,
-        hold_rx,
-        config.cancel,
-        engine,
-        engine_rx,
-        insertion,
-        insertion_rx,
-        result_tx,
-        decode_tx,
-        completion_rx,
-        Target::new(injector),
-        BubbleSink::new(bubble_tx),
-        level_tx,
+    let decoder = Decoder::start().map_err(|err| StartupError::backend(err.into()))?;
+    let delivery = TranscriptDelivery::new(injector, result_tx);
+    let worker = SessionRuntime::new(
+        RuntimeConfig {
+            session: config,
+            hold,
+            engine,
+            insertion,
+        },
+        RuntimeUpdates {
+            hold: hold_rx,
+            engine: engine_rx,
+            insertion: insertion_rx,
+        },
+        SessionOutputs {
+            bubbles: BubbleSink::new(bubble_tx),
+            levels: level_tx,
+        },
+        decoder,
+        delivery,
     );
     std::thread::Builder::new()
         .name("stt-compositor".to_string())

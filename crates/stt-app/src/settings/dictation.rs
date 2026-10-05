@@ -2,8 +2,8 @@ use gpui::{deferred, div, prelude::*, px, svg, AnyElement, Context, FontWeight, 
 use stt_session::InsertionMode;
 use stt_ui::{Segment, Segmented, Tokens};
 
-use crate::hold::pill_label;
 use crate::prefs::Prefs;
+use crate::shortcut_capture::pill_label;
 
 use super::view::{error_text, page, settings_group};
 use super::SettingsView;

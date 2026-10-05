@@ -287,6 +287,7 @@ fn nav_item(
                     this.capture.cancel();
                     this.language_open = false;
                     this.insertion_open = false;
+                    this.history_menu = None;
                     this.section = section;
                     window.blur();
                     cx.notify();

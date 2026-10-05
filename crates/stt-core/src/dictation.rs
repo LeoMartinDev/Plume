@@ -10,7 +10,7 @@ pub enum Edit {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step {
+pub struct DictationUpdate {
     pub edit: Option<Edit>,
     pub transcript: Option<Transcript>,
 }
@@ -55,13 +55,13 @@ impl Dictation {
     /// arrives as Final while still Recording or Streaming. This method
     /// synthesizes Finalizing then finish in that case.
     ///
-    /// Cancelled + any hypothesis -> Step { edit: None, transcript: None }.
-    pub fn on_hypothesis(&mut self, hyp: Hypothesis) -> Result<Step, BoxError> {
+    /// Cancelled + any hypothesis -> DictationUpdate { edit: None, transcript: None }.
+    pub fn on_hypothesis(&mut self, hyp: Hypothesis) -> Result<DictationUpdate, BoxError> {
         let session = mem::take(&mut self.session);
         match (session, hyp) {
             (Session::Cancelled(cancelled), _) => {
                 self.session = Session::Cancelled(cancelled);
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: None,
                     transcript: None,
                 })
@@ -73,7 +73,7 @@ impl Dictation {
             (Session::Recording(recording), Hypothesis::Partial(partial)) => {
                 let edit = Edit::Insert(partial.text.clone());
                 self.session = Session::Streaming(recording.on_partial(partial));
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(edit),
                     transcript: None,
                 })
@@ -82,7 +82,7 @@ impl Dictation {
                 let edit = Edit::Insert(transcript.text.clone());
                 let (session, transcript) = recording.on_final(transcript);
                 self.session = session;
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(edit),
                     transcript: Some(transcript),
                 })
@@ -91,7 +91,7 @@ impl Dictation {
                 let old = streaming.latest().text().to_string();
                 let new = partial.text.clone();
                 self.session = Session::Streaming(streaming.on_partial(partial));
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(Edit::Replace { old, new }),
                     transcript: None,
                 })
@@ -102,7 +102,7 @@ impl Dictation {
                 let finalizing = streaming.release();
                 let (session, transcript) = finalizing.finish(transcript);
                 self.session = session;
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(Edit::Replace { old, new }),
                     transcript: Some(transcript),
                 })
@@ -117,7 +117,7 @@ impl Dictation {
                     None => Edit::Insert(new.clone()),
                 };
                 self.session = Session::Finalizing(finalizing.on_partial(partial));
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(edit),
                     transcript: None,
                 })
@@ -133,7 +133,7 @@ impl Dictation {
                 };
                 let (session, transcript) = finalizing.finish(transcript);
                 self.session = session;
-                Ok(Step {
+                Ok(DictationUpdate {
                     edit: Some(edit),
                     transcript: Some(transcript),
                 })

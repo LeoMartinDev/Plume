@@ -234,42 +234,42 @@ fn open_session(path: impl AsRef<Path>) -> Result<Session, ort::Error> {
 }
 
 fn accelerated_session_builder() -> Result<SessionBuilder, ort::Error> {
-    let mut builder = Session::builder()?;
+    let builder = Session::builder()?;
 
     // DirectML requires memory patterns to be disabled. Registration is
     // deliberately best-effort: ORT logs the failure and retains its CPU EP.
     #[cfg(target_os = "windows")]
-    {
-        builder = builder
+    let builder = {
+        builder
             .with_memory_pattern(false)?
             .with_execution_providers([
                 #[cfg(feature = "cuda")]
                 ort::ep::CUDA::default().build(),
                 ort::ep::DirectML::default().build(),
-            ])?;
-    }
+            ])?
+    };
 
     #[cfg(target_os = "macos")]
-    {
-        builder = builder.with_execution_providers([
+    let builder = {
+        builder.with_execution_providers([
             #[cfg(feature = "cuda")]
             ort::ep::CUDA::default().build(),
             ort::ep::CoreML::default().build(),
-        ])?;
-    }
+        ])?
+    };
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        #[cfg(any(feature = "cuda", feature = "rocm"))]
-        {
-            builder = builder.with_execution_providers([
-                #[cfg(feature = "cuda")]
-                ort::ep::CUDA::default().build(),
-                #[cfg(feature = "rocm")]
-                ort::ep::ROCm::default().build(),
-            ])?;
-        }
-    }
+    #[cfg(all(
+        not(any(target_os = "windows", target_os = "macos")),
+        any(feature = "cuda", feature = "rocm")
+    ))]
+    let builder = {
+        builder.with_execution_providers([
+            #[cfg(feature = "cuda")]
+            ort::ep::CUDA::default().build(),
+            #[cfg(feature = "rocm")]
+            ort::ep::ROCm::default().build(),
+        ])?
+    };
 
     Ok(builder)
 }

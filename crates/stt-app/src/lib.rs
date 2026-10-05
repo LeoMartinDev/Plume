@@ -2,15 +2,16 @@ pub mod assets;
 pub mod catalog;
 pub mod dirs;
 pub mod download;
+mod file_store;
 pub mod history;
-pub mod hold;
+pub mod history_policy;
 pub mod lock;
 pub mod phase;
 pub mod prefs;
 pub mod settings;
+pub mod shortcut_capture;
 
 use std::sync::mpsc;
-use std::time::Duration;
 
 use gpui::{App, Application};
 use stt_engine::{Engine, Language};
@@ -41,6 +42,7 @@ pub fn product_main() {
     let loaded = prefs::load();
     let (prefs, warning) = match loaded {
         PrefsLoad::Fresh(prefs) | PrefsLoad::Loaded(prefs) => (prefs, None),
+        PrefsLoad::LoadedWithWarnings { prefs, warnings } => (prefs, Some(warnings.join("; "))),
         PrefsLoad::Quarantined { prefs, warning } => (prefs, Some(warning)),
     };
     let status = if catalog::is_complete(prefs.model, &prefs.model.data_dir()) {
@@ -138,7 +140,7 @@ fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
         log_line("stt-app: drain started");
         loop {
             cx.background_executor()
-                .timer(Duration::from_millis(16))
+                .timer(stt_ui::UI_REFRESH_INTERVAL)
                 .await;
             let (batch, closed) = match poll_download(&rx) {
                 DrainPoll::Live(batch) => (batch, false),
@@ -221,7 +223,7 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
                 return;
             }
         };
-    let ready = stt_session::Ready::from_open(config, engine).with_insertion(
+    let ready = stt_session::PreparedSession::from_open(config, engine).with_insertion(
         stt_session::InsertionConfig {
             mode: prefs.insertion_mode(),
             copy_on_failure: prefs.copy_on_failure(),
@@ -244,7 +246,7 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
 fn drain_results(cx: &mut App, rx: mpsc::Receiver<stt_session::DictationResult>) {
     cx.spawn(async move |cx| loop {
         cx.background_executor()
-            .timer(Duration::from_millis(16))
+            .timer(stt_ui::UI_REFRESH_INTERVAL)
             .await;
         loop {
             match rx.try_recv() {

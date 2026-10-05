@@ -1,7 +1,7 @@
 use gpui::Modifiers;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ModBits {
+pub struct ShortcutModifiers {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
@@ -9,7 +9,7 @@ pub struct ModBits {
     pub fn_key: bool,
 }
 
-impl ModBits {
+impl ShortcutModifiers {
     pub const NONE: Self = Self {
         ctrl: false,
         alt: false,
@@ -65,7 +65,7 @@ impl Stroke {
     }
 }
 
-pub fn classify_keydown(is_held: bool, key: &str, mods: ModBits) -> Stroke {
+pub fn classify_keydown(is_held: bool, key: &str, mods: ShortcutModifiers) -> Stroke {
     if is_held {
         return Stroke::Repeat;
     }
@@ -146,13 +146,13 @@ fn parse_function_key(key: &str) -> Option<u8> {
     (1..=24).contains(&n).then_some(n)
 }
 
-fn spell_chord(mods: ModBits, trigger: &str) -> String {
+fn spell_chord(mods: ShortcutModifiers, trigger: &str) -> String {
     let mut parts = spell_modifiers(mods);
     parts.push(trigger);
     parts.join("+")
 }
 
-fn spell_modifiers(mods: ModBits) -> Vec<&'static str> {
+fn spell_modifiers(mods: ShortcutModifiers) -> Vec<&'static str> {
     let mut parts = Vec::new();
     if mods.ctrl {
         parts.push("Ctrl");
@@ -173,22 +173,22 @@ fn spell_modifiers(mods: ModBits) -> Vec<&'static str> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HoldPhase {
+pub enum ShortcutCaptureState {
     Idle,
     Listening,
 }
 
-pub fn pill_label(phase: HoldPhase, committed_hold: &str) -> &str {
+pub fn pill_label(phase: ShortcutCaptureState, committed_hold: &str) -> &str {
     match phase {
-        HoldPhase::Listening => "Press keys\u{2026}",
-        HoldPhase::Idle => committed_hold,
+        ShortcutCaptureState::Listening => "Press keys\u{2026}",
+        ShortcutCaptureState::Idle => committed_hold,
     }
 }
 
-pub fn pill_hint(phase: HoldPhase) -> &'static str {
+pub fn pill_hint(phase: ShortcutCaptureState) -> &'static str {
     match phase {
-        HoldPhase::Listening => "Esc cancels",
-        HoldPhase::Idle => "Click the shortcut to change it.",
+        ShortcutCaptureState::Listening => "Esc cancels",
+        ShortcutCaptureState::Idle => "Click the shortcut to change it.",
     }
 }
 
@@ -201,31 +201,31 @@ pub enum CaptureEffect {
     Rejected(String),
 }
 
-pub struct HoldCapture {
-    phase: HoldPhase,
+pub struct ShortcutCapture {
+    phase: ShortcutCaptureState,
     reject: Option<String>,
-    pending_modifiers: ModBits,
+    pending_modifiers: ShortcutModifiers,
     pending_chord: Option<ChordText>,
     preview: Option<ChordText>,
 }
 
-impl HoldCapture {
+impl ShortcutCapture {
     pub fn idle() -> Self {
-        HoldCapture {
-            phase: HoldPhase::Idle,
+        ShortcutCapture {
+            phase: ShortcutCaptureState::Idle,
             reject: None,
-            pending_modifiers: ModBits::NONE,
+            pending_modifiers: ShortcutModifiers::NONE,
             pending_chord: None,
             preview: None,
         }
     }
 
-    pub fn phase(&self) -> HoldPhase {
+    pub fn phase(&self) -> ShortcutCaptureState {
         self.phase
     }
 
     pub fn is_listening(&self) -> bool {
-        matches!(self.phase, HoldPhase::Listening)
+        matches!(self.phase, ShortcutCaptureState::Listening)
     }
 
     pub fn reject(&self) -> Option<&str> {
@@ -245,22 +245,22 @@ impl HoldCapture {
     }
 
     pub fn begin(&mut self) {
-        self.phase = HoldPhase::Listening;
-        self.pending_modifiers = ModBits::NONE;
+        self.phase = ShortcutCaptureState::Listening;
+        self.pending_modifiers = ShortcutModifiers::NONE;
         self.pending_chord = None;
         self.preview = None;
         self.clear_reject();
     }
 
     pub fn cancel(&mut self) {
-        self.phase = HoldPhase::Idle;
-        self.pending_modifiers = ModBits::NONE;
+        self.phase = ShortcutCaptureState::Idle;
+        self.pending_modifiers = ShortcutModifiers::NONE;
         self.pending_chord = None;
         self.preview = None;
         self.clear_reject();
     }
 
-    pub fn apply_modifiers(&mut self, modifiers: ModBits) -> CaptureEffect {
+    pub fn apply_modifiers(&mut self, modifiers: ShortcutModifiers) -> CaptureEffect {
         if !self.is_listening() {
             return CaptureEffect::None;
         }
@@ -282,16 +282,16 @@ impl HoldCapture {
             return CaptureEffect::StayListening;
         }
 
-        self.phase = HoldPhase::Idle;
-        self.pending_modifiers = ModBits::NONE;
+        self.phase = ShortcutCaptureState::Idle;
+        self.pending_modifiers = ShortcutModifiers::NONE;
         self.preview = None;
         self.clear_reject();
         CaptureEffect::Offer(ChordText(spell_modifiers(previous).join("+")))
     }
 
     fn reject_too_many_keys(&mut self) -> CaptureEffect {
-        self.phase = HoldPhase::Idle;
-        self.pending_modifiers = ModBits::NONE;
+        self.phase = ShortcutCaptureState::Idle;
+        self.pending_modifiers = ShortcutModifiers::NONE;
         self.pending_chord = None;
         self.preview = None;
         let message = "shortcut can contain at most 3 keys".to_string();
@@ -311,8 +311,8 @@ impl HoldCapture {
                 CaptureEffect::Cancelled
             }
             Stroke::Unknown => {
-                self.phase = HoldPhase::Idle;
-                self.pending_modifiers = ModBits::NONE;
+                self.phase = ShortcutCaptureState::Idle;
+                self.pending_modifiers = ShortcutModifiers::NONE;
                 self.preview = None;
                 let message = "that key cannot be a hold trigger".to_string();
                 self.set_reject(message.clone());
@@ -333,8 +333,8 @@ impl HoldCapture {
         let Some(chord) = self.pending_chord.take() else {
             return CaptureEffect::StayListening;
         };
-        self.phase = HoldPhase::Idle;
-        self.pending_modifiers = ModBits::NONE;
+        self.phase = ShortcutCaptureState::Idle;
+        self.pending_modifiers = ShortcutModifiers::NONE;
         self.preview = None;
         self.clear_reject();
         CaptureEffect::Offer(chord)
@@ -345,8 +345,14 @@ impl HoldCapture {
 mod tests {
     use super::*;
 
-    fn bits(ctrl: bool, alt: bool, shift: bool, super_key: bool, fn_key: bool) -> ModBits {
-        ModBits {
+    fn bits(
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        super_key: bool,
+        fn_key: bool,
+    ) -> ShortcutModifiers {
+        ShortcutModifiers {
             ctrl,
             alt,
             shift,
@@ -391,13 +397,13 @@ mod tests {
             (
                 false,
                 "f9",
-                ModBits::NONE,
+                ShortcutModifiers::NONE,
                 Stroke::Chord(ChordText("F9".into())),
             ),
             (
                 false,
                 "F9",
-                ModBits::NONE,
+                ShortcutModifiers::NONE,
                 Stroke::Chord(ChordText("F9".into())),
             ),
             (
@@ -418,7 +424,7 @@ mod tests {
                 bits(true, true, true, true, true),
                 Stroke::TooManyKeys,
             ),
-            (false, "escape", ModBits::NONE, Stroke::Escape),
+            (false, "escape", ShortcutModifiers::NONE, Stroke::Escape),
             (
                 false,
                 "ESC",
@@ -443,14 +449,29 @@ mod tests {
                 bits(true, false, false, false, false),
                 Stroke::ModifierOnly,
             ),
-            (false, "ctrl", ModBits::NONE, Stroke::ModifierOnly),
-            (false, "Control_L", ModBits::NONE, Stroke::ModifierOnly),
-            (false, "function", ModBits::NONE, Stroke::ModifierOnly),
-            (false, "platform", ModBits::NONE, Stroke::ModifierOnly),
-            (false, "backspace", ModBits::NONE, Stroke::Unknown),
-            (false, "left", ModBits::NONE, Stroke::Unknown),
-            (false, "f0", ModBits::NONE, Stroke::Unknown),
-            (false, "f25", ModBits::NONE, Stroke::Unknown),
+            (false, "ctrl", ShortcutModifiers::NONE, Stroke::ModifierOnly),
+            (
+                false,
+                "Control_L",
+                ShortcutModifiers::NONE,
+                Stroke::ModifierOnly,
+            ),
+            (
+                false,
+                "function",
+                ShortcutModifiers::NONE,
+                Stroke::ModifierOnly,
+            ),
+            (
+                false,
+                "platform",
+                ShortcutModifiers::NONE,
+                Stroke::ModifierOnly,
+            ),
+            (false, "backspace", ShortcutModifiers::NONE, Stroke::Unknown),
+            (false, "left", ShortcutModifiers::NONE, Stroke::Unknown),
+            (false, "f0", ShortcutModifiers::NONE, Stroke::Unknown),
+            (false, "f25", ShortcutModifiers::NONE, Stroke::Unknown),
         ];
         for (is_held, key, mods, want) in cases {
             let got = classify_keydown(is_held, key, mods);
@@ -481,7 +502,7 @@ mod tests {
     #[test]
     fn f9_has_no_modifier() {
         assert_eq!(
-            classify_keydown(false, "f9", ModBits::NONE).chord_text(),
+            classify_keydown(false, "f9", ShortcutModifiers::NONE).chord_text(),
             Some("F9")
         );
     }
@@ -514,7 +535,7 @@ mod tests {
 
     #[test]
     fn from_gpui_maps_platform_to_super_and_function_to_fn() {
-        let bits = ModBits::from_gpui(Modifiers {
+        let bits = ShortcutModifiers::from_gpui(Modifiers {
             control: true,
             platform: true,
             function: true,
@@ -522,7 +543,7 @@ mod tests {
         });
         assert_eq!(
             bits,
-            ModBits {
+            ShortcutModifiers {
                 ctrl: true,
                 alt: false,
                 shift: false,
@@ -534,24 +555,27 @@ mod tests {
 
     #[test]
     fn pill_label_idle_versus_listening() {
-        assert_eq!(pill_label(HoldPhase::Idle, "Ctrl+Space"), "Ctrl+Space");
         assert_eq!(
-            pill_label(HoldPhase::Listening, "Ctrl+Space"),
+            pill_label(ShortcutCaptureState::Idle, "Ctrl+Space"),
+            "Ctrl+Space"
+        );
+        assert_eq!(
+            pill_label(ShortcutCaptureState::Listening, "Ctrl+Space"),
             "Press keys\u{2026}"
         );
         assert_eq!(
-            pill_hint(HoldPhase::Idle),
+            pill_hint(ShortcutCaptureState::Idle),
             "Click the shortcut to change it."
         );
-        assert_eq!(pill_hint(HoldPhase::Listening), "Esc cancels");
+        assert_eq!(pill_hint(ShortcutCaptureState::Listening), "Esc cancels");
     }
 
     #[test]
     fn machine_transitions() {
-        let mut cap = HoldCapture::idle();
+        let mut cap = ShortcutCapture::idle();
         assert!(!cap.is_listening());
         assert_eq!(cap.apply(Stroke::Escape), CaptureEffect::None);
-        assert_eq!(cap.phase(), HoldPhase::Idle);
+        assert_eq!(cap.phase(), ShortcutCaptureState::Idle);
 
         cap.begin();
         assert!(cap.is_listening());
@@ -603,7 +627,7 @@ mod tests {
 
     #[test]
     fn toggle_cancel_returns_to_idle() {
-        let mut cap = HoldCapture::idle();
+        let mut cap = ShortcutCapture::idle();
         cap.begin();
         cap.set_reject("stale".into());
         cap.begin();
@@ -617,7 +641,7 @@ mod tests {
 
     #[test]
     fn modifier_only_capture_commits_on_first_release() {
-        let mut cap = HoldCapture::idle();
+        let mut cap = ShortcutCapture::idle();
         cap.begin();
         assert_eq!(
             cap.apply_modifiers(bits(false, false, false, true, false)),
@@ -638,11 +662,11 @@ mod tests {
 
     #[test]
     fn windows_key_alone_is_captured() {
-        let mut cap = HoldCapture::idle();
+        let mut cap = ShortcutCapture::idle();
         cap.begin();
         cap.apply_modifiers(bits(false, false, false, true, false));
         assert_eq!(cap.preview(), Some("Super"));
-        match cap.apply_modifiers(ModBits::NONE) {
+        match cap.apply_modifiers(ShortcutModifiers::NONE) {
             CaptureEffect::Offer(text) => assert_eq!(text.as_str(), "Super"),
             other => panic!("expected Offer, got {other:?}"),
         }

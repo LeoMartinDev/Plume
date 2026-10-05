@@ -55,8 +55,7 @@ fn model_catalog(
             .flat_map(|(index, entry)| {
                 let mut rows = vec![catalog_model_row(
                     entry,
-                    &view.phase,
-                    view.downloads.is_active_for(entry.id),
+                    view,
                     index == 0,
                     index + 1 == count,
                     tokens,
@@ -80,14 +79,14 @@ fn model_catalog(
 
 fn catalog_model_row(
     entry: &ModelEntry,
-    phase: &AppPhase,
-    request_active: bool,
+    view: &SettingsView,
     is_first: bool,
     is_last: bool,
     tokens: &Tokens,
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
+    let phase = &view.phase;
     let progress = match phase {
         AppPhase::Onboarding {
             prefs,
@@ -96,19 +95,18 @@ fn catalog_model_row(
         } if prefs.model == entry.id => Some(last),
         _ => None,
     };
-    let downloading: Option<SharedString> = progress
-        .and_then(download_status)
-        .map(SharedString::from);
+    let downloading: Option<SharedString> =
+        progress.and_then(download_status).map(SharedString::from);
     let supported = entry.id.supports(prefs.language());
     let (label, enabled) = catalog_model_action(phase, entry.id);
     // A pack that does not cover the pinned language cannot be selected.
     let (label, enabled) = if supported {
-        (label, enabled)
+        (label, enabled && !view.settings_preview)
     } else {
         ("Unsupported".into(), false)
     };
     let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
-    let can_delete = installed && !request_active;
+    let can_delete = installed && !view.downloads.is_active_for(entry.id) && !view.settings_preview;
     let is_current = phase.prefs().model == entry.id;
     let detail = entry.size;
     div()
@@ -165,12 +163,7 @@ fn catalog_model_row(
                         .flex()
                         .flex_col()
                         .gap(px(5.))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(tokens.muted)
-                                .child(detail),
-                        )
+                        .child(div().text_xs().text_color(tokens.muted).child(detail))
                         .child(
                             div()
                                 .flex()
@@ -212,15 +205,11 @@ fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoEleme
                 .items_center()
                 .gap(px(3.))
                 .children((0..5).map(move |i| {
-                    div()
-                        .w(px(3.))
-                        .h(px(7.))
-                        .rounded(px(1.))
-                        .bg(if i < value {
-                            tokens.text
-                        } else {
-                            tokens.hairline
-                        })
+                    div().w(px(3.)).h(px(7.)).rounded(px(1.)).bg(if i < value {
+                        tokens.text
+                    } else {
+                        tokens.hairline
+                    })
                 })),
         )
 }

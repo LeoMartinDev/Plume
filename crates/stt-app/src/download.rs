@@ -1,7 +1,9 @@
+const PROGRESS_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use stt_engine::Engine;
 
@@ -309,7 +311,7 @@ impl Fetch for UreqFetch {
             }
             file.write_all(&buf[..n])?;
             received += n as u64;
-            if last_reported == 0 || last_report.elapsed() >= Duration::from_millis(50) {
+            if last_reported == 0 || last_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
                 progress(received, total);
                 last_reported = received;
                 last_report = Instant::now();

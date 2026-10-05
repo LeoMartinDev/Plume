@@ -55,8 +55,8 @@ mod linux {
             return false;
         };
         let mut fields = [0u32; 5];
-        for (index, chunk) in reply.value.chunks_exact(4).take(5).enumerate() {
-            fields[index] = u32::from_ne_bytes(chunk.try_into().unwrap_or([0; 4]));
+        for (index, chunk) in reply.value.as_chunks::<4>().0.iter().take(5).enumerate() {
+            fields[index] = u32::from_ne_bytes(*chunk);
         }
         fields[0] & MWM_HINTS_DECORATIONS != 0 && fields[2] == 0
     }
