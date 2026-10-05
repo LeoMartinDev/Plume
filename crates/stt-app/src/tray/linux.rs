@@ -8,6 +8,10 @@ use super::{Ordering, ACTIONS, QUIT, SHOW};
 struct Tray;
 
 impl ksni::Tray for Tray {
+    // Hosts should send Activate on primary click; keep the context menu for
+    // hosts that expose only menus (e.g. some AppIndicator extensions).
+    const MENU_ON_ACTIVATE: bool = false;
+
     fn id(&self) -> String {
         "stt".into()
     }

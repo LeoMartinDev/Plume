@@ -125,6 +125,12 @@ fn bind_stream(
         .default_input_device()
         .ok_or(CaptureError::NoInputDevice)?;
     let (config, sample_format) = preferred_or_default(&device)?;
+    eprintln!(
+        "stt-audio: device={:?} sample_rate={} channels={} format={sample_format:?}",
+        device.name().unwrap_or_else(|_| "unknown".into()),
+        config.sample_rate.0,
+        config.channels,
+    );
     let stream = build_stream(&device, &config, sample_format, tx, ready)?;
     stream
         .play()

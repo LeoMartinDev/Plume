@@ -101,11 +101,12 @@ mod macos {
 
     use cocoa::{
         appkit::{
-            NSApplication, NSApplicationActivationPolicy, NSMenu, NSMenuItem, NSStatusBar,
-            NSStatusItem, NSVariableStatusItemLength, NSWindow,
+            NSApplication, NSApplicationActivationPolicy, NSEventMask, NSEventModifierFlags,
+            NSEventType, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+            NSWindow,
         },
         base::{id, nil},
-        foundation::NSString,
+        foundation::{NSInteger, NSString, NSUInteger},
     };
     use gpui::{App, Window};
     use objc::{
@@ -125,14 +126,51 @@ mod macos {
         ACTIONS.fetch_or(QUIT, Ordering::Relaxed);
     }
 
+    extern "C" fn click(target: &Object, _: Sel, button: id) {
+        // SAFETY: AppKit invokes the button action on the main thread. The
+        // target's menu is owned by Tray for the lifetime of this callback.
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let event: id = (&*app)
+                .send_message(Sel::register("currentEvent"), ())
+                .unwrap();
+            if event.is_null() {
+                return;
+            }
+            let kind: NSUInteger = (&*event).send_message(Sel::register("type"), ()).unwrap();
+            let modifiers: NSUInteger = (&*event)
+                .send_message(Sel::register("modifierFlags"), ())
+                .unwrap();
+            if kind == NSEventType::NSRightMouseUp as NSUInteger
+                || modifiers & NSEventModifierFlags::NSControlKeyMask.bits() != 0
+            {
+                let menu = *target.get_ivar::<id>("menu");
+                let _: () = Class::get("NSMenu")
+                    .unwrap()
+                    .send_message(
+                        Sel::register("popUpContextMenu:withEvent:forView:"),
+                        (menu, event, button),
+                    )
+                    .unwrap();
+            } else if kind == NSEventType::NSLeftMouseUp as NSUInteger {
+                ACTIONS.fetch_or(SHOW, Ordering::Relaxed);
+            }
+        }
+    }
+
     fn target_class() -> &'static Class {
         static CLASS: OnceLock<&'static Class> = OnceLock::new();
         CLASS.get_or_init(|| {
             let mut class = ClassDecl::new("STTTrayTarget", Class::get("NSObject").unwrap())
                 .expect("register tray target");
-            // SAFETY: both selectors take one Objective-C object argument and
+            class.add_ivar::<id>("menu");
+            // SAFETY: all selectors take one Objective-C object argument and
             // match their registered C ABI. The class lives for the process.
             unsafe {
+                class.add_method(
+                    Sel::register("trayClicked:"),
+                    click as extern "C" fn(&Object, Sel, id),
+                );
                 class.add_method(
                     Sel::register("showSettings:"),
                     show_settings as extern "C" fn(&Object, Sel, id),
@@ -149,6 +187,7 @@ mod macos {
     struct Tray {
         item: id,
         target: id,
+        menu: id,
     }
 
     impl Tray {
@@ -156,7 +195,7 @@ mod macos {
         fn new() -> Self {
             // SAFETY: all AppKit objects are created and used on the main thread.
             // Retain the status item (the system bar does not own it) and the
-            // action target (NSMenuItem's target is not retained).
+            // action target (button and menu targets are not retained).
             unsafe {
                 let target: id = target_class()
                     .send_message(Sel::register("new"), ())
@@ -190,12 +229,28 @@ mod macos {
                         .unwrap();
                     let _: () = (&*key).send_message(Sel::register("release"), ()).unwrap();
                 }
-                item.setMenu_(menu);
-                let _: () = (&*menu).send_message(Sel::register("release"), ()).unwrap();
+                // Attaching a menu to the status item consumes primary clicks.
+                // Instead, the button opens settings and shows the menu only
+                // on secondary clicks, including the macOS Ctrl-click gesture.
+                (*target).set_ivar("menu", menu);
+                let button = item.button();
+                let _: () = (&*button)
+                    .send_message(Sel::register("setTarget:"), (target,))
+                    .unwrap();
+                let _: () = (&*button)
+                    .send_message(
+                        Sel::register("setAction:"),
+                        (Sel::register("trayClicked:"),),
+                    )
+                    .unwrap();
+                let mask = NSEventMask::NSLeftMouseUpMask | NSEventMask::NSRightMouseUpMask;
+                let _: NSInteger = (&*button)
+                    .send_message(Sel::register("sendActionOn:"), (mask.bits(),))
+                    .unwrap();
                 NSApplication::sharedApplication(nil).setActivationPolicy_(
                     NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
                 );
-                Self { item, target }
+                Self { item, target, menu }
             }
         }
     }
@@ -207,6 +262,7 @@ mod macos {
             unsafe {
                 NSStatusBar::systemStatusBar(nil).removeStatusItem_(self.item);
                 let _ = (&*self.item).send_message::<_, ()>(Sel::register("release"), ());
+                let _ = (&*self.menu).send_message::<_, ()>(Sel::register("release"), ());
                 let _ = (&*self.target).send_message::<_, ()>(Sel::register("release"), ());
             }
         }

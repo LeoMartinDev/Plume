@@ -5,7 +5,7 @@ use crate::delivery::TranscriptDelivery;
 use crate::startup::InsertionConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stt_audio::Mic;
 use stt_core::{AsrEngine, Dictation, HotkeyEvent, TextInjector};
 use stt_overlay::Bubble;
@@ -174,6 +174,8 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
         };
         let mut dictation = Dictation::new();
         dictation.hold();
+        let started = Instant::now();
+        eprintln!("stt-session: capture={} pressed", self.next_capture_id);
         let mic = match Mic::open() {
             Ok(mic) => mic,
             Err(err) => {
@@ -183,6 +185,11 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                 return Outcome::Aborted(format!("mic: {err}"));
             }
         };
+        eprintln!(
+            "stt-session: capture={} microphone_ready_ms={}",
+            self.next_capture_id,
+            started.elapsed().as_millis()
+        );
         let guard = match CancelGuard::arm(&self.cancel_spec) {
             Ok(guard) => guard,
             Err(err) => {
@@ -221,6 +228,10 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             pump,
             guard,
             cancelled,
+        );
+        eprintln!(
+            "stt-session: capture={id} outcome={outcome:?} hold_ms={}",
+            started.elapsed().as_millis()
         );
         self.hold = Some(hold);
         outcome

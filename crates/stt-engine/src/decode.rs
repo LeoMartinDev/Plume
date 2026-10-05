@@ -393,6 +393,14 @@ impl Iterator for NemotronStream {
             {
                 self.finished = true;
                 let text = std::mem::take(&mut self.cumulative);
+                eprintln!(
+                    "stt-engine: nemotron lang_id={} pcm_samples={} decoded_chunks={} tokens={} final_chars={}",
+                    self.lang_id,
+                    self.pcm.len(),
+                    self.next_chunk,
+                    self.tokens.len(),
+                    text.chars().count(),
+                );
                 return Some(Ok(Hypothesis::Final(Transcript { text })));
             }
             match self.decode_chunk() {

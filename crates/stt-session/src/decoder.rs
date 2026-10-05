@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Instant;
 use stt_core::{AsrEngine, Hypothesis};
 
 pub(crate) const DECODE_QUEUE_CAPACITY: usize = 8;
@@ -49,10 +50,32 @@ pub(crate) fn run_decoder<E: AsrEngine>(
     completions: mpsc::Sender<Completion>,
 ) {
     for job in jobs {
-        let mut result = decode_final(&job.engine, job.audio);
-        if job.cancelled.load(Ordering::Acquire) {
+        let started = Instant::now();
+        let stats = Arc::new(Mutex::new(AudioStats::default()));
+        let observed = stats.clone();
+        let audio = Box::new(job.audio.inspect(move |chunk| {
+            observed.lock().unwrap().observe(chunk);
+        }));
+        eprintln!("stt-session: capture={} decoder_started", job.id);
+        let mut result = decode_final(&job.engine, audio);
+        let cancelled = job.cancelled.load(Ordering::Acquire);
+        if cancelled {
             result = Ok(String::new());
         }
+        let stats = stats.lock().unwrap();
+        let rms = (stats.sum_squares / stats.samples.max(1) as f64).sqrt();
+        eprintln!(
+            "stt-session: capture={} audio_chunks={} samples={} audio_ms={:.0} rms={rms:.6} peak={:.6} nonfinite={} worker_ms={} cancelled={cancelled} final_chars={} error={:?}",
+            job.id,
+            stats.chunks,
+            stats.samples,
+            stats.seconds * 1000.0,
+            stats.peak,
+            stats.nonfinite,
+            started.elapsed().as_millis(),
+            result.as_ref().map_or(0, |text| text.chars().count()),
+            result.as_ref().err(),
+        );
         if completions
             .send(Completion {
                 id: job.id,
@@ -62,6 +85,34 @@ pub(crate) fn run_decoder<E: AsrEngine>(
             .is_err()
         {
             return;
+        }
+    }
+}
+
+#[derive(Default)]
+struct AudioStats {
+    chunks: usize,
+    samples: usize,
+    seconds: f64,
+    sum_squares: f64,
+    peak: f32,
+    nonfinite: usize,
+}
+
+impl AudioStats {
+    fn observe(&mut self, chunk: &stt_core::AudioChunk) {
+        self.chunks += 1;
+        self.samples += chunk.samples.len();
+        if chunk.sample_rate > 0 {
+            self.seconds += chunk.samples.len() as f64 / f64::from(chunk.sample_rate);
+        }
+        for &sample in &chunk.samples {
+            if sample.is_finite() {
+                self.sum_squares += f64::from(sample).powi(2);
+                self.peak = self.peak.max(sample.abs());
+            } else {
+                self.nonfinite += 1;
+            }
         }
     }
 }
