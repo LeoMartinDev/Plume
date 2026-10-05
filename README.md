@@ -90,4 +90,6 @@ cargo fmt --check
 
 CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests require `STT_MODEL_DIR`; model-opening tests marked ignored require their corresponding model environment variables. Unit tests use simulated engines and injectors to exercise the production decoder and delivery components without native permissions or model downloads.
 
+On a macOS desktop, `cargo run -p stt-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, hides on release and cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
+
 See [the refactor verification record](docs/readability-verification.md) for the checks performed and native checks still pending.

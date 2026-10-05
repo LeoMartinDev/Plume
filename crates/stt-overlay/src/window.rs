@@ -344,6 +344,10 @@ mod macos {
         // GPUI's titlebar=None still creates a titled NSPanel. Keep its
         // non-activating bit while removing the title and window chrome.
         unsafe {
+            // NSPanel hides when its app is inactive by default. Dictation
+            // runs while another app has focus, so visibility must be driven
+            // only by the session's orderFrontRegardless/orderOut calls.
+            native.setHidesOnDeactivate_(NO);
             let Ok(style) = (&*native).send_message::<_, u64>(Sel::register("styleMask"), ())
             else {
                 return;
