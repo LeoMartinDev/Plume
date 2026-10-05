@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tracing.workspace = true
 stt-core = { path = "../stt-core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

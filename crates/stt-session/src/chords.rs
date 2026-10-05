@@ -60,7 +60,7 @@ impl CancelGuard {
             use std::sync::Once;
             static LOG: Once = Once::new();
             LOG.call_once(|| {
-                eprintln!(
+                tracing::warn!(
                     "stt-session: Esc cancel is unavailable on Windows (one keyboard hook per process)"
                 );
             });

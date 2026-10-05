@@ -224,7 +224,7 @@ fn open_session(path: impl AsRef<Path>) -> Result<Session, ort::Error> {
             // compile a particular graph (notably Nemotron's INT4 operators).
             // Rebuilding the session without an explicit provider lets ORT use
             // its CPU backend instead of making the installed model unusable.
-            eprintln!(
+            tracing::warn!(
                 "stt-engine: accelerated ONNX session failed for {}; retrying on CPU: {accelerated_error}",
                 path.display()
             );

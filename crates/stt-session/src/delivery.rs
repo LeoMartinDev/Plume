@@ -38,7 +38,7 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                 self.group_has_text = false;
             }
             match completion.result {
-                Ok(text) if text.is_empty() => eprintln!("stt-session: empty release"),
+                Ok(text) if text.is_empty() => tracing::debug!("stt-session: empty release"),
                 Ok(text) => {
                     let text = prepare_insertion(
                         text,
@@ -51,7 +51,7 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                     {
                         Ok(Some(report)) => {
                             self.target.reset();
-                            eprintln!("stt-session: committed {} chars", text.len());
+                            tracing::debug!("stt-session: committed {} chars", text.len());
                             let _ = self.result_tx.send(DictationResult {
                                 text,
                                 injection: Ok(report),
@@ -63,7 +63,7 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                             let reason = describe_target_error(&err);
                             let copied =
                                 insertion.copy_on_failure && self.target.copy_text(&text).is_ok();
-                            eprintln!("stt-session: aborted: {reason}");
+                            tracing::warn!("stt-session: aborted: {reason}");
                             let _ = self.result_tx.send(DictationResult {
                                 text,
                                 injection: Err(reason),
@@ -72,7 +72,7 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                         }
                     }
                 }
-                Err(err) => eprintln!("stt-session: aborted: {err}"),
+                Err(err) => tracing::warn!("stt-session: aborted: {err}"),
             }
         }
     }

@@ -83,6 +83,22 @@ A settings preview keeps the sidebar, uses temporary storage and disables model/
 cargo run -p stt-app --example settings_preview -- /tmp/stt-settings-preview
 ```
 
+## Logging
+
+App diagnostics use `tracing`. Development builds default to `debug` for the app's crates and `warn` for dependencies. Release builds (`cargo run --release -p stt-app`) default to warnings and errors. `RUST_LOG` overrides either default at startup; an empty or invalid filter uses the build's default.
+
+Use `RUST_LOG=warn` for quiet development, or `RUST_LOG=warn,stt_app=debug,stt_audio=debug,stt_engine=debug,stt_session=trace,stt_overlay=debug,stt_hotkey=debug,stt_inject=debug` for detailed diagnosis in either build. For example, in PowerShell:
+
+```powershell
+$env:RUST_LOG = 'warn,stt_session=trace,stt_audio=debug,stt_engine=debug'
+$env:STT_LOG_FILE = "$PWD\stt-diagnostic.log"
+cargo run --release -p stt-app
+```
+
+Logs go to stderr unless `STT_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
+
+The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `stt_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. CLI results, usage and command errors remain ordinary output.
+
 ## Verification
 
 ```sh

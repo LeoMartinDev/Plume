@@ -23,7 +23,7 @@ fn opens_settings(event: &TrayIconEvent) -> bool {
 pub(crate) fn install(cx: &mut App) {
     match create() {
         Ok(tray) => super::keep_alive(cx, tray),
-        Err(error) => eprintln!("stt-app: tray unavailable: {error}"),
+        Err(error) => tracing::warn!("stt-app: tray unavailable: {error}"),
     }
 }
 

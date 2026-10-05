@@ -270,7 +270,7 @@ mod backend {
                 }
             },
             || {
-                eprintln!("stt-hotkey: macOS {mode} keyboard tap ready");
+                tracing::debug!("stt-hotkey: macOS {mode} keyboard tap ready");
                 let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
                 CFRunLoop::run_current();
             },

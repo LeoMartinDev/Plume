@@ -15,6 +15,7 @@ fn command_from_args(args: &[String]) -> Command<'_> {
 }
 
 fn main() {
+    stt_logging::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match command_from_args(&args) {
         Command::Version => {

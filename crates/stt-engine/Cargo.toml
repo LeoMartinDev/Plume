@@ -11,6 +11,7 @@ rocm = ["ort/rocm", "whisper-rs/hipblas"]
 vulkan = ["whisper-rs/vulkan"]
 
 [dependencies]
+tracing.workspace = true
 stt-core = { path = "../stt-core" }
 hound = "3.5"
 rustfft = "6"

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+stt-logging = { path = "../stt-logging" }
+tracing.workspace = true
 arboard = "3.6"
 dirs = "6"
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }

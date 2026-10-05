@@ -102,19 +102,19 @@ impl<E: AsrEngine, I: TextInjector> SessionRuntime<E, I> {
         let spec = match ChordSpec::parse(&raw) {
             Ok(spec) => spec,
             Err(err) => {
-                eprintln!("stt-session: hold rejected: {err}");
+                tracing::warn!("stt-session: hold rejected: {err}");
                 return;
             }
         };
         self.hold = None;
         match Chord::bind(&spec) {
             Ok(chord) => {
-                eprintln!("stt-session: hold is {}", spec.as_str());
+                tracing::debug!("stt-session: hold is {}", spec.as_str());
                 self.hold_raw = spec.as_str().to_string();
                 self.hold = Some(chord);
             }
             Err(err) => {
-                eprintln!("stt-session: hold bind failed: {err}");
+                tracing::warn!("stt-session: hold bind failed: {err}");
                 self.restore_hold();
             }
         }
@@ -126,7 +126,7 @@ impl<E: AsrEngine, I: TextInjector> SessionRuntime<E, I> {
         };
         match Chord::bind(&spec) {
             Ok(chord) => self.hold = Some(chord),
-            Err(err) => eprintln!("stt-session: hold restore failed: {err}"),
+            Err(err) => tracing::warn!("stt-session: hold restore failed: {err}"),
         }
     }
 }
@@ -157,9 +157,9 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                     self.delivery.target.reset();
                     match &outcome {
                         Outcome::Released => {}
-                        Outcome::Cancelled => eprintln!("stt-session: cancelled"),
+                        Outcome::Cancelled => tracing::debug!("stt-session: cancelled"),
                         Outcome::Aborted(reason) => {
-                            eprintln!("stt-session: aborted: {reason}")
+                            tracing::warn!("stt-session: aborted: {reason}")
                         }
                     }
                 }
@@ -174,8 +174,8 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
         };
         let mut dictation = Dictation::new();
         dictation.hold();
-        let started = Instant::now();
-        eprintln!("stt-session: capture={} pressed", self.next_capture_id);
+        let started = tracing::enabled!(tracing::Level::DEBUG).then(Instant::now);
+        tracing::debug!("stt-session: capture={} pressed", self.next_capture_id);
         let mic = match Mic::open() {
             Ok(mic) => mic,
             Err(err) => {
@@ -185,11 +185,13 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                 return Outcome::Aborted(format!("mic: {err}"));
             }
         };
-        eprintln!(
-            "stt-session: capture={} microphone_ready_ms={}",
-            self.next_capture_id,
-            started.elapsed().as_millis()
-        );
+        if let Some(started) = started {
+            tracing::debug!(
+                capture = self.next_capture_id,
+                microphone_ready_ms = started.elapsed().as_millis(),
+                "Microphone ready"
+            );
+        }
         let guard = match CancelGuard::arm(&self.cancel_spec) {
             Ok(guard) => guard,
             Err(err) => {
@@ -229,10 +231,14 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             guard,
             cancelled,
         );
-        eprintln!(
-            "stt-session: capture={id} outcome={outcome:?} hold_ms={}",
-            started.elapsed().as_millis()
-        );
+        if let Some(started) = started {
+            tracing::debug!(
+                capture = id,
+                ?outcome,
+                hold_ms = started.elapsed().as_millis(),
+                "Capture finished"
+            );
+        }
         self.hold = Some(hold);
         outcome
     }

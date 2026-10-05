@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -276,9 +275,8 @@ pub fn settings_window_record_result(cx: &mut App, result: stt_session::Dictatio
 }
 
 fn print_opened_line() {
-    eprintln!(
+    tracing::debug!(
         "stt-app: window opened title={SETTINGS_TITLE} display={}",
         std::env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into())
     );
-    let _ = std::io::stderr().flush();
 }

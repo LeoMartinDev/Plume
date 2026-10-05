@@ -6,6 +6,7 @@ edition = "2021"
 # libxkbcommon-x11-dev. Do not commit an unversioned .so symlink.
 
 [dependencies]
+tracing.workspace = true
 stt-core = { path = "../stt-core" }
 stt-ui = { path = "../stt-ui" }
 gpui = "=0.2.2"

@@ -32,10 +32,11 @@ use crate::settings::{
 
 /// Product entry. Model loading starts immediately; the compositor follows once proven.
 pub fn product_main() {
+    stt_logging::init();
     let _lock = match AppLock::acquire() {
         Ok(lock) => lock,
         Err(AlreadyRunning(pid)) => {
-            eprintln!("stt-app: already running pid={pid}");
+            tracing::warn!("stt-app: already running pid={pid}");
             std::process::exit(0);
         }
     };
@@ -96,7 +97,7 @@ fn start_reconcile(
     let offer = prefs.model.offer();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        eprintln!("stt-app: reconcile dest={}", dest.display());
+        tracing::debug!("stt-app: reconcile dest={}", dest.display());
         match download::reconcile(offer, &dest) {
             Ok(PackStatus::Proven(engine)) => {
                 log_line("stt-app: pack proven");
@@ -106,13 +107,13 @@ fn start_reconcile(
                 }
             }
             Ok(PackStatus::Incomplete(mut staging)) => {
-                eprintln!("stt-app: pack incomplete started={}", staging.started());
+                tracing::debug!("stt-app: pack incomplete started={}", staging.started());
                 if fetch_if_incomplete || staging.started() {
                     staging.resume(request, tx);
                 }
             }
             Err(err) => {
-                eprintln!("stt-app: reconcile failed: {err}");
+                tracing::error!("stt-app: reconcile failed: {err}");
                 let _ = tx.send(DownloadEvent::Failed {
                     request,
                     error: err,
@@ -167,8 +168,7 @@ fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
 }
 
 fn log_line(msg: impl std::fmt::Display) {
-    eprintln!("{msg}");
-    let _ = std::io::Write::flush(&mut std::io::stderr());
+    tracing::debug!("{msg}");
 }
 
 fn handle_download_event(cx: &mut App, event: DownloadEvent) {
@@ -241,7 +241,7 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
             drain_results(cx, live.results);
         }
         Err(err) => {
-            log_line(format!("stt-app: compositor refused: {err}"));
+            tracing::error!("stt-app: compositor refused: {err}");
             settings_window_show_refused(cx, err.to_string());
         }
     }

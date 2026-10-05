@@ -147,7 +147,9 @@ impl TextInjector for NativeInjector {
                     stt_core::InsertionMethod::Clipboard
                 }
                 Err(clipboard_error) => {
-                    eprintln!("stt-inject: clipboard unavailable, using typing: {clipboard_error}");
+                    tracing::warn!(
+                        "stt-inject: clipboard unavailable, using typing: {clipboard_error}"
+                    );
                     self.insert(text)?;
                     stt_core::InsertionMethod::Typing
                 }

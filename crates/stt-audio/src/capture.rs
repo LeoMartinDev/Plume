@@ -125,7 +125,7 @@ fn bind_stream(
         .default_input_device()
         .ok_or(CaptureError::NoInputDevice)?;
     let (config, sample_format) = preferred_or_default(&device)?;
-    eprintln!(
+    tracing::debug!(
         "stt-audio: device={:?} sample_rate={} channels={} format={sample_format:?}",
         device.name().unwrap_or_else(|_| "unknown".into()),
         config.sample_rate.0,
@@ -237,7 +237,7 @@ fn send_buffer(
 }
 
 fn ignore_stream_error(err: cpal::StreamError) {
-    eprintln!("stt-audio: input stream error: {err}");
+    tracing::warn!("stt-audio: input stream error: {err}");
 }
 
 #[cfg(test)]

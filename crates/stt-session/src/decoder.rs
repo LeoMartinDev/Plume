@@ -50,32 +50,32 @@ pub(crate) fn run_decoder<E: AsrEngine>(
     completions: mpsc::Sender<Completion>,
 ) {
     for job in jobs {
-        let started = Instant::now();
-        let stats = Arc::new(Mutex::new(AudioStats::default()));
-        let observed = stats.clone();
-        let audio = Box::new(job.audio.inspect(move |chunk| {
-            observed.lock().unwrap().observe(chunk);
-        }));
-        eprintln!("stt-session: capture={} decoder_started", job.id);
+        let started = tracing::enabled!(tracing::Level::DEBUG).then(Instant::now);
+        let (audio, stats) = observe_audio(job.audio, tracing::enabled!(tracing::Level::TRACE));
+        tracing::debug!(capture = job.id, "Decoder started");
         let mut result = decode_final(&job.engine, audio);
         let cancelled = job.cancelled.load(Ordering::Acquire);
         if cancelled {
             result = Ok(String::new());
         }
-        let stats = stats.lock().unwrap();
-        let rms = (stats.sum_squares / stats.samples.max(1) as f64).sqrt();
-        eprintln!(
-            "stt-session: capture={} audio_chunks={} samples={} audio_ms={:.0} rms={rms:.6} peak={:.6} nonfinite={} worker_ms={} cancelled={cancelled} final_chars={} error={:?}",
-            job.id,
-            stats.chunks,
-            stats.samples,
-            stats.seconds * 1000.0,
-            stats.peak,
-            stats.nonfinite,
-            started.elapsed().as_millis(),
-            result.as_ref().map_or(0, |text| text.chars().count()),
-            result.as_ref().err(),
-        );
+        if let Some(started) = started {
+            tracing::debug!(capture = job.id, worker_ms = started.elapsed().as_millis(),
+                cancelled, final_chars = result.as_ref().map_or(0, |text| text.chars().count()),
+                error = ?result.as_ref().err(), "Decoder finished");
+        }
+        if let Some(stats) = stats {
+            let stats = stats.lock().unwrap();
+            tracing::trace!(
+                capture = job.id,
+                audio_chunks = stats.chunks,
+                samples = stats.samples,
+                audio_ms = stats.seconds * 1000.0,
+                rms = (stats.sum_squares / stats.samples.max(1) as f64).sqrt(),
+                peak = stats.peak,
+                nonfinite = stats.nonfinite,
+                "Audio statistics"
+            );
+        }
         if completions
             .send(Completion {
                 id: job.id,
@@ -87,6 +87,22 @@ pub(crate) fn run_decoder<E: AsrEngine>(
             return;
         }
     }
+}
+
+fn observe_audio(
+    audio: stt_core::AudioStream,
+    enabled: bool,
+) -> (stt_core::AudioStream, Option<Arc<Mutex<AudioStats>>>) {
+    if !enabled {
+        // Preserve the original stream: no allocation, mutex, or sample scan.
+        return (audio, None);
+    }
+    let stats = Arc::new(Mutex::new(AudioStats::default()));
+    let observed = stats.clone();
+    let audio = Box::new(audio.inspect(move |chunk| {
+        observed.lock().unwrap().observe(chunk);
+    }));
+    (audio, Some(stats))
 }
 
 #[derive(Default)]
@@ -145,6 +161,31 @@ mod tests {
     }
     fn final_text(text: &str) -> Result<Hypothesis, &'static str> {
         Ok(Hypothesis::Final(Transcript { text: text.into() }))
+    }
+
+    #[test]
+    fn audio_diagnostics_are_optional_and_preserve_the_stream() {
+        for enabled in [false, true] {
+            let audio = Box::new(std::iter::once(stt_core::AudioChunk {
+                samples: vec![0.5, -0.5],
+                sample_rate: 2,
+            }));
+            let (audio, stats) = observe_audio(audio, enabled);
+            let chunks: Vec<_> = audio.collect();
+            assert_eq!(chunks.len(), 1);
+            assert_eq!(chunks[0].samples, vec![0.5, -0.5]);
+            assert_eq!(chunks[0].sample_rate, 2);
+            if enabled {
+                let stats = stats.unwrap();
+                let stats = stats.lock().unwrap();
+                assert_eq!(stats.chunks, 1);
+                assert_eq!(stats.samples, 2);
+                assert_eq!(stats.seconds, 1.0);
+                assert_eq!(stats.sum_squares, 0.5);
+            } else {
+                assert!(stats.is_none());
+            }
+        }
     }
     fn job(id: u64, engine: ScriptedEngine, cancelled: bool) -> DecodeJob<ScriptedEngine> {
         DecodeJob {

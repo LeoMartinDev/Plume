@@ -68,7 +68,9 @@ pub(crate) fn install(cx: &mut App) {
     // D-Bus runs on ksni's worker; GPUI keeps its own X11 event loop.
     match Tray.spawn() {
         Ok(handle) => super::keep_alive(cx, TrayGuard(handle)),
-        Err(error) => eprintln!("stt-app: tray unavailable; closing settings will quit: {error}"),
+        Err(error) => {
+            tracing::warn!("stt-app: tray unavailable; closing settings will quit: {error}")
+        }
     }
 }
 
@@ -95,13 +97,13 @@ fn set_native_visible(id: u32, visible: bool) -> Result<(), Box<dyn std::error::
 
 pub(crate) fn hide_window(window: &Window) {
     if let Err(error) = set_visible(window, false) {
-        eprintln!("stt-app: hide settings: {error}");
+        tracing::warn!("stt-app: hide settings: {error}");
     }
 }
 
 pub(crate) fn show_window(window: &Window) {
     if let Err(error) = set_visible(window, true) {
-        eprintln!("stt-app: show settings: {error}");
+        tracing::warn!("stt-app: show settings: {error}");
     }
 }
 

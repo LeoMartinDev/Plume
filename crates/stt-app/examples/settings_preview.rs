@@ -3,6 +3,7 @@ use gpui::{App, Application};
 use stt_app::{assets::Assets, dirs::AppDirs, prefs::PrefsLoad, settings::open_settings_preview};
 
 fn main() {
+    stt_logging::init();
     let root = std::env::args_os()
         .nth(1)
         .map(std::path::PathBuf::from)

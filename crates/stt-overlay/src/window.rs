@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -450,7 +449,7 @@ mod stack {
                         // seul ne suffit pas (fenetre demarree cachee), ce
                         // second appel garantit que la bulle devient visible.
                         let _ = ShowWindow(hwnd, SW_SHOWNA);
-                        eprintln!(
+                        tracing::debug!(
                             "stt-overlay: place visible x={x} y={y} w={w} h={h} setwindowpos={ok} lasterror={} hwnd={hwnd:?}",
                             GetLastError()
                         );
@@ -466,7 +465,7 @@ mod stack {
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
                         );
                         let _ = ShowWindow(hwnd, SW_SHOWNA);
-                        eprintln!(
+                        tracing::debug!(
                             "stt-overlay: place visible fallback setwindowpos={ok} lasterror={} hwnd={hwnd:?}",
                             GetLastError()
                         );
@@ -511,11 +510,10 @@ mod stack {
 }
 
 fn print_opened_line() {
-    eprintln!(
+    tracing::debug!(
         "stt-overlay: window opened title={WINDOW_TITLE} display={}",
         std::env::var("DISPLAY").unwrap_or_else(|_| "<unset>".into())
     );
-    let _ = std::io::stderr().flush();
 }
 
 #[cfg(test)]

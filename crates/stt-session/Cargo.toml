@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+stt-logging = { path = "../stt-logging" }
+tracing.workspace = true
 stt-core = { path = "../stt-core" }
 stt-engine = { path = "../stt-engine" }
 stt-audio = { path = "../stt-audio" }
