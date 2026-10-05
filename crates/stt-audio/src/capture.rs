@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SampleRate, StreamConfig};
@@ -52,9 +53,8 @@ impl Mic {
         // cpal::Stream is !Send on every host, so the handle stays on this thread.
         let thread = thread::Builder::new()
             .name("stt-audio-mic".into())
-            .spawn(move || match bind_stream(chunk_tx) {
+            .spawn(move || match bind_stream(chunk_tx, ready_tx.clone()) {
                 Ok(stream) => {
-                    let _ = ready_tx.send(Ok(()));
                     let _ = shutdown_rx.recv();
                     let _ = stream.pause();
                 }
@@ -63,7 +63,9 @@ impl Mic {
                 }
             })
             .map_err(|err| CaptureError::Backend(err.to_string()))?;
-        match ready_rx.recv() {
+        // play() only schedules capture on WASAPI. Do not report readiness
+        // until the device has actually delivered its first audio buffer.
+        match ready_rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(())) => Ok(Self {
                 rx: chunk_rx,
                 shutdown: Some(shutdown_tx),
@@ -74,9 +76,10 @@ impl Mic {
                 Err(err)
             }
             Err(_) => {
+                drop(shutdown_tx);
                 let _ = thread.join();
                 Err(CaptureError::Backend(
-                    "mic thread exited before the stream was ready".into(),
+                    "microphone did not deliver audio within 3 seconds".into(),
                 ))
             }
         }
@@ -84,6 +87,18 @@ impl Mic {
 
     pub fn into_stream(self) -> AudioStream {
         Box::new(self)
+    }
+
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<AudioChunk, mpsc::RecvTimeoutError> {
+        self.rx.recv_timeout(timeout)
+    }
+
+    /// Stop callbacks before draining the buffers already captured by the device.
+    pub fn stop(&mut self) {
+        self.shutdown.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -97,20 +112,20 @@ impl Iterator for Mic {
 
 impl Drop for Mic {
     fn drop(&mut self) {
-        self.shutdown.take();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        self.stop();
     }
 }
 
-fn bind_stream(tx: mpsc::Sender<AudioChunk>) -> Result<cpal::Stream, CaptureError> {
+fn bind_stream(
+    tx: mpsc::Sender<AudioChunk>,
+    ready: mpsc::Sender<Result<(), CaptureError>>,
+) -> Result<cpal::Stream, CaptureError> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or(CaptureError::NoInputDevice)?;
     let (config, sample_format) = preferred_or_default(&device)?;
-    let stream = build_stream(&device, &config, sample_format, tx)?;
+    let stream = build_stream(&device, &config, sample_format, tx, ready)?;
     stream
         .play()
         .map_err(|err| CaptureError::Backend(err.to_string()))?;
@@ -139,15 +154,23 @@ fn build_stream(
     config: &StreamConfig,
     sample_format: SampleFormat,
     tx: mpsc::Sender<AudioChunk>,
+    ready: mpsc::Sender<Result<(), CaptureError>>,
 ) -> Result<cpal::Stream, CaptureError> {
     let sample_rate = config.sample_rate.0;
     let channels = config.channels;
+    let mut ready = Some(ready);
     match sample_format {
         SampleFormat::F32 => device
             .build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    send_buffer(&tx, InputBuffer::F32(data), sample_rate, channels);
+                    send_buffer(
+                        &tx,
+                        &mut ready,
+                        InputBuffer::F32(data),
+                        sample_rate,
+                        channels,
+                    );
                 },
                 ignore_stream_error,
                 None,
@@ -157,7 +180,13 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    send_buffer(&tx, InputBuffer::I16(data), sample_rate, channels);
+                    send_buffer(
+                        &tx,
+                        &mut ready,
+                        InputBuffer::I16(data),
+                        sample_rate,
+                        channels,
+                    );
                 },
                 ignore_stream_error,
                 None,
@@ -167,7 +196,13 @@ fn build_stream(
             .build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    send_buffer(&tx, InputBuffer::U16(data), sample_rate, channels);
+                    send_buffer(
+                        &tx,
+                        &mut ready,
+                        InputBuffer::U16(data),
+                        sample_rate,
+                        channels,
+                    );
                 },
                 ignore_stream_error,
                 None,
@@ -179,6 +214,7 @@ fn build_stream(
 
 fn send_buffer(
     tx: &mpsc::Sender<AudioChunk>,
+    ready: &mut Option<mpsc::Sender<Result<(), CaptureError>>>,
     buffer: InputBuffer<'_>,
     sample_rate: u32,
     channels: u16,
@@ -187,14 +223,34 @@ fn send_buffer(
     if chunk.samples.is_empty() {
         return;
     }
-    let _ = tx.send(chunk);
+    if tx.send(chunk).is_ok() {
+        if let Some(ready) = ready.take() {
+            let _ = ready.send(Ok(()));
+        }
+    }
 }
 
-fn ignore_stream_error(_err: cpal::StreamError) {}
+fn ignore_stream_error(err: cpal::StreamError) {
+    eprintln!("stt-audio: input stream error: {err}");
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{default_input_name, CaptureError};
+    use super::*;
+
+    #[test]
+    fn microphone_is_ready_only_after_a_nonempty_buffer_is_queued() {
+        let (tx, rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let mut ready = Some(ready_tx);
+        send_buffer(&tx, &mut ready, InputBuffer::F32(&[]), 16_000, 1);
+        assert!(ready_rx.try_recv().is_err());
+        assert!(rx.try_recv().is_err());
+        send_buffer(&tx, &mut ready, InputBuffer::F32(&[0.25]), 16_000, 1);
+        assert!(ready_rx.try_recv().unwrap().is_ok());
+        assert_eq!(rx.try_recv().unwrap().samples, vec![0.25]);
+        assert!(ready.is_none());
+    }
 
     #[test]
     fn default_input_name_is_graceful_without_a_device() {

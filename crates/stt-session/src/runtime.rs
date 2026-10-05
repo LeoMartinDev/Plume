@@ -174,7 +174,6 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
         };
         let mut dictation = Dictation::new();
         dictation.hold();
-        self.outputs.bubbles.push_from(&dictation);
         let mic = match Mic::open() {
             Ok(mic) => mic,
             Err(err) => {
@@ -214,6 +213,7 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
         }
         self.next_capture_id += 1;
         std::thread::spawn(move || mic_pump.run());
+        self.outputs.bubbles.push_from(&dictation);
         let outcome = Self::live_loop(
             &mut hold,
             &self.outputs.bubbles,
@@ -248,7 +248,7 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             if matches!(hold.next_event(), Some(HotkeyEvent::Released)) {
                 dictation.release();
                 if let Some(pump) = pump.take() {
-                    pump.close();
+                    pump.finish();
                 }
                 bubbles.push_from(dictation);
                 return Outcome::Released;

@@ -26,6 +26,12 @@ const WM_KEYUP: u32 = 0x0101;
 const WM_SYSKEYDOWN: u32 = 0x0104;
 const WM_SYSKEYUP: u32 = 0x0105;
 const LLKHF_UP: u32 = 0x80;
+const LLKHF_INJECTED: u32 = 0x10;
+const LLKHF_LOWER_IL_INJECTED: u32 = 0x02;
+
+fn is_injected(flags: u32) -> bool {
+    flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0
+}
 
 pub(crate) fn windows_key_id(vk: u32) -> Option<KeyId> {
     Some(match vk {
@@ -49,6 +55,9 @@ pub(crate) fn windows_key_id(vk: u32) -> Option<KeyId> {
 }
 
 pub(crate) fn decode_windows(vk: u32, flags: u32, msg: u32) -> Option<(KeyId, Edge)> {
+    if is_injected(flags) {
+        return None;
+    }
     let id = windows_key_id(vk)?;
     let up = flags & LLKHF_UP != 0 || msg == WM_KEYUP || msg == WM_SYSKEYUP;
     Some((id, if up { Edge::Up } else { Edge::Down }))
@@ -154,6 +163,11 @@ mod backend {
     ) -> LRESULT {
         if n_code == 0 && l_param != 0 {
             let info = &*(l_param as *const KBDLLHOOKSTRUCT);
+            // Text insertion uses SendInput. Its synthetic Ctrl/trigger
+            // events must never start or end a physical dictation hold.
+            if super::is_injected(info.flags) {
+                return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
+            }
             if let Ok(guard) = hook_tx().lock() {
                 if let Some(tx) = guard.as_ref() {
                     let _ = tx.send(WinRaw {
@@ -241,6 +255,16 @@ mod tests {
     use crate::chord::ChordTracker;
     use crate::shortcut::Shortcut;
     use stt_core::HotkeyEvent;
+
+    #[test]
+    fn injected_shortcuts_do_not_start_or_release_a_physical_hold() {
+        for flags in [LLKHF_INJECTED, LLKHF_LOWER_IL_INJECTED] {
+            assert_eq!(decode_windows(VK_CONTROL, flags, WM_KEYDOWN), None);
+            assert_eq!(decode_windows(VK_CONTROL, flags | LLKHF_UP, WM_KEYUP), None);
+            assert_eq!(decode_windows(VK_SPACE, flags, WM_KEYDOWN), None);
+            assert_eq!(decode_windows(VK_SPACE, flags | LLKHF_UP, WM_KEYUP), None);
+        }
+    }
 
     #[test]
     fn decode_space_down_and_up() {
