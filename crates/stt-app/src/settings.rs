@@ -18,7 +18,7 @@ pub use window::{
     settings_window_engine_target, settings_window_prefs, settings_window_record_result,
     settings_window_register_download, settings_window_set_phase,
     settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
-    settings_window_show_refused, settings_window_show_swapped,
+    settings_window_show_refused, settings_window_show_swapped, show_settings,
 };
 
 pub const SETTINGS_TITLE: &str = "stt";

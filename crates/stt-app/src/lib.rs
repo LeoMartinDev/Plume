@@ -10,6 +10,7 @@ pub mod phase;
 pub mod prefs;
 pub mod settings;
 pub mod shortcut_capture;
+mod tray;
 
 use std::sync::mpsc;
 
@@ -54,7 +55,9 @@ pub fn product_main() {
     let request = downloads.register(prefs.model);
     let startup_events = start_reconcile(prefs.clone(), request, false);
 
-    Application::new().with_assets(Assets).run(move |cx| {
+    let application = Application::new().with_assets(Assets);
+    application.on_reopen(settings::show_settings);
+    application.run(move |cx| {
         open_settings(
             cx,
             AppPhase::Onboarding {
@@ -64,6 +67,7 @@ pub fn product_main() {
             },
             downloads,
         );
+        tray::install(cx);
         cx.activate(true);
         drain_download(cx, startup_events);
     });

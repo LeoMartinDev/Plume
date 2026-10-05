@@ -2,6 +2,10 @@
 
 The current desktop app supports hold-to-talk dictation, Esc cancellation and final-text insertion. The [glossary](glossary.md) distinguishes current behavior from planned capabilities.
 
+## Background operation
+
+Closing Settings hides the window while the global dictation shortcut, downloads and history continue running. The system tray offers Settings… to reopen the existing window and Quit STT to exit. macOS uses the menu bar without a Dock icon; Windows uses the notification area; Linux X11 uses D-Bus StatusNotifierItem. If tray initialization fails, closing Settings exits normally. The isolated settings preview also exits when closed.
+
 ## Dictate with hold-to-talk
 
 1. Focus the target application and place the cursor where the text should go.

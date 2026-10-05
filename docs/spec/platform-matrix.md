@@ -2,11 +2,11 @@
 
 One row per platform that ships. Each shipping row names the mechanism for text injection, the global hotkey, and the overlay. Linux ships on X11 only: the session must export `DISPLAY`. A Wayland-only session is refused at startup.
 
-| Platform | Text injection | Global hotkey | Overlay |
-| --- | --- | --- | --- |
-| macOS | `CGEvent` keyboard events with Unicode text, clipboard paste as fallback | Quartz event tap reports key down and key up | Borderless non-activating `NSWindow` at floating level |
-| Windows | `SendInput` with `KEYEVENTF_UNICODE`, clipboard paste as fallback | Low-level keyboard hook `WH_KEYBOARD_LL` reports key down and key up | Topmost layered window with `WS_EX_NOACTIVATE` |
-| Linux X11 | XTEST fake key events, clipboard paste as fallback | XRecord extension reports key down and key up | Override-redirect window |
+| Platform | Text injection | Global hotkey | Overlay | Tray |
+| --- | --- | --- | --- | --- |
+| macOS | `CGEvent` keyboard events with Unicode text, clipboard paste as fallback | Quartz event tap reports key down and key up | Borderless non-activating `NSWindow` at floating level | AppKit `NSStatusItem` |
+| Windows | `SendInput` with `KEYEVENTF_UNICODE`, clipboard paste as fallback | Low-level keyboard hook `WH_KEYBOARD_LL` reports key down and key up | Topmost layered window with `WS_EX_NOACTIVATE` | Notification area via `tray-icon` |
+| Linux X11 | XTEST fake key events, clipboard paste as fallback | XRecord extension reports key down and key up | Override-redirect window | D-Bus StatusNotifierItem via `ksni` |
 
 ## Wayland
 

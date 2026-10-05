@@ -91,10 +91,16 @@ fn open_settings_window(
                 ..Default::default()
             },
             move |window, cx| {
-                window.on_window_should_close(cx, |_, cx| {
+                window.on_window_should_close(cx, move |_, cx| {
                     cx.spawn(async move |cx| {
                         cx.background_executor().timer(CLOSE_DISPATCH_DELAY).await;
-                        let _ = cx.update(|cx| cx.quit());
+                        let _ = cx.update(|cx| {
+                            if crate::tray::is_available() && !settings_preview {
+                                hide_settings(cx);
+                            } else {
+                                cx.quit();
+                            }
+                        });
                     })
                     .detach();
                     false
@@ -136,6 +142,30 @@ fn open_settings_window(
         .expect("open settings window");
     *SETTINGS.lock().expect("settings handle") = Some(handle);
     print_opened_line();
+}
+
+/// Reveal the existing window, preserving the session and in-flight downloads.
+pub fn show_settings(cx: &mut App) {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    if let Some(handle) = handle {
+        cx.activate(true);
+        let _ = handle.update(cx, |_, window, _| {
+            crate::tray::show_window(window);
+            window.activate_window();
+        });
+    }
+}
+
+fn hide_settings(cx: &mut App) {
+    let handle = *SETTINGS.lock().expect("settings handle");
+    if let Some(handle) = handle {
+        let _ = handle.update(cx, |view, window, cx| {
+            view.reset_for_phase();
+            window.blur();
+            crate::tray::hide_window(window);
+            cx.notify();
+        });
+    }
 }
 
 pub fn settings_window_set_phase(cx: &mut App, phase: AppPhase) {

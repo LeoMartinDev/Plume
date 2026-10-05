@@ -10,6 +10,10 @@ cargo run -p stt-app
 
 Choose and download a model in Settings → Model. Settings also contains the shortcut, language, insertion mode, appearance and transcription history. On macOS, global shortcuts and insertion require the appropriate Accessibility/Input Monitoring permissions, and capture requires microphone permission.
 
+The app lives in the macOS menu bar under **STT** (without a Dock icon), the Windows notification area, or the Linux system tray. Closing Settings hides the window while dictation shortcuts, model downloads and transcription history continue running. Use the tray's **Settings…** menu to reopen the same window, or **Quit STT** to stop the app. The isolated settings preview still quits when closed.
+
+Linux uses X11 for the app window and D-Bus StatusNotifierItem for the tray, without a GTK dependency. The desktop must provide a StatusNotifier host (for example KDE Plasma, or GNOME with an AppIndicator extension). If tray initialization fails, closing Settings quits normally so the app remains accessible. A Wayland-only session remains unsupported.
+
 For the standalone session runner, provide an installed model directory:
 
 ```sh

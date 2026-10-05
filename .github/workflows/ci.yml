@@ -24,9 +24,13 @@ jobs:
         shell: pwsh
         run: Add-Content $env:GITHUB_ENV 'CARGO_TARGET_DIR=C:\t'
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb dbus-x11
       - run: cargo build --workspace
       - run: cargo test --workspace
+      - if: runner.os == 'Linux'
+        run: xvfb-run cargo test -p stt-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
+      - if: runner.os == 'Linux'
+        run: dbus-run-session cargo test -p stt-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
   lint:
     runs-on: ubuntu-latest
     steps:
