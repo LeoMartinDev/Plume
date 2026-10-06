@@ -18,7 +18,7 @@ function git(cwd, ...args) {
   return r.stdout.trim();
 }
 function fixture(t, inherited = false) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-release-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plume-release-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(repo);

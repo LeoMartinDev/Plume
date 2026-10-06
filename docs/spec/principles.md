@@ -12,7 +12,7 @@ The CI builds and tests macOS, Windows and Linux. OS adapters are kept in separa
 
 ## Pluggable engine
 
-Speech recognition sits behind the dependency-free `AsrEngine` trait in `stt-core`. Settings selects among the local model catalogue. Model loading and decoding stay separate from microphone capture, shortcuts and text insertion.
+Speech recognition sits behind the dependency-free `AsrEngine` trait in `plume-core`. Settings selects among the local model catalogue. Model loading and decoding stay separate from microphone capture, shortcuts and text insertion.
 
 ## Free
 

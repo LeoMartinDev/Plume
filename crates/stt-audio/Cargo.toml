@@ -1,9 +1,0 @@
-[package]
-name = "stt-audio"
-version = "0.1.1"
-edition = "2021"
-
-[dependencies]
-tracing.workspace = true
-cpal = "0.15"
-stt-core = { path = "../stt-core" }

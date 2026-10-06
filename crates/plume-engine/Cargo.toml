@@ -1,0 +1,36 @@
+[package]
+name = "plume-engine"
+version = "0.1.1"
+edition = "2021"
+
+[features]
+default = []
+# These backends need their vendor SDK at build time, so they stay opt-in.
+cuda = ["ort/cuda", "whisper-rs/cuda"]
+rocm = ["ort/rocm", "whisper-rs/hipblas"]
+vulkan = ["whisper-rs/vulkan"]
+
+[dependencies]
+tracing.workspace = true
+plume-core = { path = "../plume-core" }
+hound = "3.5"
+rustfft = "6"
+
+# DirectML and Vulkan cover NVIDIA, AMD, and Intel on Windows. Both engines
+# keep their CPU backend, so the same build also runs without a usable GPU.
+# Vulkan is included by default on Windows so Whisper can use it when a
+# compatible driver and device are present.
+[target.'cfg(target_os = "windows")'.dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["directml"] }
+whisper-rs = { version = "0.16", features = ["vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["coreml"] }
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+ort = "=2.0.0-rc.13"
+whisper-rs = "0.16"
+
+[dev-dependencies]
+plume-core = { path = "../plume-core" }

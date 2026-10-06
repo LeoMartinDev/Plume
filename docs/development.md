@@ -5,7 +5,7 @@ A local desktop dictation app written in Rust and GPUI. Hold `Ctrl+Space`, speak
 ## Run
 
 ```sh
-cargo run -p stt-app --bin plume
+cargo run -p plume-app --bin plume
 ```
 
 Choose and download a model in Settings → Model. Settings also contains the shortcut, language, insertion mode, appearance and transcription history. On macOS, global shortcuts and insertion require the appropriate Accessibility/Input Monitoring permissions, and capture requires microphone permission.
@@ -17,10 +17,10 @@ Linux uses X11 for the app window and D-Bus StatusNotifierItem for the tray, wit
 For the standalone session runner, provide an installed model directory:
 
 ```sh
-STT_MODEL_DIR=/path/to/model cargo run -p stt-session
+PLUME_MODEL_DIR=/path/to/model cargo run -p plume-session
 ```
 
-Its environment configuration is `STT_MODEL_DIR` (required), `STT_HOLD` (default `Ctrl+Space`) and `STT_CANCEL` (default `Esc`). `Fn` shortcuts are rejected.
+Its environment configuration is `PLUME_MODEL_DIR` (required), `PLUME_HOLD` (default `Ctrl+Space`) and `PLUME_CANCEL` (default `Esc`). `Fn` shortcuts are rejected.
 
 The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Linux and the Vulkan SDK on Windows. See [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the exact dependencies. Native integrations exist for macOS, Windows and Linux X11; Wayland support remains planned.
 
@@ -28,19 +28,19 @@ The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Li
 
 | Component | Responsibility |
 | --- | --- |
-| `stt-core` | Dependency-free audio/transcript types, contracts and session state machine |
-| `stt-audio` | Microphone capture and sample conversion |
-| `stt-engine` | Local models, preprocessing and decoding |
-| `stt-hotkey` | Global shortcuts and OS-specific listeners |
-| `stt-inject` | Insertion into the focused application |
-| `stt-session` | Capture coordination, background decoding and ordered delivery |
-| `stt-overlay` | Voice-level bubble and native window behavior |
-| `stt-ui` | Shared controls, palette and UI refresh interval |
-| `stt-app` | Startup, model downloads, preferences, history and settings |
+| `plume-core` | Dependency-free audio/transcript types, contracts and session state machine |
+| `plume-audio` | Microphone capture and sample conversion |
+| `plume-engine` | Local models, preprocessing and decoding |
+| `plume-hotkey` | Global shortcuts and OS-specific listeners |
+| `plume-inject` | Insertion into the focused application |
+| `plume-session` | Capture coordination, background decoding and ordered delivery |
+| `plume-overlay` | Voice-level bubble and native window behavior |
+| `plume-ui` | Shared controls, palette and UI refresh interval |
+| `plume-app` | Startup, model downloads, preferences, history and settings |
 
 A shortcut press starts capture. Audio flows to a bounded background decoder queue. Releasing ends capture; the decoder returns the final text. `TranscriptDelivery` preserves capture order, inserts separators between overlapping captures, applies the insertion mode and attempts clipboard fallback when configured. Partial hypotheses are not inserted by the desktop session. A cancelled capture returns no text to insert.
 
-Within `stt-session`, `runtime` coordinates capture and configuration updates, `decoder` owns the decoding queue and worker, `delivery` owns ordered insertion, and `startup` connects the native adapters. Within `stt-app`, preference types are separate from TOML conversion and storage; settings actions are grouped by shortcut, preferences, models and history.
+Within `plume-session`, `runtime` coordinates capture and configuration updates, `decoder` owns the decoding queue and worker, `delivery` owns ordered insertion, and `startup` connects the native adapters. Within `plume-app`, preference types are separate from TOML conversion and storage; settings actions are grouped by shortcut, preferences, models and history.
 
 ## Application icon and native packaging
 
@@ -56,11 +56,11 @@ Outputs are `target/package/Plume.app` on macOS, `target/package/plume-windows` 
 
 On macOS, open `Plume.app` or copy it to Applications to see the icon in Finder/Launchpad. The local bundle is ad-hoc signed; public distribution requires signing and notarization. On Linux, copy the package's `bin` and `share` contents into a prefix such as `~/.local`, with its `bin` on `PATH`, and refresh the desktop icon cache if needed. On Windows, Explorer and shortcuts use the embedded icon without a separate icon file.
 
-Icon sources and platform exports are kept in `crates/stt-app/assets/brand`, so packaging does not depend on the design-output folder.
+Icon sources and platform exports are kept in `crates/plume-app/assets/brand`, so packaging does not depend on the design-output folder.
 
 ## Configuration and history
 
-Plume keeps the legacy `stt` storage folder to preserve existing installations. The app stores `prefs.toml` under the OS configuration root in `stt`, and `history.json` and model packs under the OS local-data root in `stt`. On macOS both roots normally resolve to `~/Library/Application Support/stt`; on Linux they normally resolve to `~/.config/stt` and `~/.local/share/stt`; on Windows configuration and local data use the respective roaming and local app-data directories.
+The app stores `prefs.toml` under the OS configuration root in `plume`, and `history.json` and model packs under the OS local-data root in `plume`. On macOS both roots normally resolve to `~/Library/Application Support/plume`; on Linux they normally resolve to `~/.config/plume` and `~/.local/share/plume`; on Windows configuration and local data use the respective roaming and local app-data directories.
 
 Example preferences:
 
@@ -89,24 +89,24 @@ Toggle mode, live correction and a local LLM cleanup pass remain planned feature
 A settings preview keeps the sidebar, uses temporary storage and disables model/capture actions. It seeds 150 synthetic history entries; pass a storage directory to reuse preferences across launches:
 
 ```sh
-cargo run -p stt-app --example settings_preview -- /tmp/stt-settings-preview
+cargo run -p plume-app --example settings_preview -- /tmp/plume-settings-preview
 ```
 
 ## Logging
 
-App diagnostics use `tracing`. Development builds default to `debug` for the app's crates and `warn` for dependencies. Release builds (`cargo run --release -p stt-app`) default to warnings and errors. `RUST_LOG` overrides either default at startup; an empty or invalid filter uses the build's default.
+App diagnostics use `tracing`. Development builds default to `debug` for the app's crates and `warn` for dependencies. Release builds (`cargo run --release -p plume-app`) default to warnings and errors. `RUST_LOG` overrides either default at startup; an empty or invalid filter uses the build's default.
 
-Use `RUST_LOG=warn` for quiet development, or `RUST_LOG=warn,stt_app=debug,stt_audio=debug,stt_engine=debug,stt_session=trace,stt_overlay=debug,stt_hotkey=debug,stt_inject=debug` for detailed diagnosis in either build. For example, in PowerShell:
+Use `RUST_LOG=warn` for quiet development, or `RUST_LOG=warn,plume_app=debug,plume_audio=debug,plume_engine=debug,plume_session=trace,plume_overlay=debug,plume_hotkey=debug,plume_inject=debug` for detailed diagnosis in either build. For example, in PowerShell:
 
 ```powershell
-$env:RUST_LOG = 'warn,stt_session=trace,stt_audio=debug,stt_engine=debug'
-$env:STT_LOG_FILE = "$PWD\stt-diagnostic.log"
-cargo run --release -p stt-app
+$env:RUST_LOG = 'warn,plume_session=trace,plume_audio=debug,plume_engine=debug'
+$env:PLUME_LOG_FILE = "$PWD\plume-diagnostic.log"
+cargo run --release -p plume-app
 ```
 
-Logs go to stderr unless `STT_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
+Logs go to stderr unless `PLUME_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
 
-The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `stt_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. The version probe remains ordinary output.
+The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `plume_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. The version probe remains ordinary output.
 
 ## Verification
 
@@ -117,7 +117,7 @@ Node built-ins only, with no npm install or Python. Run its integration tests wi
 node --test scripts/*.test.mjs
 ```
 
-The native packaging integration test is opt-in: set `STT_PACKAGE_TEST_BUILD` to
+The native packaging integration test is opt-in: set `PLUME_PACKAGE_TEST_BUILD` to
 the directory containing built `plume`, `plume-updater` and native runtimes.
 It builds a temporary installer without contacting GitHub. Windows requires
 Inno Setup 6, `dumpbin` and `VCToolsRedistDir`; Linux requires `patchelf` and
@@ -232,9 +232,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests require `STT_MODEL_DIR`; model-opening tests marked ignored require their corresponding model environment variables. Unit tests use simulated engines and injectors to exercise the production decoder and delivery components without native permissions or model downloads.
+CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests require `PLUME_MODEL_DIR`; model-opening tests marked ignored require their corresponding model environment variables. Unit tests use simulated engines and injectors to exercise the production decoder and delivery components without native permissions or model downloads.
 
-On a macOS desktop, `cargo run -p stt-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, hides on release and cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
+On a macOS desktop, `cargo run -p plume-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, hides on release and cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
 
 See [the refactor verification record](readability-verification.md) for the checks performed and native checks still pending.
 

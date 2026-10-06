@@ -31,7 +31,7 @@ if (!target) throw new Error('Unsupported native runner');
 const { version } = workspace();
 const build = path.resolve(process.env.CARGO_TARGET_DIR || 'target', 'release');
 const dist = path.resolve('dist');
-const name = `stt-v${version}-${target}`;
+const name = `Plume-v${version}-${target}`;
 const stage = path.join(dist, name);
 if (fs.existsSync(stage)) throw new Error(`Output already exists: ${stage}`);
 fs.mkdirSync(stage, { recursive: true });
@@ -144,9 +144,9 @@ if (platform === 'darwin') {
 }
 fs.copyFileSync('README.md', path.join(stage, 'README.md'));
 if (fs.existsSync('docs')) fs.cpSync('docs', path.join(stage, 'docs'), { recursive: true });
-const brand = path.join(stage, 'crates/stt-app/assets/brand');
+const brand = path.join(stage, 'crates/plume-app/assets/brand');
 fs.mkdirSync(brand, { recursive: true });
-fs.copyFileSync('crates/stt-app/assets/brand/plume.png', path.join(brand, 'plume.png'));
+fs.copyFileSync('crates/plume-app/assets/brand/plume.png', path.join(brand, 'plume.png'));
 fs.copyFileSync(`releases/v${version}.md`, path.join(stage, 'RELEASE-NOTES.md'));
 fs.writeFileSync(path.join(stage, 'RUNTIME-LIBRARIES.txt'), [...copied.keys()].filter(n => libraryPattern.test(n)).join('\n') + '\n');
 fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), 'These installers are not publisher-signed or notarized. macOS binaries use only local ad-hoc signatures after relocation. Models are downloaded separately. See README.md.\n');
@@ -160,8 +160,8 @@ if (platform === 'darwin') {
     fs.copyFileSync(path.join(stage, basename), path.join(macos, basename));
     fs.chmodSync(path.join(macos, basename), 0o755);
   }
-  fs.copyFileSync('crates/stt-app/assets/brand/plume.icns', path.join(contents, 'Resources', 'plume.icns'));
-  fs.copyFileSync('crates/stt-app/packaging/Info.plist', path.join(contents, 'Info.plist'));
+  fs.copyFileSync('crates/plume-app/assets/brand/plume.icns', path.join(contents, 'Resources', 'plume.icns'));
+  fs.copyFileSync('crates/plume-app/packaging/Info.plist', path.join(contents, 'Info.plist'));
   for (const key of ['CFBundleShortVersionString', 'CFBundleVersion']) run('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${version}`, path.join(contents, 'Info.plist')]);
   for (const file of ['README.md', 'RELEASE-NOTES.md', 'RUNTIME-LIBRARIES.txt', 'UNSIGNED.txt', 'runtime-licenses']) {
     const source = path.join(stage, file);
@@ -199,13 +199,13 @@ const archive = buildInstaller({ platform, version, target, stage, dist, run });
 const digest = createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
 fs.writeFileSync(archive + '.sha256', `${digest}  ${path.basename(archive)}\n`);
 
-const extracted = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-archive-'));
+const extracted = fs.mkdtempSync(path.join(os.tmpdir(), 'plume-archive-'));
 try {
   const root = extractInstaller({ platform, installer: archive, destination: extracted, run });
   const systemPath = platform === 'win32' ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}` : '/usr/bin:/bin';
   const env = { PATH: systemPath, HOME: extracted, TMPDIR: extracted, TEMP: extracted, TMP: extracted, LANG: 'C.UTF-8' };
   if (platform === 'win32') Object.assign(env, { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot });
-  // Audit every ELF, including stt-app and runtime providers; no original cache
+  // Audit every ELF, including plume-app and runtime providers; no original cache
   // paths may resolve. System libraries are restricted to the glibc allowlist.
   if (platform === 'linux') {
     for (const basename of copied.keys()) {

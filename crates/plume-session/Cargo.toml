@@ -1,0 +1,14 @@
+[package]
+name = "plume-session"
+version = "0.1.1"
+edition = "2021"
+
+[dependencies]
+plume-logging = { path = "../plume-logging" }
+tracing.workspace = true
+plume-core = { path = "../plume-core" }
+plume-engine = { path = "../plume-engine" }
+plume-audio = { path = "../plume-audio" }
+plume-inject = { path = "../plume-inject" }
+plume-hotkey = { path = "../plume-hotkey" }
+plume-overlay = { path = "../plume-overlay" }

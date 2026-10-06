@@ -82,9 +82,9 @@ jobs:
       - run: cargo test --workspace --locked
       - run: python scripts/package-app.py --profile dev --skip-build
       - if: runner.os == 'Linux'
-        run: xvfb-run cargo test --locked -p stt-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
+        run: xvfb-run cargo test --locked -p plume-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
       - if: runner.os == 'Linux'
-        run: dbus-run-session cargo test --locked -p stt-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
+        run: dbus-run-session cargo test --locked -p plume-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -161,7 +161,7 @@ jobs:
           $compiler = Join-Path $compilerDir 'ISCC.exe'
           if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler is missing' }
           Add-Content $env:GITHUB_ENV "ISCC=$compiler"
-      - run: cargo build --locked --release -p stt-app -p stt-updater
+      - run: cargo build --locked --release -p plume-app -p plume-updater
       - name: Bundle runtimes, build installers, verify installation and checksum
         run: node scripts/package-release.mjs
       - if: runner.os == 'Linux'

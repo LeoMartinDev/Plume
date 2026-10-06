@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = ROOT / "crates" / "stt-app"
+APP = ROOT / "crates" / "plume-app"
 BRAND = APP / "assets" / "brand"
 
 
@@ -21,7 +21,7 @@ def package(profile, skip_build):
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
     if not skip_build:
         subprocess.run(
-            ["cargo", "build", "-p", "stt-app", "-p", "stt-updater", "--bins", "--profile", profile],
+            ["cargo", "build", "-p", "plume-app", "-p", "plume-updater", "--bins", "--profile", profile],
             cwd=ROOT, check=True,
         )
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))

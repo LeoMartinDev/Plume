@@ -1,6 +1,0 @@
-[package]
-name = "stt-core"
-version = "0.1.1"
-edition = "2021"
-
-[dependencies]

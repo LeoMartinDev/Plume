@@ -1,0 +1,10 @@
+Use case: logo-brand
+Asset type: original logo symbol for Plume, a local desktop speech-to-text dictation app.
+Primary request: Design one polished, memorable logo mark that expresses spoken voice becoming written text. A compact abstract speech shape with a simple rhythm of rounded vertical waveform strokes transitioning into two crisp horizontal text strokes, unified as a single coherent silhouette. Explore this as a professional original brand symbol with beautifully balanced negative space.
+Style/medium: flat, vector-friendly graphic design, clean geometric curves, confident substantial strokes, optically balanced, premium understated desktop software identity.
+Color palette: the app's existing vivid blue #3B6DFF, one solid color.
+Composition/framing: one isolated centered logo symbol, square canvas, generous transparent margins, readable at small app-icon sizes.
+Scene/backdrop: genuinely transparent background.
+Constraints: no letters, no wordmark, no slogan, no mockup, no presentation sheet, no labels, no gradients, no shadows, no texture, no watermark. Avoid tiny details and generic standalone microphone imagery. Deliver exactly one logo.
+
+Mode: built-in image_gen, transparent_background=true.

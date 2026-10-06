@@ -17,13 +17,13 @@ Le P approuvé a été redessiné en SVG à partir du concept ImageGen, pour des
 
 Les symboles et icônes PNG maîtres font 1280 × 1280 pixels ; les signatures font 2560 × 800 pixels. Les SVG s'adaptent à toute taille. La signature SVG utilise Arial/Helvetica ; le PNG fige le rendu de la typographie.
 
-L'icône d'application utilise les marges habituelles des icônes macOS : sur un canevas de 1024 pixels, le fond mesure 824 pixels, avec 100 pixels de marge transparente et un rayon de 185 pixels. Le tracé source est `crates/stt-app/assets/brand/plume-app.svg`. `scripts/generate-icons.mjs` régénère les PNG, les ICO Windows/favicon et les pixels de l'icône de fenêtre Linux à partir de ce SVG ; exécuté sur macOS, il régénère aussi les ICNS avec `iconutil`. Il nécessite Node.js et le module `sharp` (installé localement ou accessible via `NODE_PATH`).
+L'icône d'application utilise les marges habituelles des icônes macOS : sur un canevas de 1024 pixels, le fond mesure 824 pixels, avec 100 pixels de marge transparente et un rayon de 185 pixels. Le tracé source est `crates/plume-app/assets/brand/plume-app.svg`. `scripts/generate-icons.mjs` régénère les PNG, les ICO Windows/favicon et les pixels de l'icône de fenêtre Linux à partir de ce SVG ; exécuté sur macOS, il régénère aussi les ICNS avec `iconutil`. Il nécessite Node.js et le module `sharp` (installé localement ou accessible via `NODE_PATH`).
 
 ## Usage
 
 Préférer le SVG sur le site. Utiliser le P seul pour les icônes et les petites surfaces. Garder les marges intégrées et les proportions ; ne pas étirer le symbole. Noir #000000, blanc #FFFFFF.
 
-Dans l'app, `crates/stt-app/assets/brand/plume.svg` est utilisé à côté du nom dans la barre latérale des réglages et teinté selon le thème. Les fichiers d'icône système sont prêts pour le packaging ; ce kit ne modifie pas à lui seul les icônes natives de la barre de menus.
+Dans l'app, `crates/plume-app/assets/brand/plume.svg` est utilisé à côté du nom dans la barre latérale des réglages et teinté selon le thème. Les fichiers d'icône système sont prêts pour le packaging ; ce kit ne modifie pas à lui seul les icônes natives de la barre de menus.
 
 ## Origine
 

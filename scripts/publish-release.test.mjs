@@ -8,7 +8,7 @@ import { installerName } from './installer.mjs';
 import { publish } from './publish-release.mjs';
 
 function fixture(t) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-publish-'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'plume-publish-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   for (const target of ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin']) {
     const filename = installerName('1.2.3', target);
@@ -16,11 +16,11 @@ function fixture(t) {
     fs.writeFileSync(path.join(directory, filename), content);
     fs.writeFileSync(path.join(directory, filename + '.sha256'), `${createHash('sha256').update(content).digest('hex')}  ${filename}\n`);
   }
-  return { repository: 'example/stt', token: 'test', tag: 'v1.2.3', sha: '123abc', directory, notes: '# Notes\n\n**Markdown**\n' };
+  return { repository: 'example/plume', token: 'test', tag: 'v1.2.3', sha: '123abc', directory, notes: '# Notes\n\n**Markdown**\n' };
 }
 function mock(existing) {
   const calls = [];
-  const release = { id: 7, draft: true, tag_name: 'v1.2.3', upload_url: 'https://uploads.github.com/releases/7/assets{?name,label}', html_url: 'https://github.com/example/stt/releases/7', assets: [], ...existing };
+  const release = { id: 7, draft: true, tag_name: 'v1.2.3', upload_url: 'https://uploads.github.com/releases/7/assets{?name,label}', html_url: 'https://github.com/example/plume/releases/7', assets: [], ...existing };
   const request = async (url, options) => {
     calls.push({ url, ...options });
     let value = release;
@@ -87,7 +87,7 @@ test('missing installer or bad checksum fails before calling GitHub', async t =>
 test('portable archives are rejected before publishing any assets', async t => {
   const f = fixture(t);
   const m = mock();
-  fs.writeFileSync(path.join(f.directory, 'stt-v1.2.3-x86_64-pc-windows-msvc.zip'), 'old format');
+  fs.writeFileSync(path.join(f.directory, 'plume-v1.2.3-x86_64-pc-windows-msvc.zip'), 'old format');
   await assert.rejects(publish({ ...f, request: m.request }), /native installers/);
   assert.equal(m.calls.length, 0);
 });

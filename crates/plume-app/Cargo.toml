@@ -1,0 +1,45 @@
+[package]
+name = "plume-app"
+version = "0.1.1"
+edition = "2021"
+
+[[bin]]
+name = "plume"
+path = "src/main.rs"
+
+[dependencies]
+plume-updater = { path = "../plume-updater" }
+plume-logging = { path = "../plume-logging" }
+tracing.workspace = true
+arboard = "3.6"
+dirs = "6"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+plume-engine = { path = "../plume-engine" }
+plume-overlay = { path = "../plume-overlay" }
+plume-session = { path = "../plume-session" }
+plume-ui = { path = "../plume-ui" }
+toml = "0.8"
+ureq = "3"
+raw-window-handle = "0.6.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
+x11rb = "0.13.2"
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.26", default-features = false }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.11"

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="crates/stt-app/assets/brand/plume.png" width="80" alt="Plume logo">
+  <img src="crates/plume-app/assets/brand/plume.png" width="80" alt="Plume logo">
 </p>
 
 # Plume

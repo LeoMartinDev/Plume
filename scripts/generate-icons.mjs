@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 
 const sharp = createRequire(import.meta.url)('sharp');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const native = path.join(root, 'crates/stt-app/assets/brand');
+const native = path.join(root, 'crates/plume-app/assets/brand');
 const kit = path.join(root, 'output/brand/plume');
 const dark = fs.readFileSync(path.join(native, 'plume-app.svg'), 'utf8');
 const light = dark.replace('fill="#000"', 'fill="#fff"').replace('<path fill="#fff"', '<path fill="#000"');

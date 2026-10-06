@@ -12,7 +12,7 @@ export function installerName(version, target) {
 // are installed: models, history and preferences stay in the user's data folder.
 export function buildInstaller({ platform, version, target, stage, dist, run, appId }) {
   const installer = path.join(dist, installerName(version, target));
-  const packaging = path.resolve('crates/stt-app/packaging');
+  const packaging = path.resolve('crates/plume-app/packaging');
   if (platform === 'win32') {
     const iscc = process.env.ISCC || 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe';
     run(iscc, [`/DAppVersion=${version}`, `/DSourceDir=${stage}`, `/DOutputDir=${dist}`, `/DOutputName=${path.basename(installer, '.exe')}`, ...(appId ? [`/DInstallerAppId=${appId}`, `/DAppGroupName=${appId}`] : []), path.join(packaging, 'windows.iss')]);
@@ -33,7 +33,7 @@ export function buildInstaller({ platform, version, target, stage, dist, run, ap
     fs.writeFileSync(path.join(root, 'DEBIAN/control'), `Package: plume\nVersion: ${version}\nArchitecture: amd64\nMaintainer: LeoMartinDev <LeoMartinDev@users.noreply.github.com>\nDepends: libc6 (>= 2.39), pkexec\nSection: sound\nPriority: optional\nDescription: Local desktop voice dictation\n Dictate offline with local speech models. Requires an X11 desktop and system tray.\n`);
     fs.symlinkSync('/opt/plume/plume', path.join(root, 'usr/bin/plume'));
     fs.copyFileSync(path.join(packaging, 'plume.desktop'), path.join(root, 'usr/share/applications/plume.desktop'));
-    fs.copyFileSync('crates/stt-app/assets/brand/plume-linux.png', path.join(root, 'usr/share/icons/hicolor/512x512/apps/plume.png'));
+    fs.copyFileSync('crates/plume-app/assets/brand/plume-linux.png', path.join(root, 'usr/share/icons/hicolor/512x512/apps/plume.png'));
     run('dpkg-deb', ['--root-owner-group', '--build', root, installer]);
     run('dpkg-deb', ['--info', installer]);
   }

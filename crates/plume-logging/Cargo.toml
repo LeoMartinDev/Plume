@@ -1,0 +1,8 @@
+[package]
+name = "plume-logging"
+version = "0.1.1"
+edition = "2021"
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

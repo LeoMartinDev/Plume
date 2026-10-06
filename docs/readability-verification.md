@@ -1,7 +1,7 @@
 # Readability refactor verification
 
 Validation performed on 2026-10-05. Native UI checks use the full settings
-preview and isolated storage under `/tmp/stt-settings-validation`.
+preview and isolated storage under `/tmp/plume-settings-validation`.
 
 ## Automated checks
 
@@ -9,7 +9,7 @@ preview and isolated storage under `/tmp/stt-settings-validation`.
 | --- | --- |
 | macOS ARM64 | Workspace build, tests, Clippy with warnings denied and formatting pass. 165 tests pass, 5 are explicitly ignored. |
 | Linux ARM64 | Workspace build, tests, Clippy with warnings denied and formatting pass in a Debian Trixie container. 163 tests pass, 5 are explicitly ignored. This Linux run preceded integration of the newer remote commits. |
-| Windows x86_64 | Cross-compilation checks pass for `stt-core`, `stt-audio`, `stt-hotkey` and `stt-inject`. Full native workspace validation remains pending. |
+| Windows x86_64 | Cross-compilation checks pass for `plume-core`, `plume-audio`, `plume-hotkey` and `plume-inject`. Full native workspace validation remains pending. |
 | Real Whisper Small on macOS | English and French WAV fixtures pass, using the installed multilingual model and Metal. |
 | Documentation | Spec links and required terms pass `scripts/check-spec.mjs`; Git whitespace checks pass. |
 
@@ -61,8 +61,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 node scripts/check-spec.mjs docs/spec
-cargo run -p stt-app --example settings_preview -- /tmp/stt-settings-preview
-STT_WHISPER_MODEL=/path/to/model.bin cargo test --workspace \
+cargo run -p plume-app --example settings_preview -- /tmp/plume-settings-preview
+PLUME_WHISPER_MODEL=/path/to/model.bin cargo test --workspace \
   downloaded_whisper_model_transcribes -- --ignored --nocapture
 ```
 
