@@ -6,8 +6,8 @@ Le P approuvé a été redessiné en SVG à partir du concept ImageGen, pour des
 
 - `mark-white.svg` / `.png` : P blanc sur fond transparent, pour les surfaces sombres.
 - `mark-black.svg` / `.png` : P noir sur fond transparent, pour les surfaces claires.
-- `icon-dark.svg` / `.png` : P blanc sur carré noir.
-- `icon-light.svg` / `.png` : P noir sur carré blanc.
+- `icon-dark.svg` / `.png` : P blanc sur carré noir aux coins arrondis, avec contour transparent.
+- `icon-light.svg` / `.png` : P noir sur carré blanc aux coins arrondis, avec contour transparent.
 - `wordmark-white.svg` / `.png` : symbole + Plume, transparent, pour le site sombre.
 - `wordmark-black.svg` / `.png` : symbole + Plume, transparent, pour le site clair.
 - `icon-{16,32,48,64,128,180,192,256,512,1024}.png` : exports avec fond noir pour favicon, icône tactile, manifeste web et application.
@@ -16,6 +16,8 @@ Le P approuvé a été redessiné en SVG à partir du concept ImageGen, pour des
 - `preview.png` : aperçu des six déclinaisons sur fonds adaptés.
 
 Les symboles et icônes PNG maîtres font 1280 × 1280 pixels ; les signatures font 2560 × 800 pixels. Les SVG s'adaptent à toute taille. La signature SVG utilise Arial/Helvetica ; le PNG fige le rendu de la typographie.
+
+L'icône d'application utilise les marges habituelles des icônes macOS : sur un canevas de 1024 pixels, le fond mesure 824 pixels, avec 100 pixels de marge transparente et un rayon de 185 pixels. Le tracé source est `crates/stt-app/assets/brand/plume-app.svg`. `scripts/generate-icons.mjs` régénère les PNG, les ICO Windows/favicon et les pixels de l'icône de fenêtre Linux à partir de ce SVG ; exécuté sur macOS, il régénère aussi les ICNS avec `iconutil`. Il nécessite Node.js et le module `sharp` (installé localement ou accessible via `NODE_PATH`).
 
 ## Usage
 

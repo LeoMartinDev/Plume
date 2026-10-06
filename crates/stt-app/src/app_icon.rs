@@ -98,11 +98,14 @@ fn x11_icon_pixels() -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn x11_icon_is_complete_opaque_argb() {
+    fn x11_icon_is_complete_argb_with_transparent_corners() {
         let pixels = super::x11_icon_pixels();
         assert_eq!(&pixels[..2], &[128, 128]);
         assert_eq!(pixels.len(), 2 + 128 * 128);
-        assert!(pixels[2..].iter().all(|pixel| pixel >> 24 == 255));
+        for corner in [0, 127, 127 * 128, 128 * 128 - 1] {
+            assert_eq!(pixels[2 + corner] >> 24, 0);
+        }
+        assert_eq!(pixels[2 + 64 * 128 + 64] >> 24, 255);
         assert!(pixels[2..].contains(&0xff000000));
         assert!(pixels[2..].contains(&0xffffffff));
     }
