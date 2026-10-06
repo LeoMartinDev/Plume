@@ -101,6 +101,112 @@ The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples)
 
 ## Verification
 
+Release automation requires Node.js 22+ and Git/Cargo. It uses `.mjs` files and
+Node built-ins only, with no npm install or Python. Run its integration tests with:
+
+```sh
+node --test scripts/*.test.mjs
+```
+
+The native packaging integration test is opt-in: set `STT_PACKAGE_TEST_BUILD` to
+the directory containing already built `stt-app`/`stt-shell` and native runtimes.
+It assembles only a temporary fixture archive and does not contact GitHub. The
+release jobs always test their fresh release archives. Local Windows packaging
+also needs `dumpbin` on PATH and `VCToolsRedistDir` from a Visual Studio developer
+environment; Linux needs `patchelf`, and macOS uses the Xcode command-line tools.
+
+## Releases
+
+All workspace crates share a stable `MAJOR.MINOR.PATCH` version. From a clean
+checkout at the repository root, prepare Markdown notes outside the checkout
+(an untracked notes file inside the checkout counts as dirty). The script accepts
+`--notes-file FILE`, `--notes TEXT`, or `--notes-file -` to read stdin. Notes are
+saved verbatim as `releases/vVERSION.md` and must be non-empty.
+
+```sh
+# Inspect the plan without changing files, the index, refs, or fetching.
+node release.mjs patch --notes-file ../notes.md --dry-run
+
+# On main, increment every crate, commit the release and create an annotated tag.
+node release.mjs patch --notes-file ../notes.md
+# minor resets patch; major resets minor and patch.
+node release.mjs minor --notes "## Changes: new functionality"
+
+# To prepare, commit, tag and push in one operation (unprotected main only):
+git switch main
+git pull --ff-only origin main
+node release.mjs patch --notes-file ../notes.md --push
+```
+
+Without `--push`, commits and tags remain local. With `--push`, the script fetches
+`origin/main` and requires HEAD to equal it **before** creating the release commit.
+It then pushes main and the tag atomically, without forcing. A concurrent main
+update or server rejection aborts the push; the local commit/tag remain available
+for inspection. After a failed push, inspect the remote before retrying an explicit
+`git push --atomic origin main vVERSION`; do not rerun the increment command.
+If the commit fails, the original release files and index are restored and new
+notes removed. Existing tags, dirty checkouts, mismatched crate/lockfile versions
+and empty notes are refused. External dependency versions and checksums are
+preserved. Version values may be literal package versions or inherited from
+`[workspace.package]`. Tags are created only on `main`.
+
+For **protected main**, use a PR to merge the version and notes first:
+
+```sh
+git switch main
+git pull --ff-only origin main
+git switch -c release/next
+node release.mjs patch --notes-file ../notes.md --prepare-only
+git add Cargo.toml Cargo.lock crates releases
+git commit -m "Prepare next release"
+git push -u origin release/next
+# Open and merge the PR after CI succeeds, then:
+git switch main
+git pull --ff-only origin main
+node release.mjs tag --dry-run
+node release.mjs tag --push
+```
+
+`--prepare-only` changes files without a commit or tag and works on a PR branch.
+`tag` reads the already merged version and committed notes, creates an annotated
+tag at HEAD, and performs no increment or new commit. Its atomic push includes
+main (unchanged) and the tag. Tag creation must also be permitted by repository
+rules. To check a tag locally, check out its commit and run
+`node release.mjs --check-tag vVERSION`.
+
+The CI keeps PR/main validation and runs release jobs only on a canonical
+`vMAJOR.MINOR.PATCH` tag. It checks the annotated tag, all versions, Cargo.lock,
+committed Markdown notes and that the commit is an ancestor of `origin/main`.
+Workspace compilation/tests, Clippy and formatting must succeed before release
+packaging. Four native builds produce both `stt-app` and `stt-shell`: Linux x64
+(Ubuntu 24.04/glibc), Windows x64, macOS Intel and macOS Apple Silicon (macOS 15).
+These are native archives, not installers; models are downloaded separately.
+
+Packaging retains the Windows Vulkan SDK prerequisite and bundles non-system
+runtime libraries recursively, including DirectML, Vulkan loader and MSVC runtime
+DLLs when imported. Linux includes ALSA/XCB/XKB and other non-glibc shared
+libraries with `$ORIGIN` paths; macOS uses `@loader_path` for bundled dylibs.
+Core OS libraries/frameworks and GPU drivers remain supplied by the OS.
+Every `.zip` (Windows) or `.tar.gz` (Linux/macOS) has a `.sha256` checksum.
+The CI extracts each archive, checks its library paths and runs `stt-shell --help`
+with an OS-only PATH and no build-machine library environment variables. This
+tests startup/linking; microphone, GUI, GPU and model inference still require
+manual testing on the intended machines.
+
+Only after all jobs pass does CI create a **draft** GitHub release with the Markdown
+notes and all eight assets. Rerunning the workflow refreshes that draft and its
+assets; a published release is refused. Review the draft before publishing it
+manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
+secrets are required.
+
+**Archives are not signed by a publisher and are not notarized.** macOS applies
+only local ad-hoc signatures after relocation (needed for Apple Silicon), with no
+certificate or verified publisher identity. Gatekeeper/SmartScreen may block or
+warn about downloads; review the source/checksums and follow your organization's
+policy. Checksums detect corruption; they do not establish publisher identity.
+
+## Rust verification
+
 ```sh
 cargo build --workspace
 cargo test --workspace

@@ -3,18 +3,48 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  release-check:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check exact SemVer tag, versions, lockfile and committed notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node release.mjs --check-tag "$RELEASE_TAG"
+      - name: Require release commit on main
+        run: |
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD origin/main
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-15, macos-15-intel, windows-2022, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - if: runner.os == 'Windows'
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
@@ -25,12 +55,13 @@ jobs:
         run: Add-Content $env:GITHUB_ENV 'CARGO_TARGET_DIR=C:\t'
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb dbus-x11
-      - run: cargo build --workspace
-      - run: cargo test --workspace
+      - run: node --test scripts/*.test.mjs
+      - run: cargo build --workspace --locked
+      - run: cargo test --workspace --locked
       - if: runner.os == 'Linux'
-        run: xvfb-run cargo test -p stt-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
+        run: xvfb-run cargo test --locked -p stt-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
       - if: runner.os == 'Linux'
-        run: dbus-run-session cargo test -p stt-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
+        run: dbus-run-session cargo test --locked -p stt-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -39,5 +70,86 @@ jobs:
         with:
           components: clippy, rustfmt
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo fmt --check
+  archive:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release-check, build, lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Windows'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.357.0
+          cache: true
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-Content $env:GITHUB_ENV 'CARGO_TARGET_DIR=C:\t'
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev patchelf
+      - if: runner.os == 'Linux'
+        name: Allow initial runtime lookup during packaging
+        run: echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,$ORIGIN' >> "$GITHUB_ENV"
+      - if: runner.os == 'macOS'
+        name: Allow initial runtime lookup and Mach-O relocation
+        run: echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,@loader_path -C link-arg=-Wl,-headerpad_max_install_names' >> "$GITHUB_ENV"
+      - run: cargo build --locked --release -p stt-app -p stt-shell
+      - name: Bundle runtimes, relocate, archive, checksum and smoke-test extraction
+        run: node scripts/package-release.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          overwrite: true
+  draft:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release-check, build, lint, archive]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Recheck main ancestry before creating or refreshing the draft
+        run: |
+          git fetch origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD origin/main
+      - name: Create or refresh draft (published releases are refused)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/publish-release.mjs

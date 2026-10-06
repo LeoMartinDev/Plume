@@ -1,2 +1,4 @@
 /target/
+/dist/
+/release-assets/
 /.worktrees/
