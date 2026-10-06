@@ -148,7 +148,19 @@ jobs:
           workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
       - if: runner.os == 'Windows'
         name: Install Inno Setup
-        run: choco install innosetup --version=6.4.3 --allow-downgrade --yes --no-progress
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup-6.4.3.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_4_3/innosetup-6.4.3.exe' -OutFile $setup
+          if ((Get-AuthenticodeSignature -LiteralPath $setup).Status -ne 'Valid') {
+            throw 'The Inno Setup publisher signature could not be verified'
+          }
+          $compilerDir = Join-Path $env:RUNNER_TEMP 'inno-setup'
+          $install = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', ('/DIR="' + $compilerDir + '"')) -WindowStyle Hidden -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Inno Setup installation failed: $($install.ExitCode)" }
+          $compiler = Join-Path $compilerDir 'ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler is missing' }
+          Add-Content $env:GITHUB_ENV "ISCC=$compiler"
       - run: cargo build --locked --release -p stt-app -p stt-updater
       - name: Bundle runtimes, build installers, verify installation and checksum
         run: node scripts/package-release.mjs
