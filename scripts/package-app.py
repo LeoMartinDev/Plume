@@ -42,6 +42,8 @@ def package(profile, skip_build):
         helper = binary.parent / "plume-updater"
         if helper.is_file():
             shutil.copy2(helper, contents / "MacOS" / helper.name)
+        for library in binary.parent.glob("*.dylib"):
+            shutil.copy2(library, contents / "MacOS" / library.name)
         shutil.copy2(BRAND / "plume.icns", contents / "Resources" / "plume.icns")
         with (APP / "packaging" / "Info.plist").open("rb") as source:
             info = plistlib.load(source)
@@ -50,7 +52,10 @@ def package(profile, skip_build):
         with (contents / "Info.plist").open("wb") as output:
             plistlib.dump(info, output)
         # Distribution signing and notarization require publisher credentials.
+        for native in (contents / "MacOS").iterdir():
+            subprocess.run(["codesign", "--force", "--sign", "-", str(native)], check=True)
         subprocess.run(["codesign", "--force", "--sign", "-", str(destination)], check=True)
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(destination)], check=True)
     elif platform == "windows":
         loader = binary.parent / "vulkan-1.dll"
         if not loader.is_file():

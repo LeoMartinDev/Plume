@@ -26,12 +26,10 @@ enum Event {
 
 impl SettingsView {
     pub(super) fn check_updates(&mut self, cx: &mut Context<Self>) {
-        if self.settings_preview
-            || matches!(
-                self.update,
-                UpdateState::Checking | UpdateState::Downloading(..) | UpdateState::Ready { .. }
-            )
-        {
+        if matches!(
+            self.update,
+            UpdateState::Checking | UpdateState::Downloading(..) | UpdateState::Ready { .. }
+        ) {
             return;
         }
         self.update = UpdateState::Checking;

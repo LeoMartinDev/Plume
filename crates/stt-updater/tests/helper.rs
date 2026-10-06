@@ -27,11 +27,14 @@ fn native_helper_waits_for_parent_exit_before_replacing_the_app() {
     )
     .unwrap();
     let mut parent = if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
-            .stdout(Stdio::null())
-            .spawn()
-            .unwrap()
+        Command::new(
+            std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                .join("System32/ping.exe"),
+        )
+        .args(["-n", "30", "127.0.0.1"])
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap()
     } else {
         Command::new("/bin/sleep").arg("30").spawn().unwrap()
     };
@@ -50,9 +53,9 @@ fn native_helper_waits_for_parent_exit_before_replacing_the_app() {
         .spawn()
         .unwrap();
     std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(
-        fs::read(target.join(&plan.executable)).unwrap(),
-        b"previous app"
+    assert!(
+        fs::read(target.join(&plan.executable)).unwrap() == b"previous app",
+        "Installer ran before the parent exited"
     );
     assert!(helper.try_wait().unwrap().is_none());
     parent.kill().unwrap();
@@ -62,9 +65,10 @@ fn native_helper_waits_for_parent_exit_before_replacing_the_app() {
         fs::read(plan.backup.join(&plan.executable)).unwrap(),
         b"previous app"
     );
-    assert_eq!(
-        fs::read(target.join(&plan.executable)).unwrap(),
-        fs::read(env!("CARGO_BIN_EXE_plume-updater")).unwrap()
+    assert!(
+        fs::read(target.join(&plan.executable)).unwrap()
+            == fs::read(env!("CARGO_BIN_EXE_plume-updater")).unwrap(),
+        "Installed binary does not match the staged update"
     );
     // Windows may briefly retain a handle to the just-started binary.
     for _ in 0..20 {
