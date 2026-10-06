@@ -24,15 +24,8 @@ rustfft = "6"
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 whisper-rs = { version = "0.16", features = ["vulkan"] }
 
-[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-ort = { version = "=2.0.0-rc.13", features = ["coreml"] }
-
-# ONNX Runtime 1.22 is the last official release with Intel macOS binaries.
-# Keep its API level explicit; CI supplies the checksum-verified runtime.
-[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "tracing", "copy-dylibs", "coreml", "api-22"] }
-
 [target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["coreml"] }
 whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]

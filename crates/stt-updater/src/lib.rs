@@ -12,7 +12,6 @@ pub type Result<T> = std::result::Result<T, String>;
 pub fn target() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
-        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
         _ => Err("Updates are not available for this platform.".into()),

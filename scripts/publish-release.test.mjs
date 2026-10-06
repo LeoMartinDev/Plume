@@ -9,7 +9,7 @@ import { publish } from './publish-release.mjs';
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-publish-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const target of ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-apple-darwin', 'aarch64-apple-darwin']) {
+  for (const target of ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin']) {
     const filename = `stt-v1.2.3-${target}.${target.includes('windows') ? 'zip' : 'tar.gz'}`;
     const content = Buffer.from('archive fixture ' + target);
     fs.writeFileSync(path.join(directory, filename), content);
@@ -30,14 +30,14 @@ function mock(existing) {
   return { request, calls, release };
 }
 
-test('create draft with notes and all eight verified assets', async t => {
+test('create draft with notes and all six verified assets', async t => {
   const f = fixture(t);
   const m = mock();
   await publish({ ...f, request: m.request });
   const created = m.calls.find(c => c.method === 'POST' && c.url.endsWith('/releases'));
   assert.equal(JSON.parse(created.body).draft, true);
   assert.ok(JSON.parse(created.body).body.startsWith(f.notes));
-  assert.equal(m.calls.filter(c => c.url.includes('uploads.github.com')).length, 8);
+  assert.equal(m.calls.filter(c => c.url.includes('uploads.github.com')).length, 6);
 });
 
 test('refresh draft and remove previous assets without publishing', async t => {
@@ -76,6 +76,6 @@ test('missing archive or bad checksum fails before calling GitHub', async t => {
   fs.writeFileSync(path.join(f.directory, checksum), 'bad');
   await assert.rejects(publish({ ...f, request: m.request }), /Checksum/);
   fs.rmSync(path.join(f.directory, checksum));
-  await assert.rejects(publish({ ...f, request: m.request }), /exactly four/);
+  await assert.rejects(publish({ ...f, request: m.request }), /exactly three/);
   assert.equal(m.calls.length, 0);
 });

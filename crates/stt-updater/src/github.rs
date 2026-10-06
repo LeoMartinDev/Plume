@@ -131,7 +131,6 @@ mod tests {
     fn selects_each_native_platform_and_compares_versions_numerically() {
         for target in [
             "aarch64-apple-darwin",
-            "x86_64-apple-darwin",
             "x86_64-pc-windows-msvc",
             "x86_64-unknown-linux-gnu",
         ] {
@@ -143,7 +142,7 @@ mod tests {
     }
     #[test]
     fn rejects_previews_missing_assets_and_foreign_urls() {
-        let target = "x86_64-apple-darwin";
+        let target = "aarch64-apple-darwin";
         let json = fixture("0.2.0", target);
         assert!(select(
             &json.replace("\"prerelease\":false", "\"prerelease\":true"),

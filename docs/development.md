@@ -194,8 +194,8 @@ The CI keeps PR/main validation and runs release jobs only on a canonical
 `vMAJOR.MINOR.PATCH` tag. It checks the annotated tag, all versions, Cargo.lock,
 committed Markdown notes and that the commit is an ancestor of `origin/main`.
 Workspace compilation/tests, Clippy and formatting must succeed before release
-packaging. Four native builds produce both `plume` and `stt-shell`: Linux x64
-(Ubuntu 24.04/glibc), Windows x64, macOS Intel and macOS Apple Silicon (macOS 15).
+packaging. Three native builds produce both `plume` and `stt-shell`: Linux x64
+(Ubuntu 24.04/glibc), Windows x64 and macOS Apple Silicon (macOS 15).
 These are native archives, not installers; models are downloaded separately.
 
 Packaging retains the Windows Vulkan SDK prerequisite and bundles non-system
@@ -210,7 +210,7 @@ tests startup/linking; microphone, GUI, GPU and model inference still require
 manual testing on the intended machines.
 
 Only after all jobs pass does CI create a **draft** GitHub release with the Markdown
-notes and all eight assets. Rerunning the workflow refreshes that draft and its
+notes and all six assets. Rerunning the workflow refreshes that draft and its
 assets; a published release is refused. Review the draft before publishing it
 manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
 secrets are required.

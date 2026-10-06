@@ -19,7 +19,6 @@ Download the latest version from [Releases](https://github.com/LeoMartinDev/Plum
 | Your computer | Build to choose |
 | --- | --- |
 | macOS — Apple Silicon (M1 or newer) | macOS Apple Silicon |
-| macOS — Intel | macOS Intel |
 | Windows — 64-bit Intel or AMD | Windows x64 |
 | Linux — 64-bit Intel or AMD, X11 | Linux x64 |
 

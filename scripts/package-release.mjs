@@ -23,7 +23,6 @@ const platform = process.platform;
 const targets = {
   'linux-x64': 'x86_64-unknown-linux-gnu',
   'win32-x64': 'x86_64-pc-windows-msvc',
-  'darwin-x64': 'x86_64-apple-darwin',
   'darwin-arm64': 'aarch64-apple-darwin',
 };
 const target = targets[`${platform}-${process.arch}`];

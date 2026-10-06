@@ -8,13 +8,13 @@ import { checkTag } from '../release.mjs';
 
 export async function publish({ repository, token, tag, sha, directory, notes, request = fetch }) {
   if (!repository || !token || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag) || !sha) throw new Error('Missing/invalid GitHub release context');
-  const targets = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-apple-darwin', 'aarch64-apple-darwin'];
+  const targets = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin'];
   const expected = targets.flatMap(target => {
     const file = `stt-${tag}-${target}.${target.includes('windows') ? 'zip' : 'tar.gz'}`;
     return [file, `${file}.sha256`];
   });
   const filenames = fs.readdirSync(directory).sort();
-  if (JSON.stringify(filenames) !== JSON.stringify(expected.sort())) throw new Error('Expected exactly four native archives and their checksums');
+  if (JSON.stringify(filenames) !== JSON.stringify(expected.sort())) throw new Error('Expected exactly three native archives and their checksums');
   for (const filename of filenames.filter(f => !f.endsWith('.sha256'))) {
     const digest = createHash('sha256').update(fs.readFileSync(path.join(directory, filename))).digest('hex');
     if (fs.readFileSync(path.join(directory, filename + '.sha256'), 'utf8') !== `${digest}  ${filename}\n`) throw new Error(`Checksum mismatch: ${filename}`);
