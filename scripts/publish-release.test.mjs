@@ -23,6 +23,8 @@ function mock(existing) {
   const request = async (url, options) => {
     calls.push({ url, ...options });
     let value = release;
+    if (url.includes('/git/ref/tags/')) value = { object: { type: 'tag', sha: 'tagabc' } };
+    if (url.includes('/git/tags/')) value = { object: { type: 'commit', sha: '123abc' } };
     if (url.includes('per_page=')) value = existing ? [release] : [];
     if (url.includes('uploads.github.com')) value = { id: 10 };
     return { ok: true, status: options.method === 'DELETE' ? 204 : 200, json: async () => value };
@@ -36,6 +38,7 @@ test('create draft with notes and all six verified assets', async t => {
   await publish({ ...f, request: m.request });
   const created = m.calls.find(c => c.method === 'POST' && c.url.endsWith('/releases'));
   assert.equal(JSON.parse(created.body).draft, true);
+  assert.equal(JSON.parse(created.body).target_commitish, undefined);
   assert.ok(JSON.parse(created.body).body.startsWith(f.notes));
   assert.equal(m.calls.filter(c => c.url.includes('uploads.github.com')).length, 6);
 });
@@ -78,4 +81,16 @@ test('missing archive or bad checksum fails before calling GitHub', async t => {
   fs.rmSync(path.join(f.directory, checksum));
   await assert.rejects(publish({ ...f, request: m.request }), /exactly three/);
   assert.equal(m.calls.length, 0);
+});
+
+test('a remote tag pointing to another commit is refused before mutation', async t => {
+  const f = fixture(t);
+  const m = mock();
+  const request = async (url, options) => {
+    const response = await m.request(url, options);
+    if (url.includes('/git/tags/')) response.json = async () => ({ object: { type: 'commit', sha: 'another-commit' } });
+    return response;
+  };
+  await assert.rejects(publish({ ...f, request }), /validated commit/);
+  assert.ok(m.calls.every(c => c.method === 'GET'));
 });

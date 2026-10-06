@@ -29,6 +29,14 @@ export async function publish({ repository, token, tag, sha, directory, notes, r
     if (!response.ok) throw new Error(`GitHub ${method} failed (${response.status}): ${await response.text()}`);
     return response.status === 204 ? null : response.json();
   }
+  // Releases use an existing annotated tag. Check its remote commit explicitly,
+  // rather than asking the release endpoint to create/repoint a tag. Supplying
+  // target_commitish unnecessarily requires workflow-write permission when a
+  // historical release's workflow differs from main; GITHUB_TOKEN lacks it.
+  const ref = await api(`/git/ref/tags/${encodeURIComponent(tag)}`);
+  if (ref.object?.type !== 'tag') throw new Error('Expected an existing annotated release tag');
+  const annotation = await api(`/git/tags/${ref.object.sha}`);
+  if (annotation.object?.type !== 'commit' || annotation.object.sha !== sha) throw new Error('Remote release tag does not match the validated commit');
   let release;
   for (let page = 1; ; page++) {
     const releases = await api(`/releases?per_page=100&page=${page}`);
@@ -43,9 +51,9 @@ export async function publish({ repository, token, tag, sha, directory, notes, r
   const body = notes + '\n\n---\nThese archives are not publisher-signed or notarized. macOS uses local ad-hoc signatures only.\n';
   if (release) {
     await guard();
-    release = await api(`/releases/${release.id}`, 'PATCH', { name: tag, body, target_commitish: sha });
+    release = await api(`/releases/${release.id}`, 'PATCH', { name: tag, body });
   } else {
-    release = await api('/releases', 'POST', { tag_name: tag, target_commitish: sha, name: tag, body, draft: true });
+    release = await api('/releases', 'POST', { tag_name: tag, name: tag, body, draft: true });
   }
   const current = await guard();
   // Remove stale assets from an earlier attempt only while still a draft.
