@@ -76,20 +76,21 @@ fn open_settings_window(
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(if settings_preview {
-                        "stt — Preview".into()
+                        "Plume — Preview".into()
                     } else {
                         SETTINGS_TITLE.into()
                     }),
                     appears_transparent: cfg!(target_os = "macos"),
                     ..Default::default()
                 }),
-                app_id: Some("stt-app".into()),
+                app_id: Some("plume".into()),
                 kind: WindowKind::Normal,
                 focus: true,
                 is_resizable: false,
                 ..Default::default()
             },
             move |window, cx| {
+                crate::app_icon::install(window);
                 window.on_window_should_close(cx, move |_, cx| {
                     cx.spawn(async move |cx| {
                         cx.background_executor().timer(CLOSE_DISPATCH_DELAY).await;

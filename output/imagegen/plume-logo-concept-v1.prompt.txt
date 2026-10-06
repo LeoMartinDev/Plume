@@ -1,0 +1,9 @@
+Use case: logo-brand
+Asset type: logo symbol for the desktop dictation app named Plume (French for feather).
+Primary request: Design an exceptionally minimal geometric abstract feather logo in black and white. One compact bold black diagonal feather silhouette pointing from lower left to upper right. Construct the silhouette from two simple tapered geometric facets, with a single clean narrow straight white negative-space slit suggesting the feather shaft. The silhouette should evoke both a feather and a writing nib, quietly connecting voice to writing. No individual feather hairs or decorative barbs. Carefully balanced, memorable Swiss modernist identity, elegant and lightweight in spirit with substantial geometry.
+Style/medium: flat vector-like graphic, precise straight edges, restrained geometric form.
+Composition: exactly one centered logo symbol on pure white background, square canvas, generous margins. No wordmark.
+Color palette: pure solid black and pure white only.
+Constraints: extremely minimal, immediately readable at small sizes, no text or letters, no microphone, no waveform, no speech bubble, no enclosing badge, no gradients, no shadows, no 3D, no textures, no mockups, no watermark, no presentation board. Avoid realistic or ornate feathers.
+
+Mode: built-in image_gen, transparent_background=false.

@@ -1,0 +1,9 @@
+Use case: logo-brand
+Asset type: logo / app icon concept for Plume, a desktop dictation app.
+Primary request: A striking minimal white feather on a pure black background, rendered with a tasteful ordered dithering shader aesthetic. One simple diagonal feather, rising from lower left to upper right. Keep the silhouette elegant and compact: a tapered geometric feather body and a single slim shaft, with just two subtle feather cuts. Use a crisp regular Bayer-style pixel grid to transition from dense solid white near the central shaft to sparse white pixels at the outer edge, creating a restrained luminous dissolve. All pixels aligned to a deliberate visible grid. Make the feather instantly recognizable, with strong negative space and beautiful optical balance.
+Style/medium: monochrome shader-inspired pixel dithering, graphic logo design, precise hard square pixels, two-tone 1-bit black and white. Not a realistic feather.
+Composition: exactly one centered feather symbol on a square pure black canvas, generous margins, feather occupies about 55 percent of canvas width and height. Strong enough for an app icon.
+Color palette: pure white pixels and pure black only; intermediate tone conveyed solely by pixel density.
+Constraints: no text, no letters, no wordmark, no monogram, no microphone, no bubble, no extra symbols, no borders, no mockup. No soft blur, no grayscale, no smooth gradient, no colored glow, no lighting effects, no photographic texture, no random noisy particles, no watermark. Keep feather anatomy very simple and let ordered dithering supply the visual character.
+
+Mode: built-in image_gen, transparent_background=false.

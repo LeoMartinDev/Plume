@@ -1,16 +1,16 @@
-# stt-gpui
+# Plume
 
 A local desktop dictation app written in Rust and GPUI. Hold `Ctrl+Space`, speak, then release: the final transcript is inserted into the focused application. `Esc` cancels an active capture. Audio stays on the machine; downloading a model requires a network connection.
 
 ## Run
 
 ```sh
-cargo run -p stt-app
+cargo run -p stt-app --bin plume
 ```
 
 Choose and download a model in Settings → Model. Settings also contains the shortcut, language, insertion mode, appearance and transcription history. On macOS, global shortcuts and insertion require the appropriate Accessibility/Input Monitoring permissions, and capture requires microphone permission.
 
-The app lives in the macOS menu bar under **STT** (without a Dock icon), the Windows notification area, or the Linux system tray. Closing Settings hides the window while dictation shortcuts, model downloads and transcription history continue running. Left-click the tray icon to reveal and focus the same Settings window. Right-click (or Ctrl-click on macOS) opens the menu with **Settings…** and **Quit STT**. Some Linux tray hosts expose only the menu; use **Settings…** there. The isolated settings preview still quits when closed.
+The app lives in the macOS menu bar under **Plume** (without a Dock icon), the Windows notification area, or the Linux system tray. Closing Settings hides the window while dictation shortcuts, model downloads and transcription history continue running. Left-click the tray icon to reveal and focus the same Settings window. Right-click (or Ctrl-click on macOS) opens the menu with **Settings…** and **Quit Plume**. Some Linux tray hosts expose only the menu; use **Settings…** there. The isolated settings preview still quits when closed.
 
 Linux uses X11 for the app window and D-Bus StatusNotifierItem for the tray, without a GTK dependency. The desktop must provide a StatusNotifier host (for example KDE Plasma, or GNOME with an AppIndicator extension). If tray initialization fails, closing Settings quits normally so the app remains accessible. A Wayland-only session remains unsupported.
 
@@ -49,9 +49,25 @@ A shortcut press starts capture. Audio flows to a bounded background decoder que
 
 Within `stt-session`, `runtime` coordinates capture and configuration updates, `decoder` owns the decoding queue and worker, `delivery` owns ordered insertion, and `startup` connects the native adapters. Within `stt-app`, preference types are separate from TOML conversion and storage; settings actions are grouped by shortcut, preferences, models and history.
 
+## Application icon and native packaging
+
+The Plume P is used in the settings sidebar and system tray. Windows embeds it in the executable, window and taskbar. Linux settings windows publish it through X11; the desktop launcher uses the installed `plume` icon. macOS sets the running app icon and includes it in the native bundle while retaining menu-bar-only behavior.
+
+Build a native package on each platform with Python 3:
+
+```sh
+python3 scripts/package-app.py
+```
+
+Outputs are `target/package/Plume.app` on macOS, `target/package/plume-windows` on Windows (executable and Vulkan loader), and `target/package/plume-linux` on Linux (`bin` and `share` directories). `CARGO_TARGET_DIR` is respected. Use `--profile dev --skip-build` to package an existing debug build.
+
+On macOS, open `Plume.app` or copy it to Applications to see the icon in Finder/Launchpad. The local bundle is ad-hoc signed; public distribution requires signing and notarization. On Linux, copy the package's `bin` and `share` contents into a prefix such as `~/.local`, with its `bin` on `PATH`, and refresh the desktop icon cache if needed. On Windows, Explorer and shortcuts use the embedded icon without a separate icon file.
+
+Icon sources and platform exports are kept in `crates/stt-app/assets/brand`, so packaging does not depend on the design-output folder.
+
 ## Configuration and history
 
-The app stores `prefs.toml` under the OS configuration root in `stt`, and `history.json` and model packs under the OS local-data root in `stt`. On macOS both roots normally resolve to `~/Library/Application Support/stt`; on Linux they normally resolve to `~/.config/stt` and `~/.local/share/stt`; on Windows configuration and local data use the respective roaming and local app-data directories.
+Plume keeps the legacy `stt` storage folder to preserve existing installations. The app stores `prefs.toml` under the OS configuration root in `stt`, and `history.json` and model packs under the OS local-data root in `stt`. On macOS both roots normally resolve to `~/Library/Application Support/stt`; on Linux they normally resolve to `~/.config/stt` and `~/.local/share/stt`; on Windows configuration and local data use the respective roaming and local app-data directories.
 
 Example preferences:
 
@@ -109,7 +125,7 @@ node --test scripts/*.test.mjs
 ```
 
 The native packaging integration test is opt-in: set `STT_PACKAGE_TEST_BUILD` to
-the directory containing already built `stt-app`/`stt-shell` and native runtimes.
+the directory containing already built `plume`/`stt-shell` and native runtimes.
 It assembles only a temporary fixture archive and does not contact GitHub. The
 release jobs always test their fresh release archives. Local Windows packaging
 also needs `dumpbin` on PATH and `VCToolsRedistDir` from a Visual Studio developer
@@ -178,7 +194,7 @@ The CI keeps PR/main validation and runs release jobs only on a canonical
 `vMAJOR.MINOR.PATCH` tag. It checks the annotated tag, all versions, Cargo.lock,
 committed Markdown notes and that the commit is an ancestor of `origin/main`.
 Workspace compilation/tests, Clippy and formatting must succeed before release
-packaging. Four native builds produce both `stt-app` and `stt-shell`: Linux x64
+packaging. Four native builds produce both `plume` and `stt-shell`: Linux x64
 (Ubuntu 24.04/glibc), Windows x64, macOS Intel and macOS Apple Silicon (macOS 15).
 These are native archives, not installers; models are downloaded separately.
 

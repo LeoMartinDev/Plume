@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::catalog::ModelId;
 
 /// Product folder under the OS config and local-data roots.
-/// Same leaf name Tauri would append as the bundle identifier.
+/// Keep the legacy folder so Plume retains existing preferences, history and models.
 const APP_ID: &str = "stt";
 
 /// OS app directories. Matches Tauri 2 `app_config_dir` and `app_local_data_dir`.

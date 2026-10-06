@@ -21,7 +21,7 @@ pub use window::{
     settings_window_show_refused, settings_window_show_swapped, show_settings,
 };
 
-pub const SETTINGS_TITLE: &str = "stt";
+pub const SETTINGS_TITLE: &str = "Plume";
 #[cfg(target_os = "macos")]
 const MACOS_TITLEBAR_HEIGHT: f32 = 32.;
 

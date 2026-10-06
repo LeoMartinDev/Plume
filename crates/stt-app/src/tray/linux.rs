@@ -13,10 +13,10 @@ impl ksni::Tray for Tray {
     const MENU_ON_ACTIVATE: bool = false;
 
     fn id(&self) -> String {
-        "stt".into()
+        "plume".into()
     }
     fn title(&self) -> String {
-        "STT".into()
+        "Plume".into()
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         // StatusNotifierItem uses ARGB, unlike Windows' RGBA icon.
@@ -44,7 +44,7 @@ impl ksni::Tray for Tray {
             }
             .into(),
             ksni::menu::StandardItem {
-                label: "Quit STT".into(),
+                label: "Quit Plume".into(),
                 activate: Box::new(|_| {
                     ACTIONS.fetch_or(QUIT, Ordering::Relaxed);
                 }),

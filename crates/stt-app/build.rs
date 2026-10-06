@@ -2,6 +2,13 @@
 fn main() {
     use std::path::PathBuf;
 
+    println!("cargo:rerun-if-changed=assets/brand/plume.rc");
+    println!("cargo:rerun-if-changed=assets/brand/plume.ico");
+    // GPUI loads resource 1 for the window class; Explorer uses the same icon.
+    embed_resource::compile_for("assets/brand/plume.rc", ["plume"], embed_resource::NONE)
+        .manifest_required()
+        .expect("embed the Plume application icon");
+
     println!("cargo:rerun-if-env-changed=WINDIR");
 
     // The Vulkan backend itself is linked into whisper.cpp. Shipping the
@@ -12,7 +19,7 @@ fn main() {
     let loader = PathBuf::from(windows).join("System32").join("vulkan-1.dll");
     assert!(
         loader.is_file(),
-        "the Windows Vulkan loader is required to package stt-app"
+        "the Windows Vulkan loader is required to package Plume"
     );
     println!("cargo:rerun-if-changed={}", loader.display());
 
@@ -22,7 +29,7 @@ fn main() {
         .nth(3)
         .expect("OUT_DIR is inside target/<profile>/build/<package>/out");
     std::fs::copy(&loader, profile_dir.join("vulkan-1.dll"))
-        .expect("copy the Vulkan loader beside stt-app");
+        .expect("copy the Vulkan loader beside Plume");
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -36,7 +36,7 @@ const stage = path.join(dist, name);
 if (fs.existsSync(stage)) throw new Error(`Output already exists: ${stage}`);
 fs.mkdirSync(stage, { recursive: true });
 const extension = platform === 'win32' ? '.exe' : '';
-const executableSources = ['stt-app', 'stt-shell'].map(n => path.join(build, n + extension));
+const executableSources = ['plume', 'stt-shell'].map(n => path.join(build, n + extension));
 const libraryPattern = platform === 'win32' ? /\.dll$/i : platform === 'darwin' ? /\.dylib$/ : /\.so(?:\.\d+)*$/;
 const candidates = new Map();
 function register(files) {

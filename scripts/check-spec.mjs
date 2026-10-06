@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Spec checker for the stt-gpui program. Asserts that a spec file or every
+// Spec checker for the Plume program. Asserts that a spec file or every
 // spec file in a directory carries the headings and markers the plan
 // requires. Exits 0 when all checks pass, 1 naming each gap otherwise.
 
@@ -9,7 +9,7 @@ import { basename, join } from "node:path";
 const usage = `Usage: node scripts/check-spec.mjs <spec-file-or-directory>
 
 Checks one spec file, or every known spec file in a directory, for the
-headings and markers docs/stt-gpui-plan.md requires. Unknown files get the
+headings and markers docs/Plume-plan.md requires. Unknown files get the
 generic check: non-empty, at least one markdown heading.
 
 Examples:
@@ -55,7 +55,7 @@ const REQUIREMENTS = {
   "overlay.md": ["# Overlay", "## Variants", "## Chosen variant"],
   "interaction.md": ["# Interaction", "## Session states", "## Cleanup timing"],
   "spec.md": [
-    "# stt-gpui spec",
+    "# Plume spec",
     "## Framework",
     "## Engine",
     "## OS integration",

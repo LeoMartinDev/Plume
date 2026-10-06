@@ -1,3 +1,4 @@
+mod app_icon;
 pub mod assets;
 pub mod catalog;
 pub mod dirs;

@@ -2,3 +2,4 @@
 /dist/
 /release-assets/
 /.worktrees/
+.DS_Store

@@ -58,6 +58,7 @@ jobs:
       - run: node --test scripts/*.test.mjs
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
+      - run: python scripts/package-app.py --profile dev --skip-build
       - if: runner.os == 'Linux'
         run: xvfb-run cargo test --locked -p stt-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
       - if: runner.os == 'Linux'

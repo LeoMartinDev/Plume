@@ -31,7 +31,7 @@ fn create() -> Result<tray_icon::TrayIcon, Box<dyn std::error::Error>> {
     // GPUI's Win32 message loop runs on this thread and dispatches tray messages.
     let menu = Menu::new();
     let settings = MenuItem::with_id("settings", "Settings…", true, None);
-    let quit = MenuItem::with_id("quit", "Quit STT", true, None);
+    let quit = MenuItem::with_id("quit", "Quit Plume", true, None);
     menu.append_items(&[&settings, &quit])?;
     MenuEvent::set_event_handler(Some(|event: MenuEvent| {
         let action = match event.id.0.as_str() {
@@ -49,8 +49,8 @@ fn create() -> Result<tray_icon::TrayIcon, Box<dyn std::error::Error>> {
         }
     }));
     Ok(TrayIconBuilder::new()
-        .with_id("stt")
-        .with_tooltip("STT — Dictation")
+        .with_id("plume")
+        .with_tooltip("Plume — Dictation")
         .with_icon(Icon::from_rgba(super::icon_rgba(), 32, 32)?)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)

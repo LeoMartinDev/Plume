@@ -58,26 +58,10 @@ pub(crate) use linux::{hide_window, install, show_window};
 #[cfg(target_os = "macos")]
 pub(crate) fn show_window(_window: &gpui::Window) {}
 
-/// A small microphone on an opaque blue tile, visible on light and dark trays.
+/// The Plume mark on a black tile, visible on light and dark trays.
 #[cfg(any(windows, target_os = "linux", test))]
 fn icon_rgba() -> Vec<u8> {
-    let mut pixels = Vec::with_capacity(32 * 32 * 4);
-    for y in 0..32 {
-        for x in 0..32 {
-            let mic = (13..=18).contains(&x) && (5..=18).contains(&y);
-            let cradle = ((10..=11).contains(&x) || (20..=21).contains(&x))
-                && (14..=20).contains(&y)
-                || (11..=20).contains(&x) && (21..=22).contains(&y);
-            let stand = (15..=16).contains(&x) && (23..=26).contains(&y)
-                || (11..=20).contains(&x) && y == 27;
-            pixels.extend_from_slice(if mic || cradle || stand {
-                &[255, 255, 255, 255]
-            } else {
-                &[42, 96, 210, 255]
-            });
-        }
-    }
-    pixels
+    include_bytes!("../assets/brand/plume-tray.rgba").to_vec()
 }
 
 #[cfg(test)]
@@ -105,8 +89,8 @@ mod macos {
             NSEventType, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
             NSWindow,
         },
-        base::{id, nil},
-        foundation::{NSInteger, NSString, NSUInteger},
+        base::{id, nil, YES},
+        foundation::{NSInteger, NSSize, NSString, NSUInteger},
     };
     use gpui::{App, Window};
     use objc::{
@@ -161,7 +145,7 @@ mod macos {
     fn target_class() -> &'static Class {
         static CLASS: OnceLock<&'static Class> = OnceLock::new();
         CLASS.get_or_init(|| {
-            let mut class = ClassDecl::new("STTTrayTarget", Class::get("NSObject").unwrap())
+            let mut class = ClassDecl::new("PlumeTrayTarget", Class::get("NSObject").unwrap())
                 .expect("register tray target");
             class.add_ivar::<id>("menu");
             // SAFETY: all selectors take one Objective-C object argument and
@@ -176,7 +160,7 @@ mod macos {
                     show_settings as extern "C" fn(&Object, Sel, id),
                 );
                 class.add_method(
-                    Sel::register("quitSTT:"),
+                    Sel::register("quitPlume:"),
                     quit as extern "C" fn(&Object, Sel, id),
                 );
             }
@@ -188,6 +172,50 @@ mod macos {
         item: id,
         target: id,
         menu: id,
+    }
+
+    fn install_logo(button: id) {
+        // SAFETY: called on the AppKit main thread. NSData copies the embedded
+        // PNG; the button retains its NSImage after setImage:.
+        unsafe {
+            let bytes = include_bytes!("../assets/brand/plume-template.png");
+            let data: id = Class::get("NSData")
+                .unwrap()
+                .send_message(
+                    Sel::register("dataWithBytes:length:"),
+                    (bytes.as_ptr().cast::<std::ffi::c_void>(), bytes.len()),
+                )
+                .unwrap();
+            let image: id = Class::get("NSImage")
+                .unwrap()
+                .send_message(Sel::register("alloc"), ())
+                .unwrap();
+            let image: id = (&*image)
+                .send_message(Sel::register("initWithData:"), (data,))
+                .unwrap();
+            if image == nil {
+                let title = NSString::alloc(nil).init_str("Plume");
+                let _: () = (&*button)
+                    .send_message(Sel::register("setTitle:"), (title,))
+                    .unwrap();
+                let _: () = (&*title)
+                    .send_message(Sel::register("release"), ())
+                    .unwrap();
+                return;
+            }
+            let _: () = (&*image)
+                .send_message(Sel::register("setSize:"), (NSSize::new(22., 22.),))
+                .unwrap();
+            let _: () = (&*image)
+                .send_message(Sel::register("setTemplate:"), (YES,))
+                .unwrap();
+            let _: () = (&*button)
+                .send_message(Sel::register("setImage:"), (image,))
+                .unwrap();
+            let _: () = (&*image)
+                .send_message(Sel::register("release"), ())
+                .unwrap();
+        }
     }
 
     impl Tray {
@@ -203,9 +231,10 @@ mod macos {
                 let bar = NSStatusBar::systemStatusBar(nil);
                 let item = bar.statusItemWithLength_(NSVariableStatusItemLength);
                 let _: id = (&*item).send_message(Sel::register("retain"), ()).unwrap();
-                let title = NSString::alloc(nil).init_str("STT");
+                install_logo(item.button());
+                let title = NSString::alloc(nil).init_str("Plume");
                 let _: () = (&*item.button())
-                    .send_message(Sel::register("setTitle:"), (title,))
+                    .send_message(Sel::register("setToolTip:"), (title,))
                     .unwrap();
                 let _: () = (&*title)
                     .send_message(Sel::register("release"), ())
@@ -214,7 +243,7 @@ mod macos {
                 let menu = NSMenu::new(nil);
                 for (label, action, key) in [
                     ("Settings…", "showSettings:", ""),
-                    ("Quit STT", "quitSTT:", "q"),
+                    ("Quit Plume", "quitPlume:", "q"),
                 ] {
                     let title = NSString::alloc(nil).init_str(label);
                     let key = NSString::alloc(nil).init_str(key);

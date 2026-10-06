@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Plume
+Comment=Local voice dictation
+Exec=plume
+Icon=plume
+Terminal=false
+Categories=Utility;Accessibility;
+StartupWMClass=plume

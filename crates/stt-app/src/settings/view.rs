@@ -237,9 +237,18 @@ fn sidebar(
             div()
                 .px(px(10.))
                 .pb(px(16.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
                 .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
-                .child("stt"),
+                .child(
+                    svg()
+                        .path("brand/plume.svg")
+                        .size(px(28.))
+                        .text_color(tokens.text),
+                )
+                .child("Plume"),
         )
         .child(
             div().flex().flex_col().gap(px(4.)).children(

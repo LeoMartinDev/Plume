@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleName</key><string>Plume</string>
+    <key>CFBundleDisplayName</key><string>Plume</string>
+    <key>CFBundleIdentifier</key><string>app.plume.desktop</string>
+    <key>CFBundleExecutable</key><string>plume</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>plume.icns</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>0.1.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Plume uses your microphone to transcribe your dictation locally.</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict></plist>

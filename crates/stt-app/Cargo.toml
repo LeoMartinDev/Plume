@@ -3,6 +3,10 @@ name = "stt-app"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "plume"
+path = "src/main.rs"
+
 [dependencies]
 stt-logging = { path = "../stt-logging" }
 tracing.workspace = true
@@ -35,3 +39,6 @@ windows-sys = { version = "0.59", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.11"

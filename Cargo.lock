@@ -5762,6 +5762,7 @@ dependencies = [
  "arboard",
  "cocoa 0.26.0",
  "dirs 6.0.0",
+ "embed-resource",
  "gpui",
  "ksni",
  "objc",

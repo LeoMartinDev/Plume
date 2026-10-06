@@ -4,7 +4,7 @@ The current desktop app supports hold-to-talk dictation, Esc cancellation and fi
 
 ## Background operation
 
-Closing Settings hides the window while the global dictation shortcut, downloads and history continue running. A primary click on the system tray icon reveals and focuses the existing Settings window. A secondary click (including Ctrl-click on macOS) opens the menu with Settings… and Quit STT. Linux hosts that expose only a menu retain Settings… as a fallback. macOS uses the menu bar without a Dock icon; Windows uses the notification area; Linux X11 uses D-Bus StatusNotifierItem. If tray initialization fails, closing Settings exits normally. The isolated settings preview also exits when closed.
+Closing Settings hides the window while the global dictation shortcut, downloads and history continue running. A primary click on the system tray icon reveals and focuses the existing Settings window. A secondary click (including Ctrl-click on macOS) opens the menu with Settings… and Quit Plume. Linux hosts that expose only a menu retain Settings… as a fallback. macOS uses the menu bar without a Dock icon; Windows uses the notification area; Linux X11 uses D-Bus StatusNotifierItem. If tray initialization fails, closing Settings exits normally. The isolated settings preview also exits when closed.
 
 ## Dictate with hold-to-talk
 

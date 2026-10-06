@@ -2,7 +2,7 @@
 
 ## The product in one sentence
 
-stt-gpui is a local desktop push-to-talk dictation app. Hold a global shortcut, speak, then release: the final transcript is inserted into the focused app. Native integrations cover macOS, Windows and Linux X11; Wayland remains planned.
+Plume is a local desktop push-to-talk dictation app. Hold a global shortcut, speak, then release: the final transcript is inserted into the focused app. Native integrations cover macOS, Windows and Linux X11; Wayland remains planned.
 
 ## Target user
 

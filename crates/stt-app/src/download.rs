@@ -294,7 +294,7 @@ impl Fetch for UreqFetch {
         progress: &dyn Fn(u64, Option<u64>),
     ) -> Result<(), DownloadError> {
         let mut response = ureq::get(url)
-            .header("User-Agent", "stt-app/0.1")
+            .header("User-Agent", "Plume/0.1")
             .call()
             .map_err(|err| DownloadError::Fetch(err.to_string()))?;
         let total = response.body().content_length();
