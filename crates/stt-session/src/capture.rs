@@ -189,18 +189,40 @@ mod tests {
 
     #[test]
     fn release_keeps_audio_delivered_after_key_up() {
+        struct TailMic {
+            buffered: BufferedMic,
+            pump: AudioPump,
+            first: bool,
+        }
+        impl CaptureSource for TailMic {
+            fn recv_timeout(
+                &mut self,
+                timeout: Duration,
+            ) -> Result<AudioChunk, mpsc::RecvTimeoutError> {
+                if self.first {
+                    self.first = false;
+                    // Deliver key-up while the capture worker is receiving a
+                    // device callback, without relying on thread scheduling.
+                    self.pump.clone().finish();
+                    self.buffered.tx.as_ref().unwrap().send(chunk(3.0)).unwrap();
+                    // End the tail after this in-flight callback is returned.
+                    self.pump.shared.lock().unwrap().finish_at = Some(Instant::now());
+                }
+                self.buffered.recv_timeout(timeout)
+            }
+            fn stop(&mut self) {
+                self.buffered.stop();
+            }
+        }
         let (gate, pump) = open_pair();
         let (tx, rx) = mpsc::channel();
         let (levels, _) = mpsc::sync_channel(1);
-        pump.clone().finish();
-        // The device can still be filling a buffer when key-up is received.
-        let delayed_tx = tx.clone();
-        let callback = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
-            delayed_tx.send(chunk(3.0)).unwrap();
-        });
-        run_capture(BufferedMic { rx, tx: Some(tx) }, pump, levels);
-        callback.join().unwrap();
+        let mic = TailMic {
+            buffered: BufferedMic { rx, tx: Some(tx) },
+            pump: pump.clone(),
+            first: true,
+        };
+        run_capture(mic, pump, levels);
         assert_eq!(
             gate.into_audio_stream().collect::<Vec<_>>(),
             vec![chunk(3.0), chunk(5.0)]

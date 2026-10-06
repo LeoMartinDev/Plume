@@ -169,6 +169,10 @@ if (platform === 'darwin') {
 }
 // Preserve license notices supplied alongside native runtimes where available.
 const licenseDir = path.join(stage, 'runtime-licenses');
+if (platform === 'win32') {
+  fs.mkdirSync(licenseDir, { recursive: true });
+  fs.copyFileSync(path.join(process.env.VULKAN_SDK, 'Bin', 'VulkanRT-License.txt'), path.join(licenseDir, 'VulkanRT-License.txt'));
+}
 for (const [basename, source] of copied) {
   if (!libraryPattern.test(basename)) continue;
   for (const directory of [path.dirname(source), path.dirname(path.dirname(source))]) {

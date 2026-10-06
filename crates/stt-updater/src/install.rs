@@ -176,6 +176,7 @@ pub fn start_helper(plan: &InstallPlan) -> Result<()> {
             .join(executable_name("plume-updater")),
     )
     .arg(plan.work.join("install.json"))
+    .current_dir(plan.work.join("helper"))
     .stdin(Stdio::null())
     .stdout(Stdio::null())
     .stderr(Stdio::null())

@@ -21,7 +21,7 @@ def package(profile, skip_build):
         raise RuntimeError(f"Unsupported platform: {sys.platform}")
     if not skip_build:
         subprocess.run(
-            ["cargo", "build", "-p", "stt-app", "--bin", "plume", "--profile", profile],
+            ["cargo", "build", "-p", "stt-app", "-p", "stt-updater", "--bins", "--profile", profile],
             cwd=ROOT, check=True,
         )
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))

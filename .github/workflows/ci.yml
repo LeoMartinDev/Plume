@@ -57,6 +57,11 @@ jobs:
         run: Add-Content $env:GITHUB_ENV 'CARGO_TARGET_DIR=C:\t'
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb dbus-x11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native
+          cache-on-failure: true
+          workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
       - run: node --test scripts/*.test.mjs
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
@@ -119,6 +124,11 @@ jobs:
       - if: runner.os == 'macOS'
         name: Allow initial runtime lookup and Mach-O relocation
         run: echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,@loader_path -C link-arg=-Wl,-headerpad_max_install_names' >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native
+          cache-on-failure: true
+          workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
       - run: cargo build --locked --release -p stt-app -p stt-shell -p stt-updater
       - name: Bundle runtimes, relocate, archive, checksum and smoke-test extraction
         run: node scripts/package-release.mjs
