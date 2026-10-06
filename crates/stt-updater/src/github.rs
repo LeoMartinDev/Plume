@@ -10,8 +10,8 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     pub url: String,
-    pub archive_name: String,
-    pub archive_url: String,
+    pub installer_name: String,
+    pub installer_url: String,
     pub checksum_url: String,
     pub size: u64,
 }
@@ -75,13 +75,7 @@ fn select(json: &str, current: &str, target: &str) -> Result<Option<Release>> {
     if !next.pre.is_empty() || !next.build.is_empty() || next <= current {
         return Ok(None);
     }
-    let extension = if target.contains("windows") {
-        "zip"
-    } else {
-        "tar.gz"
-    };
-    // This naming contract is shared with scripts/package-release.mjs.
-    let name = format!("stt-v{version}-{target}.{extension}");
+    let name = installer_name(version, target);
     let find = |name: &str| -> Result<&Asset> {
         let mut assets = release.assets.iter().filter(|asset| asset.name == name);
         let asset = assets
@@ -106,23 +100,30 @@ fn select(json: &str, current: &str, target: &str) -> Result<Option<Release>> {
             "https://github.com/LeoMartinDev/Plume/releases/tag/{}",
             release.tag_name
         ),
-        archive_name: name,
-        archive_url: archive.browser_download_url.clone(),
+        installer_name: name,
+        installer_url: archive.browser_download_url.clone(),
         checksum_url: checksum.browser_download_url.clone(),
         size: archive.size,
     }))
+}
+
+// Shared contract with scripts/installer.mjs. Only native installers are offered.
+fn installer_name(version: &str, target: &str) -> String {
+    let extension = if target.contains("windows") {
+        "exe"
+    } else if target.contains("apple") {
+        "pkg"
+    } else {
+        "deb"
+    };
+    format!("Plume-v{version}-{target}.{extension}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn fixture(version: &str, target: &str) -> String {
-        let extension = if target.contains("windows") {
-            "zip"
-        } else {
-            "tar.gz"
-        };
-        let name = format!("stt-v{version}-{target}.{extension}");
+        let name = installer_name(version, target);
         serde_json::json!({"tag_name":format!("v{version}"),"draft":false,"prerelease":false,
             "assets":[{"name":name,"size":1234,"browser_download_url":format!("{DOWNLOAD_BASE}v{version}/{name}")},
             {"name":format!("{name}.sha256"),"size":100,"browser_download_url":format!("{DOWNLOAD_BASE}v{version}/{name}.sha256")}]}).to_string()

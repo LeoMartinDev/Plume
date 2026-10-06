@@ -1,4 +1,4 @@
-mod archive;
+mod download;
 mod github;
 mod install;
 

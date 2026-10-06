@@ -1,20 +1,20 @@
 // GitHub REST API using only Node built-ins. Called after every validation and
-// native archive job succeeds. Never converts or overwrites a published release.
+// native installer job succeeds. Never converts or overwrites a published release.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { installerName, targets } from './installer.mjs';
 import { checkTag } from '../release.mjs';
 
 export async function publish({ repository, token, tag, sha, directory, notes, request = fetch }) {
   if (!repository || !token || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag) || !sha) throw new Error('Missing/invalid GitHub release context');
-  const targets = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin'];
   const expected = targets.flatMap(target => {
-    const file = `stt-${tag}-${target}.${target.includes('windows') ? 'zip' : 'tar.gz'}`;
+    const file = installerName(tag.slice(1), target);
     return [file, `${file}.sha256`];
   });
   const filenames = fs.readdirSync(directory).sort();
-  if (JSON.stringify(filenames) !== JSON.stringify(expected.sort())) throw new Error('Expected exactly three native archives and their checksums');
+  if (JSON.stringify(filenames) !== JSON.stringify(expected.sort())) throw new Error('Expected exactly three native installers and their checksums');
   for (const filename of filenames.filter(f => !f.endsWith('.sha256'))) {
     const digest = createHash('sha256').update(fs.readFileSync(path.join(directory, filename))).digest('hex');
     if (fs.readFileSync(path.join(directory, filename + '.sha256'), 'utf8') !== `${digest}  ${filename}\n`) throw new Error(`Checksum mismatch: ${filename}`);
@@ -48,7 +48,7 @@ export async function publish({ repository, token, tag, sha, directory, notes, r
     if (!current.draft || current.tag_name !== tag) throw new Error('Refusing to overwrite a published or changed release');
     return current;
   }
-  const body = notes + '\n\n---\nThese archives are not publisher-signed or notarized. macOS uses local ad-hoc signatures only.\n';
+  const body = notes + '\n\n---\nDownloads are native installers: Windows `.exe`, macOS Apple Silicon `.pkg`, and Ubuntu 24.04+ `.deb`. Speech models are downloaded separately.\n\nUsers of Plume 0.1.0 must install this release manually: its updater expects the previous archive format.\n\nThese installers are not publisher-signed or notarized. macOS uses local ad-hoc signatures only.\n';
   if (release) {
     await guard();
     release = await api(`/releases/${release.id}`, 'PATCH', { name: tag, body });

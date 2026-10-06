@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/stt-core", "crates/stt-shell", "crates/stt-engine", "crates/stt-audio", "crates/stt-inject", "crates/stt-hotkey", "crates/stt-overlay", "crates/stt-session", "crates/stt-app", "crates/stt-ui", "crates/stt-logging", "crates/stt-updater"]
+members = ["crates/stt-core", "crates/stt-engine", "crates/stt-audio", "crates/stt-inject", "crates/stt-hotkey", "crates/stt-overlay", "crates/stt-session", "crates/stt-app", "crates/stt-ui", "crates/stt-logging", "crates/stt-updater"]
 
 [workspace.dependencies]
 tracing = "0.1"

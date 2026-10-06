@@ -22,12 +22,6 @@ STT_MODEL_DIR=/path/to/model cargo run -p stt-session
 
 Its environment configuration is `STT_MODEL_DIR` (required), `STT_HOLD` (default `Ctrl+Space`) and `STT_CANCEL` (default `Esc`). `Fn` shortcuts are rejected.
 
-To transcribe a WAV file without the desktop interface:
-
-```sh
-cargo run -p stt-shell -- transcribe crates/stt-engine/fixtures/fr-bonjour.wav --model-dir /path/to/model
-```
-
 The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Linux and the Vulkan SDK on Windows. See [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the exact dependencies. Native integrations exist for macOS, Windows and Linux X11; Wayland support remains planned.
 
 ## Architecture
@@ -43,7 +37,6 @@ The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Li
 | `stt-overlay` | Voice-level bubble and native window behavior |
 | `stt-ui` | Shared controls, palette and UI refresh interval |
 | `stt-app` | Startup, model downloads, preferences, history and settings |
-| `stt-shell` | WAV transcription command |
 
 A shortcut press starts capture. Audio flows to a bounded background decoder queue. Releasing ends capture; the decoder returns the final text. `TranscriptDelivery` preserves capture order, inserts separators between overlapping captures, applies the insertion mode and attempts clipboard fallback when configured. Partial hypotheses are not inserted by the desktop session. A cancelled capture returns no text to insert.
 
@@ -113,7 +106,7 @@ cargo run --release -p stt-app
 
 Logs go to stderr unless `STT_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
 
-The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `stt_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. CLI results, usage and command errors remain ordinary output.
+The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `stt_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. The version probe remains ordinary output.
 
 ## Verification
 
@@ -125,11 +118,11 @@ node --test scripts/*.test.mjs
 ```
 
 The native packaging integration test is opt-in: set `STT_PACKAGE_TEST_BUILD` to
-the directory containing already built `plume`/`stt-shell` and native runtimes.
-It assembles only a temporary fixture archive and does not contact GitHub. The
-release jobs always test their fresh release archives. Local Windows packaging
-also needs `dumpbin` on PATH and `VCToolsRedistDir` from a Visual Studio developer
-environment; Linux needs `patchelf`, and macOS uses the Xcode command-line tools.
+the directory containing built `plume`, `plume-updater` and native runtimes.
+It builds a temporary installer without contacting GitHub. Windows requires
+Inno Setup 6, `dumpbin` and `VCToolsRedistDir`; Linux requires `patchelf` and
+`dpkg-deb`; macOS requires the Xcode command-line tools. Release jobs build and
+verify fresh installers on their native runners.
 
 ## Releases
 
@@ -194,31 +187,37 @@ The CI keeps PR/main validation and runs release jobs only on a canonical
 `vMAJOR.MINOR.PATCH` tag. It checks the annotated tag, all versions, Cargo.lock,
 committed Markdown notes and that the commit is an ancestor of `origin/main`.
 Workspace compilation/tests, Clippy and formatting must succeed before release
-packaging. Three native builds produce both `plume` and `stt-shell`: Linux x64
+packaging. Three native builds produce Plume and its update helper: Linux x64
 (Ubuntu 24.04/glibc), Windows x64 and macOS Apple Silicon (macOS 15).
-These are native archives, not installers; models are downloaded separately.
+Windows ships an Inno Setup `.exe` with Start menu shortcuts and an uninstaller.
+macOS ships a `.pkg` installing Plume.app in Applications. Linux ships a `.deb`
+installing Plume in `/opt/plume` with a desktop entry and icon. Models are
+downloaded separately. Public releases contain no ZIP or tar archives.
 
 Packaging retains the Windows Vulkan SDK prerequisite and bundles non-system
 runtime libraries recursively, including DirectML, Vulkan loader and MSVC runtime
 DLLs when imported. Linux includes ALSA/XCB/XKB and other non-glibc shared
 libraries with `$ORIGIN` paths; macOS uses `@loader_path` for bundled dylibs.
 Core OS libraries/frameworks and GPU drivers remain supplied by the OS.
-Every `.zip` (Windows) or `.tar.gz` (Linux/macOS) has a `.sha256` checksum.
-The CI extracts each archive, checks its library paths and runs `stt-shell --help`
-with an OS-only PATH and no build-machine library environment variables. This
+Every installer has a `.sha256` checksum. CI installs the Windows package in a
+temporary folder or extracts the macOS/Linux payload, audits runtime dependencies
+and runs `plume --version` and `plume-updater --help` with an OS-only PATH and no
+build-machine library environment variables. Linux/macOS runners also install
+the resulting package in its system location and check the registered app. This
 tests startup/linking; microphone, GUI, GPU and model inference still require
 manual testing on the intended machines.
 
 Only after all jobs pass does CI create a **draft** GitHub release with the Markdown
 notes and all six assets. To rebuild an existing unpublished tag with the latest
 workflow fixes, run the CI workflow manually from main with `release_tag` set to
-that tag (for example, `v0.1.0`). It checks out the original tagged code and restores
+that tag. Installer tooling must already be present in the tag; historical archive
+releases cannot be converted by rebuilding their immutable tags. It checks out the original tagged code and restores
 the annotated tag before validation; the tag is not moved. Rerunning refreshes that draft and its
 assets; a published release is refused. Review the draft before publishing it
 manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
 secrets are required.
 
-**Archives are not signed by a publisher and are not notarized.** macOS applies
+**Installers are not signed by a publisher and are not notarized.** macOS applies
 only local ad-hoc signatures after relocation (needed for Apple Silicon), with no
 certificate or verified publisher identity. Gatekeeper/SmartScreen may block or
 warn about downloads; review the source/checksums and follow your organization's
@@ -238,3 +237,15 @@ CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests r
 On a macOS desktop, `cargo run -p stt-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, hides on release and cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
 
 See [the refactor verification record](readability-verification.md) for the checks performed and native checks still pending.
+
+## Installer updates
+
+Settings → Updates downloads the native installer and verifies its size and SHA-256
+before closing Plume. The helper waits for Plume to exit, then runs the Windows
+installer in the existing per-user directory, opens the macOS Installer, or asks
+PolicyKit to install the Linux package with dpkg. Models, preferences and history
+are outside the installation and remain intact. Linux and macOS system installs
+can request administrator authentication. No automatic folder replacement or
+application backup is used for native installer updates. The previous 0.1.0 updater
+expects archives; users of that version must install the first installer release
+manually from GitHub.

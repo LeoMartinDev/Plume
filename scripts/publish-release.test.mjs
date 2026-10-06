@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { installerName } from './installer.mjs';
 import { publish } from './publish-release.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-publish-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   for (const target of ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin']) {
-    const filename = `stt-v1.2.3-${target}.${target.includes('windows') ? 'zip' : 'tar.gz'}`;
-    const content = Buffer.from('archive fixture ' + target);
+    const filename = installerName('1.2.3', target);
+    const content = Buffer.from('installer fixture ' + target);
     fs.writeFileSync(path.join(directory, filename), content);
     fs.writeFileSync(path.join(directory, filename + '.sha256'), `${createHash('sha256').update(content).digest('hex')}  ${filename}\n`);
   }
@@ -72,7 +73,7 @@ test('stop refreshing if draft was published between asset uploads', async t => 
   assert.equal(m.calls.filter(c => c.url.includes('uploads.github.com')).length, 1);
 });
 
-test('missing archive or bad checksum fails before calling GitHub', async t => {
+test('missing installer or bad checksum fails before calling GitHub', async t => {
   const f = fixture(t);
   const m = mock();
   const checksum = fs.readdirSync(f.directory).find(n => n.endsWith('.sha256'));
@@ -80,6 +81,14 @@ test('missing archive or bad checksum fails before calling GitHub', async t => {
   await assert.rejects(publish({ ...f, request: m.request }), /Checksum/);
   fs.rmSync(path.join(f.directory, checksum));
   await assert.rejects(publish({ ...f, request: m.request }), /exactly three/);
+  assert.equal(m.calls.length, 0);
+});
+
+test('portable archives are rejected before publishing any assets', async t => {
+  const f = fixture(t);
+  const m = mock();
+  fs.writeFileSync(path.join(f.directory, 'stt-v1.2.3-x86_64-pc-windows-msvc.zip'), 'old format');
+  await assert.rejects(publish({ ...f, request: m.request }), /native installers/);
   assert.equal(m.calls.length, 0);
 });
 

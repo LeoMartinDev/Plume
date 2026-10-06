@@ -22,9 +22,9 @@ Download the latest version from [Releases](https://github.com/LeoMartinDev/Plum
 | Windows — 64-bit Intel or AMD | Windows x64 |
 | Linux — 64-bit Intel or AMD, X11 | Linux x64 |
 
-Extract the whole archive, then open **Plume.app** on macOS, **plume.exe** on Windows or **plume** on Linux. On macOS, you can move Plume.app to Applications. Keep the included files together on Windows and Linux. Speech models are downloaded separately inside the app.
+Run the Windows `.exe` installer or macOS `.pkg` installer, then open Plume from the Start menu or Applications. On Ubuntu 24.04 or newer, install the `.deb` with `sudo apt install ./Plume-vVERSION-x86_64-unknown-linux-gnu.deb`. Speech models are downloaded separately inside the app.
 
-Linux downloads are built on Ubuntu 24.04 and need an X11 session and a system tray; Wayland support is planned. Release archives are not publisher-signed or notarized, so macOS or Windows may show a security warning.
+Linux downloads are built on Ubuntu 24.04 and need an X11 session and a system tray; Wayland support is planned. Release installers are not publisher-signed or notarized, so macOS or Windows may show a security warning.
 
 ## Start dictating
 

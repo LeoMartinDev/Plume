@@ -16,7 +16,6 @@ French (FR) and English (EN) are the minimum supported languages. Settings offer
 
 Hold-to-talk capture, Esc cancellation during capture, background transcription, final-text insertion, clipboard fallback, model selection, configurable history and appearance settings are implemented. Partial hypotheses are not inserted by the desktop runtime.
 
-A separate `stt-shell` command transcribes existing WAV files. It uses the same local engine contracts without the desktop interface.
 
 ## Planned capabilities
 

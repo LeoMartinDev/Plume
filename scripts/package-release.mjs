@@ -1,10 +1,11 @@
 // Assemble native binaries, close their dynamic dependency graph, relocate it,
-// then test the actual extracted archive with a minimal OS-only environment.
+// then build and test native installers with a minimal OS-only environment.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { buildInstaller, extractInstaller } from './installer.mjs';
 import { workspace } from '../release.mjs';
 
 function run(cmd, args, options = {}) {
@@ -35,7 +36,7 @@ const stage = path.join(dist, name);
 if (fs.existsSync(stage)) throw new Error(`Output already exists: ${stage}`);
 fs.mkdirSync(stage, { recursive: true });
 const extension = platform === 'win32' ? '.exe' : '';
-const executableSources = ['plume', 'stt-shell', 'plume-updater'].map(n => path.join(build, n + extension));
+const executableSources = ['plume', 'plume-updater'].map(n => path.join(build, n + extension));
 const libraryPattern = platform === 'win32' ? /\.dll$/i : platform === 'darwin' ? /\.dylib$/ : /\.so(?:\.\d+)*$/;
 const candidates = new Map();
 function register(files) {
@@ -148,7 +149,7 @@ fs.mkdirSync(brand, { recursive: true });
 fs.copyFileSync('crates/stt-app/assets/brand/plume.png', path.join(brand, 'plume.png'));
 fs.copyFileSync(`releases/v${version}.md`, path.join(stage, 'RELEASE-NOTES.md'));
 fs.writeFileSync(path.join(stage, 'RUNTIME-LIBRARIES.txt'), [...copied.keys()].filter(n => libraryPattern.test(n)).join('\n') + '\n');
-fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), 'These archives are not publisher-signed or notarized. macOS binaries use only local ad-hoc signatures after relocation. Models are downloaded separately. See README.md.\n');
+fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), 'These installers are not publisher-signed or notarized. macOS binaries use only local ad-hoc signatures after relocation. Models are downloaded separately. See README.md.\n');
 if (platform === 'darwin') {
   const app = path.join(stage, 'Plume.app');
   const contents = path.join(app, 'Contents');
@@ -156,13 +157,16 @@ if (platform === 'darwin') {
   fs.mkdirSync(macos, { recursive: true });
   fs.mkdirSync(path.join(contents, 'Resources'));
   for (const basename of copied.keys()) {
-    if (basename === 'stt-shell') continue;
     fs.copyFileSync(path.join(stage, basename), path.join(macos, basename));
     fs.chmodSync(path.join(macos, basename), 0o755);
   }
   fs.copyFileSync('crates/stt-app/assets/brand/plume.icns', path.join(contents, 'Resources', 'plume.icns'));
   fs.copyFileSync('crates/stt-app/packaging/Info.plist', path.join(contents, 'Info.plist'));
   for (const key of ['CFBundleShortVersionString', 'CFBundleVersion']) run('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${version}`, path.join(contents, 'Info.plist')]);
+  for (const file of ['README.md', 'RELEASE-NOTES.md', 'RUNTIME-LIBRARIES.txt', 'UNSIGNED.txt', 'runtime-licenses']) {
+    const source = path.join(stage, file);
+    if (fs.existsSync(source)) fs.cpSync(source, path.join(contents, 'Resources', file), { recursive: true });
+  }
   run('codesign', ['--force', '--sign', '-', app]);
   run('codesign', ['--verify', '--deep', '--strict', app]);
 }
@@ -184,15 +188,20 @@ for (const [basename, source] of copied) {
     }
   }
 }
-const archive = path.join(dist, name + (platform === 'win32' ? '.zip' : '.tar.gz'));
-run('tar', [platform === 'win32' ? '-a' : '-z', '-cf', archive, '-C', dist, name]);
+// Runtime notices must be inside the macOS bundle before its final signature.
+if (platform === 'darwin') {
+  const app = path.join(stage, 'Plume.app');
+  if (fs.existsSync(licenseDir)) fs.cpSync(licenseDir, path.join(app, 'Contents/Resources/runtime-licenses'), { recursive: true });
+  run('codesign', ['--force', '--sign', '-', app]);
+  run('codesign', ['--verify', '--deep', '--strict', app]);
+}
+const archive = buildInstaller({ platform, version, target, stage, dist, run });
 const digest = createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
 fs.writeFileSync(archive + '.sha256', `${digest}  ${path.basename(archive)}\n`);
 
 const extracted = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-archive-'));
 try {
-  run('tar', ['-xf', archive, '-C', extracted]);
-  const root = path.join(extracted, name);
+  const root = extractInstaller({ platform, installer: archive, destination: extracted, run });
   const systemPath = platform === 'win32' ? `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}` : '/usr/bin:/bin';
   const env = { PATH: systemPath, HOME: extracted, TMPDIR: extracted, TEMP: extracted, TMP: extracted, LANG: 'C.UTF-8' };
   if (platform === 'win32') Object.assign(env, { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot });
@@ -208,9 +217,9 @@ try {
     }
   }
   if (platform === 'darwin') {
-    const nativeApp = path.join(root, 'Plume.app', 'Contents', 'MacOS');
+    run('codesign', ['--verify', '--deep', '--strict', path.resolve(root, '../..')]);
     for (const basename of copied.keys()) {
-      for (const directory of basename === 'stt-shell' ? [root] : [root, nativeApp]) {
+      for (const directory of [root]) {
         const file = path.join(directory, basename);
         for (const line of run('otool', ['-L', file]).split('\n').slice(1)) {
           const dep = line.trim().split(' (')[0];
@@ -227,12 +236,14 @@ try {
       }
     }
   }
-  const output = run(path.join(root, 'stt-shell' + extension), ['--help'], { cwd: extracted, env });
-  if (!output.includes(`stt-shell ${version}`) && !/usage|transcribe/i.test(output)) throw new Error('stt-shell --help did not print the expected version or usage');
+  const output = run(path.join(root, 'plume' + extension), ['--version'], { cwd: extracted, env });
+  if (!output.includes(`Plume ${version}`)) throw new Error('Installed Plume could not start');
   const helper = run(path.join(root, 'plume-updater' + extension), ['--help'], { cwd: extracted, env });
   if (!helper.includes(`Plume updater ${version}`)) throw new Error('Bundled updater could not start');
   console.log(output);
-  console.log(`Archive verified: ${archive}\nSHA-256: ${digest}`);
+  console.log(`Installer verified: ${archive}\nSHA-256: ${digest}`);
 } finally {
-  fs.rmSync(extracted, { recursive: true, force: true });
+  const uninstall = path.join(extracted, 'Plume/unins000.exe');
+  if (platform === 'win32' && fs.existsSync(uninstall)) run(uninstall, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART']);
+  fs.rmSync(extracted, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }

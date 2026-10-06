@@ -16,9 +16,9 @@ pub struct Installation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstallPlan {
+    pub installer: PathBuf,
+    pub version: String,
     pub target: PathBuf,
-    pub staged: PathBuf,
-    pub backup: PathBuf,
     pub executable: PathBuf,
     pub parent_pid: u32,
     pub work: PathBuf,
@@ -73,51 +73,25 @@ pub fn prepare(
     installation: &Installation,
     progress: impl Fn(u64, u64),
 ) -> Result<InstallPlan> {
-    let parent = installation
-        .root
-        .parent()
-        .ok_or("The installation folder cannot be updated.")?;
-    let id = format!("{}-{}", std::process::id(), io_time()?);
-    // Sibling staging permits an atomic rename even when the app is on another volume.
-    let work = parent.join(format!(".plume-update-{id}"));
-    io(fs::create_dir(&work)).map_err(|_| "Plume cannot write to its installation folder. Move it to a writable folder or download the update from GitHub.".to_string())?;
+    prepare_installer(release, installation, progress)
+}
+
+fn prepare_installer(
+    release: &Release,
+    installation: &Installation,
+    progress: impl Fn(u64, u64),
+) -> Result<InstallPlan> {
+    let work = std::env::temp_dir().join(format!(
+        ".plume-update-{}-{}",
+        std::process::id(),
+        io_time()?
+    ));
+    io(fs::create_dir(&work))?;
     let result = (|| {
-        let archive = work.join(&release.archive_name);
-        crate::archive::download(release, &archive, &progress)?;
-        let root_name = release
-            .archive_name
-            .strip_suffix(".tar.gz")
-            .or_else(|| release.archive_name.strip_suffix(".zip"))
-            .ok_or("Unsupported update archive")?;
-        let unpacked =
-            crate::archive::extract(&archive, &work.join("extracted"), root_name, cfg!(windows))?;
-        let staged = if installation.executable.starts_with("Contents") {
-            unpacked.join("Plume.app")
-        } else {
-            unpacked
-        };
-        if !staged.join(&installation.executable).is_file() {
-            return Err("The update is missing the Plume application.".into());
-        }
-        let new_helper = staged
-            .join(installation.executable.parent().unwrap_or(Path::new("")))
-            .join(executable_name("plume-updater"));
-        if !new_helper.is_file() {
-            return Err("The update is missing its installer.".into());
-        }
-        if cfg!(target_os = "macos") && installation.executable.starts_with("Contents") {
-            let status = io(Command::new("/usr/bin/codesign")
-                .args(["--verify", "--deep", "--strict"])
-                .arg(&staged)
-                .status())?;
-            if !status.success() {
-                return Err("The downloaded application failed verification.".into());
-            }
-        }
+        let installer = work.join(&release.installer_name);
+        crate::download::download(release, &installer, &progress)?;
         let helper_dir = work.join("helper");
         io(fs::create_dir(&helper_dir))?;
-        // Run the installer outside both folders being renamed. Windows keeps
-        // loaded executables and DLLs locked until their processes exit.
         io(fs::copy(
             &installation.helper,
             helper_dir.join(executable_name("plume-updater")),
@@ -137,19 +111,15 @@ pub fn prepare(
                 io(fs::copy(entry.path(), helper_dir.join(entry.file_name())))?;
             }
         }
-        let name = installation
-            .root
-            .file_name()
-            .ok_or("Invalid installation folder")?
-            .to_string_lossy();
         let plan = InstallPlan {
+            installer,
+            version: release.version.clone(),
             target: installation.root.clone(),
-            staged,
-            backup: parent.join(format!(".{name}.previous-{id}")),
             executable: installation.executable.clone(),
             parent_pid: std::process::id(),
             work: work.clone(),
         };
+        validate(&plan)?;
         io(fs::write(
             work.join("install.json"),
             serde_json::to_vec(&plan).map_err(|e| e.to_string())?,
@@ -185,18 +155,63 @@ pub fn start_helper(plan: &InstallPlan) -> Result<()> {
 }
 
 pub fn apply(plan: &InstallPlan) -> Result<()> {
+    apply_with(plan, install_native)
+}
+
+fn apply_with(
+    plan: &InstallPlan,
+    install: impl FnOnce(&InstallPlan, &Path) -> Result<()>,
+) -> Result<()> {
     validate(plan)?;
     wait_for_exit(plan.parent_pid)?;
-    if let Err(error) = replace(plan, |_| launch(plan, None)) {
-        // Reopen the restored app with a visible error instead of leaving the
-        // user with a closed application and a hidden installer log.
+    if let Err(error) = install(plan, &plan.installer) {
         let _ = launch(plan, Some(&error));
         return Err(error);
     }
-    // Keep the previous app for recovery. User data is outside the installation.
-    // On Windows the helper itself remains locked; cleanup is best-effort.
     let _ = fs::remove_dir_all(&plan.work);
     Ok(())
+}
+
+fn install_native(plan: &InstallPlan, installer: &Path) -> Result<()> {
+    #[cfg(windows)]
+    let status = io(Command::new(installer)
+        .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+        .arg(format!("/DIR={}", plan.target.display()))
+        .status())?;
+    #[cfg(target_os = "macos")]
+    let status = io(Command::new("/usr/bin/open")
+        .args(["-W", "-a", "Installer"])
+        .arg(installer)
+        .status())?;
+    #[cfg(target_os = "linux")]
+    let status = io(Command::new("/usr/bin/pkexec")
+        .args(["/usr/bin/dpkg", "--install"])
+        .arg(installer)
+        .status())?;
+    if !status.success() {
+        return Err("The installer did not complete. You can retry from GitHub Releases.".into());
+    }
+    // Linux packages and macOS packages own a fixed system installation path.
+    // Windows installs in the current user's existing installation directory.
+    let mut installed = plan.clone();
+    if cfg!(target_os = "linux") {
+        installed.target = PathBuf::from("/opt/plume");
+        installed.executable = PathBuf::from("plume");
+    } else if cfg!(target_os = "macos") {
+        installed.target = PathBuf::from("/Applications/Plume.app");
+        installed.executable = PathBuf::from("Contents/MacOS/plume");
+    }
+    let output = io(Command::new(installed.target.join(&installed.executable))
+        .arg("--version")
+        .output())?;
+    if !output.status.success()
+        || String::from_utf8_lossy(&output.stdout).trim() != format!("Plume {}", plan.version)
+    {
+        return Err(
+            "Installation was cancelled or the installed version could not be verified.".into(),
+        );
+    }
+    launch(&installed, None)
 }
 
 fn launch(plan: &InstallPlan, error: Option<&str>) -> Result<()> {
@@ -222,47 +237,31 @@ fn launch(plan: &InstallPlan, error: Option<&str>) -> Result<()> {
 }
 
 fn validate(plan: &InstallPlan) -> Result<()> {
-    if !plan.target.is_absolute()
-        || !plan.staged.is_absolute()
-        || !plan.work.is_absolute()
-        || plan.target.parent() != plan.work.parent()
-        || plan.target.parent() != plan.backup.parent()
-        || !plan.staged.starts_with(&plan.work)
-        || !plan.staged.join(&plan.executable).is_file()
-        || plan.backup.exists()
+    let extension = if cfg!(windows) {
+        "exe"
+    } else if cfg!(target_os = "macos") {
+        "pkg"
+    } else {
+        "deb"
+    };
+    if !plan.work.is_absolute()
+        || semver::Version::parse(&plan.version).is_err()
+        || plan.installer.parent() != Some(plan.work.as_path())
+        || !plan.installer.is_file()
+        || plan.installer.extension() != Some(std::ffi::OsStr::new(extension))
+        || !plan.target.is_absolute()
         || !plan.target.is_dir()
         || !plan
             .work
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with(".plume-update-"))
+        || plan.executable.as_os_str().is_empty()
         || plan
             .executable
             .components()
             .any(|part| !matches!(part, std::path::Component::Normal(_)))
-        || !plan
-            .backup
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().contains(".previous-"))
     {
-        return Err("Invalid update installation plan.".into());
-    }
-    Ok(())
-}
-
-fn replace(plan: &InstallPlan, launch: impl Fn(&Path) -> Result<()>) -> Result<()> {
-    io(fs::rename(&plan.target, &plan.backup))?;
-    if let Err(error) = fs::rename(&plan.staged, &plan.target) {
-        io(fs::rename(&plan.backup, &plan.target))?;
-        return Err(format!(
-            "Could not install the update; the previous app was restored: {error}"
-        ));
-    }
-    if let Err(error) = launch(&plan.target.join(&plan.executable)) {
-        io(fs::rename(&plan.target, &plan.staged))?;
-        io(fs::rename(&plan.backup, &plan.target))?;
-        return Err(format!(
-            "Could not launch the update; the previous app was restored: {error}"
-        ));
+        return Err("Invalid native installer plan.".into());
     }
     Ok(())
 }
@@ -336,52 +335,78 @@ mod tests {
             std::process::id(),
             io_time().unwrap()
         ));
-        fs::create_dir(&root).unwrap();
         let work = root.join(".plume-update-test");
-        let staged = work.join("extracted/new");
         let target = root.join("Plume");
-        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&work).unwrap();
         fs::create_dir(&target).unwrap();
-        fs::write(target.join("plume"), b"old").unwrap();
-        fs::write(staged.join("plume"), b"new").unwrap();
+        let extension = if cfg!(windows) {
+            "exe"
+        } else if cfg!(target_os = "macos") {
+            "pkg"
+        } else {
+            "deb"
+        };
+        let installer = work.join(format!("Plume.{extension}"));
+        fs::write(&installer, b"installer").unwrap();
         InstallPlan {
+            installer,
+            version: "0.2.0".into(),
             target,
-            staged,
-            backup: root.join(".Plume.previous-test"),
             executable: "plume".into(),
             parent_pid: 1,
             work,
         }
     }
     #[test]
-    fn replacement_keeps_backup_and_does_not_touch_external_user_data() {
-        let plan = fixture();
-        let parent = plan.target.parent().unwrap();
-        fs::write(parent.join("history.json"), "history").unwrap();
+    fn rejects_installer_outside_download_folder_and_unsafe_executable() {
+        let mut plan = fixture();
         validate(&plan).unwrap();
-        replace(&plan, |exe| {
-            assert_eq!(fs::read(exe).unwrap(), b"new");
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(fs::read(plan.backup.join("plume")).unwrap(), b"old");
-        assert_eq!(fs::read(parent.join("history.json")).unwrap(), b"history");
-        fs::remove_dir_all(parent).unwrap();
+        let root = plan.target.parent().unwrap().to_path_buf();
+        plan.installer = plan.target.join("outside.exe");
+        assert!(validate(&plan).is_err());
+        plan.installer = fs::read_dir(&plan.work)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        plan.executable = "../other-app".into();
+        assert!(validate(&plan).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn failed_restart_rolls_back_to_the_previous_app() {
-        let plan = fixture();
-        assert!(replace(&plan, |_| Err("launch failed".into())).is_err());
-        assert_eq!(fs::read(plan.target.join("plume")).unwrap(), b"old");
-        assert!(!plan.backup.exists());
-        fs::remove_dir_all(plan.target.parent().unwrap()).unwrap();
-    }
-    #[test]
-    fn rejects_a_stage_outside_the_work_directory() {
+    fn waits_for_parent_before_starting_installer_without_touching_user_data() {
         let mut plan = fixture();
         let root = plan.target.parent().unwrap().to_path_buf();
-        plan.staged = plan.target.clone();
-        assert!(validate(&plan).is_err());
+        fs::write(root.join("history.json"), b"history").unwrap();
+        let mut parent = if cfg!(windows) {
+            Command::new(
+                PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/ping.exe"),
+            )
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap()
+        } else {
+            Command::new("/bin/sleep").arg("30").spawn().unwrap()
+        };
+        plan.parent_pid = parent.id();
+        let marker = root.join("installed");
+        let marker_worker = marker.clone();
+        let worker = std::thread::spawn(move || {
+            apply_with(&plan, |_, installer| {
+                assert_eq!(fs::read(installer).unwrap(), b"installer");
+                fs::write(marker_worker, b"installed").unwrap();
+                Ok(())
+            })
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!marker.exists());
+        parent.kill().unwrap();
+        parent.wait().unwrap();
+        worker.join().unwrap().unwrap();
+        assert!(marker.exists());
+        assert_eq!(fs::read(root.join("history.json")).unwrap(), b"history");
         fs::remove_dir_all(root).unwrap();
     }
 }
