@@ -79,7 +79,13 @@ jobs:
           workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
       - run: node --test scripts/*.test.mjs
       - run: cargo build --workspace --locked
-      - run: cargo test --workspace --locked
+      - if: runner.os != 'Windows'
+        run: cargo test --workspace --locked
+      # Native runtime diagnostics on Windows can abort the test process before
+      # libtest prints the active test. Run serially without output capture so
+      # every test still runs and a native failure can be identified in the log.
+      - if: runner.os == 'Windows'
+        run: cargo test --workspace --locked -- --test-threads=1 --nocapture
       - run: python scripts/package-app.py --profile dev --skip-build
       - if: runner.os == 'Linux'
         run: xvfb-run cargo test --locked -p plume-app --lib tray::linux::tests::hidden_window_can_be_mapped_again -- --ignored
