@@ -8,6 +8,7 @@ name = "plume"
 path = "src/main.rs"
 
 [dependencies]
+stt-updater = { path = "../stt-updater" }
 stt-logging = { path = "../stt-logging" }
 tracing.workspace = true
 arboard = "3.6"

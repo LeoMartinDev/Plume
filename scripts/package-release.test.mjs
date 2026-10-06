@@ -19,7 +19,7 @@ test('native archive with real binaries, bundled runtimes and clean-environment 
   assert.equal(lock.status, 0, lock.stderr);
   const build = path.join(root, 'target/release');
   fs.mkdirSync(build, { recursive: true });
-  for (const name of fs.readdirSync(process.env.STT_PACKAGE_TEST_BUILD).filter(n => /^(plume|stt-shell)(\.exe)?$/.test(n) || /\.(dll|dylib|so)(\.\d+)*$/i.test(n))) {
+  for (const name of fs.readdirSync(process.env.STT_PACKAGE_TEST_BUILD).filter(n => /^(plume|stt-shell|plume-updater)(\.exe)?$/.test(n) || /\.(dll|dylib|so)(\.\d+)*$/i.test(n))) {
     fs.copyFileSync(path.join(process.env.STT_PACKAGE_TEST_BUILD, name), path.join(build, name));
     if (process.platform !== 'win32') fs.chmodSync(path.join(build, name), 0o755);
   }

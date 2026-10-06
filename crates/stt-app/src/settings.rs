@@ -2,6 +2,7 @@ mod actions;
 mod dictation;
 mod history_view;
 mod model;
+mod updates;
 mod view;
 mod window;
 
@@ -31,6 +32,7 @@ enum SettingsSection {
     Model,
     Appearance,
     History,
+    Updates,
 }
 
 impl SettingsSection {
@@ -40,6 +42,7 @@ impl SettingsSection {
             Self::Model => "Model",
             Self::Appearance => "Appearance",
             Self::History => "History",
+            Self::Updates => "Updates",
         }
     }
 
@@ -49,6 +52,7 @@ impl SettingsSection {
             Self::Model => "fluent/cube.svg",
             Self::Appearance => "fluent/theme.svg",
             Self::History => "fluent/history.svg",
+            Self::Updates => "fluent/cube.svg",
         }
     }
 }
@@ -80,6 +84,7 @@ pub struct SettingsView {
     history_menu: Option<HistoryLimitMenu>,
     copied_history_id: Option<u64>,
     copy_feedback_serial: u64,
+    update: updates::UpdateState,
     _appearance: Subscription,
 }
 

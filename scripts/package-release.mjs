@@ -36,7 +36,7 @@ const stage = path.join(dist, name);
 if (fs.existsSync(stage)) throw new Error(`Output already exists: ${stage}`);
 fs.mkdirSync(stage, { recursive: true });
 const extension = platform === 'win32' ? '.exe' : '';
-const executableSources = ['plume', 'stt-shell'].map(n => path.join(build, n + extension));
+const executableSources = ['plume', 'stt-shell', 'plume-updater'].map(n => path.join(build, n + extension));
 const libraryPattern = platform === 'win32' ? /\.dll$/i : platform === 'darwin' ? /\.dylib$/ : /\.so(?:\.\d+)*$/;
 const candidates = new Map();
 function register(files) {
@@ -226,6 +226,8 @@ try {
   }
   const output = run(path.join(root, 'stt-shell' + extension), ['--help'], { cwd: extracted, env });
   if (!output.includes(`stt-shell ${version}`) && !/usage|transcribe/i.test(output)) throw new Error('stt-shell --help did not print the expected version or usage');
+  const helper = run(path.join(root, 'plume-updater' + extension), ['--help'], { cwd: extracted, env });
+  if (!helper.includes(`Plume updater ${version}`)) throw new Error('Bundled updater could not start');
   console.log(output);
   console.log(`Archive verified: ${archive}\nSHA-256: ${digest}`);
 } finally {

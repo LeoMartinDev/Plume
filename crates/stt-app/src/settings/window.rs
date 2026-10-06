@@ -55,6 +55,11 @@ fn open_settings_window(
     dirs: crate::dirs::AppDirs,
     settings_preview: bool,
 ) {
+    let mut arguments = std::env::args();
+    let update_error = arguments
+        .find(|argument| argument == "--update-error")
+        .and_then(|_| arguments.next())
+        .map(|error| error.chars().take(4096).collect::<String>());
     let height = SETTINGS_CONTENT_HEIGHT + if cfg!(target_os = "macos") { 32. } else { 0. };
     let bounds = Bounds::centered(None, size(px(720.), px(height)), cx);
     let history_path = dirs.history_path();
@@ -109,11 +114,13 @@ fn open_settings_window(
                     let _appearance = cx.observe_window_appearance(window, |_, _, cx| {
                         cx.notify();
                     });
-                    SettingsView {
+                    let mut view = SettingsView {
                         phase,
                         prefs_path,
                         settings_preview,
-                        section: if settings_preview {
+                        section: if update_error.is_some() {
+                            SettingsSection::Updates
+                        } else if settings_preview {
                             SettingsSection::History
                         } else {
                             SettingsSection::Model
@@ -134,8 +141,17 @@ fn open_settings_window(
                         history_menu: None,
                         copied_history_id: None,
                         copy_feedback_serial: 0,
+                        update: update_error
+                            .map(super::updates::UpdateState::Error)
+                            .unwrap_or(super::updates::UpdateState::Idle),
                         _appearance,
+                    };
+                    if !settings_preview
+                        && !matches!(view.update, super::updates::UpdateState::Error(_))
+                    {
+                        view.check_updates(cx);
                     }
+                    view
                 })
             },
         )

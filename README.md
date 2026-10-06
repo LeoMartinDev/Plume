@@ -47,6 +47,7 @@ Plume stays in your menu bar or system tray. Click its icon to reopen settings; 
 - **Make insertion work for you.** Use automatic insertion, clipboard paste or typing, with an optional copy-to-clipboard fallback when insertion fails.
 - **Find previous transcriptions.** Copy or delete entries from local history. Set how long to keep them and how many to retain, or choose unlimited history.
 - **Match your desktop.** Choose light, dark or system appearance and keep Plume close at hand in the tray.
+- **Stay up to date.** Plume checks GitHub Releases at startup. Download an update from **Settings → Updates**, then choose **Restart and install** when you're ready.
 
 ## Available models
 
@@ -65,7 +66,7 @@ The language picker currently offers **Automatic**, **French** and **English**. 
 
 ## Your data stays on your computer
 
-Your audio is processed locally. An internet connection is needed to download models, but not for dictation afterward. Transcription history is stored locally too; you control its retention and can delete it from settings.
+Your audio is processed locally. An internet connection is needed to download models and check or download app updates, but not for dictation afterward. Transcription history is stored locally too; you control its retention and can delete it from settings.
 
 ## Feedback and development
 

@@ -39,6 +39,9 @@ def package(profile, skip_build):
         (contents / "MacOS").mkdir(parents=True, exist_ok=True)
         (contents / "Resources").mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary, contents / "MacOS" / "plume")
+        helper = binary.parent / "plume-updater"
+        if helper.is_file():
+            shutil.copy2(helper, contents / "MacOS" / helper.name)
         shutil.copy2(BRAND / "plume.icns", contents / "Resources" / "plume.icns")
         with (APP / "packaging" / "Info.plist").open("rb") as source:
             info = plistlib.load(source)

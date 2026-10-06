@@ -48,7 +48,7 @@ jobs:
       - if: runner.os == 'Windows'
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: 1.3.290.0
+          version: 1.3.296.0
           cache: true
       - name: Prepare platform runtime dependencies
         run: node scripts/setup-native-runtime.mjs
@@ -100,7 +100,7 @@ jobs:
       - if: runner.os == 'Windows'
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: 1.3.290.0
+          version: 1.3.296.0
           cache: true
       - name: Prepare platform runtime dependencies
         run: node scripts/setup-native-runtime.mjs
@@ -119,7 +119,7 @@ jobs:
       - if: runner.os == 'macOS'
         name: Allow initial runtime lookup and Mach-O relocation
         run: echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,@loader_path -C link-arg=-Wl,-headerpad_max_install_names' >> "$GITHUB_ENV"
-      - run: cargo build --locked --release -p stt-app -p stt-shell
+      - run: cargo build --locked --release -p stt-app -p stt-shell -p stt-updater
       - name: Bundle runtimes, relocate, archive, checksum and smoke-test extraction
         run: node scripts/package-release.mjs
       - uses: actions/upload-artifact@v4
