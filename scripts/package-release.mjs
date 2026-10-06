@@ -143,18 +143,41 @@ if (platform === 'darwin') {
   }
 }
 fs.copyFileSync('README.md', path.join(stage, 'README.md'));
+if (fs.existsSync('docs')) fs.cpSync('docs', path.join(stage, 'docs'), { recursive: true });
+const brand = path.join(stage, 'crates/stt-app/assets/brand');
+fs.mkdirSync(brand, { recursive: true });
+fs.copyFileSync('crates/stt-app/assets/brand/plume.png', path.join(brand, 'plume.png'));
 fs.copyFileSync(`releases/v${version}.md`, path.join(stage, 'RELEASE-NOTES.md'));
 fs.writeFileSync(path.join(stage, 'RUNTIME-LIBRARIES.txt'), [...copied.keys()].filter(n => libraryPattern.test(n)).join('\n') + '\n');
 fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), 'These archives are not publisher-signed or notarized. macOS binaries use only local ad-hoc signatures after relocation. Models are downloaded separately. See README.md.\n');
+if (platform === 'darwin') {
+  const app = path.join(stage, 'Plume.app');
+  const contents = path.join(app, 'Contents');
+  const macos = path.join(contents, 'MacOS');
+  fs.mkdirSync(macos, { recursive: true });
+  fs.mkdirSync(path.join(contents, 'Resources'));
+  for (const basename of copied.keys()) {
+    if (basename === 'stt-shell') continue;
+    fs.copyFileSync(path.join(stage, basename), path.join(macos, basename));
+    fs.chmodSync(path.join(macos, basename), 0o755);
+  }
+  fs.copyFileSync('crates/stt-app/assets/brand/plume.icns', path.join(contents, 'Resources', 'plume.icns'));
+  fs.copyFileSync('crates/stt-app/packaging/Info.plist', path.join(contents, 'Info.plist'));
+  for (const key of ['CFBundleShortVersionString', 'CFBundleVersion']) run('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${version}`, path.join(contents, 'Info.plist')]);
+  run('codesign', ['--force', '--sign', '-', app]);
+  run('codesign', ['--verify', '--deep', '--strict', app]);
+}
 // Preserve license notices supplied alongside native runtimes where available.
 const licenseDir = path.join(stage, 'runtime-licenses');
 for (const [basename, source] of copied) {
   if (!libraryPattern.test(basename)) continue;
-  for (const f of fs.readdirSync(path.dirname(source)).filter(n => /license|notice|copyright/i.test(n))) {
-    const sourceFile = path.join(path.dirname(source), f);
-    if (fs.statSync(sourceFile).isFile()) {
-      fs.mkdirSync(licenseDir, { recursive: true });
-      fs.copyFileSync(sourceFile, path.join(licenseDir, `${basename}-${f}`));
+  for (const directory of [path.dirname(source), path.dirname(path.dirname(source))]) {
+    for (const f of fs.readdirSync(directory).filter(n => /license|notice|copyright/i.test(n))) {
+      const sourceFile = path.join(directory, f);
+      if (fs.statSync(sourceFile).isFile()) {
+        fs.mkdirSync(licenseDir, { recursive: true });
+        fs.copyFileSync(sourceFile, path.join(licenseDir, `${basename}-${f}`));
+      }
     }
   }
 }
@@ -182,11 +205,14 @@ try {
     }
   }
   if (platform === 'darwin') {
+    const nativeApp = path.join(root, 'Plume.app', 'Contents', 'MacOS');
     for (const basename of copied.keys()) {
-      const file = path.join(root, basename);
-      for (const line of run('otool', ['-L', file]).split('\n').slice(1)) {
-        const dep = line.trim().split(' (')[0];
-        if (dep && !macSystem(dep) && (!dep.startsWith('@loader_path/') || !fs.existsSync(path.join(root, dep.slice(13))))) throw new Error(`Runtime escaped archive: ${dep}`);
+      for (const directory of basename === 'stt-shell' ? [root] : [root, nativeApp]) {
+        const file = path.join(directory, basename);
+        for (const line of run('otool', ['-L', file]).split('\n').slice(1)) {
+          const dep = line.trim().split(' (')[0];
+          if (dep && !macSystem(dep) && (!dep.startsWith('@loader_path/') || !fs.existsSync(path.join(directory, dep.slice(13))))) throw new Error(`Runtime escaped archive: ${dep}`);
+        }
       }
     }
   }

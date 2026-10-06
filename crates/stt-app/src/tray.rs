@@ -86,10 +86,9 @@ mod macos {
     use cocoa::{
         appkit::{
             NSApplication, NSApplicationActivationPolicy, NSEventMask, NSEventModifierFlags,
-            NSEventType, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
-            NSWindow,
+            NSEventType, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSWindow,
         },
-        base::{id, nil, YES},
+        base::{id, nil, NO},
         foundation::{NSInteger, NSSize, NSString, NSUInteger},
     };
     use gpui::{App, Window};
@@ -178,7 +177,7 @@ mod macos {
         // SAFETY: called on the AppKit main thread. NSData copies the embedded
         // PNG; the button retains its NSImage after setImage:.
         unsafe {
-            let bytes = include_bytes!("../assets/brand/plume-template.png");
+            let bytes = include_bytes!("../assets/brand/plume-menubar.png");
             let data: id = Class::get("NSData")
                 .unwrap()
                 .send_message(
@@ -204,10 +203,15 @@ mod macos {
                 return;
             }
             let _: () = (&*image)
-                .send_message(Sel::register("setSize:"), (NSSize::new(22., 22.),))
+                .send_message(Sel::register("setSize:"), (NSSize::new(18., 18.),))
                 .unwrap();
             let _: () = (&*image)
-                .send_message(Sel::register("setTemplate:"), (YES,))
+                .send_message(Sel::register("setTemplate:"), (NO,))
+                .unwrap();
+            // NSImageOnly: do not depend on the status button's default
+            // leading-image/text layout when the button has no title.
+            let _: () = (&*button)
+                .send_message(Sel::register("setImagePosition:"), (1 as NSInteger,))
                 .unwrap();
             let _: () = (&*button)
                 .send_message(Sel::register("setImage:"), (image,))
@@ -228,10 +232,25 @@ mod macos {
                 let target: id = target_class()
                     .send_message(Sel::register("new"), ())
                     .unwrap();
+                NSApplication::sharedApplication(nil).setActivationPolicy_(
+                    NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+                );
                 let bar = NSStatusBar::systemStatusBar(nil);
-                let item = bar.statusItemWithLength_(NSVariableStatusItemLength);
+                let item = bar.statusItemWithLength_(28.);
                 let _: id = (&*item).send_message(Sel::register("retain"), ()).unwrap();
                 install_logo(item.button());
+                let position: NSInteger = (&*item.button())
+                    .send_message(Sel::register("imagePosition"), ())
+                    .unwrap();
+                let frame: cocoa::foundation::NSRect = (&*item.button())
+                    .send_message(Sel::register("frame"), ())
+                    .unwrap();
+                tracing::debug!(
+                    position,
+                    width = frame.size.width,
+                    height = frame.size.height,
+                    "Plume status icon layout"
+                );
                 let title = NSString::alloc(nil).init_str("Plume");
                 let _: () = (&*item.button())
                     .send_message(Sel::register("setToolTip:"), (title,))
@@ -276,9 +295,6 @@ mod macos {
                 let _: NSInteger = (&*button)
                     .send_message(Sel::register("sendActionOn:"), (mask.bits(),))
                     .unwrap();
-                NSApplication::sharedApplication(nil).setActivationPolicy_(
-                    NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-                );
                 Self { item, target, menu }
             }
         }

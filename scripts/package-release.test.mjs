@@ -24,6 +24,9 @@ test('native archive with real binaries, bundled runtimes and clean-environment 
     if (process.platform !== 'win32') fs.chmodSync(path.join(build, name), 0o755);
   }
   fs.writeFileSync(path.join(root, 'README.md'), '# Native package test\n');
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  fs.cpSync(path.join(repo, 'crates/stt-app/packaging'), path.join(root, 'crates/stt-app/packaging'), { recursive: true });
+  fs.cpSync(path.join(repo, 'crates/stt-app/assets/brand'), path.join(root, 'crates/stt-app/assets/brand'), { recursive: true });
   fs.mkdirSync(path.join(root, 'releases'));
   fs.writeFileSync(path.join(root, 'releases/v0.1.0.md'), '# Fixture notes\n');
   const script = fileURLToPath(new URL('./package-release.mjs', import.meta.url));
