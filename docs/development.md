@@ -210,7 +210,10 @@ tests startup/linking; microphone, GUI, GPU and model inference still require
 manual testing on the intended machines.
 
 Only after all jobs pass does CI create a **draft** GitHub release with the Markdown
-notes and all six assets. Rerunning the workflow refreshes that draft and its
+notes and all six assets. To rebuild an existing unpublished tag with the latest
+workflow fixes, run the CI workflow manually from main with `release_tag` set to
+that tag (for example, `v0.1.0`). It checks out the original tagged code and restores
+the annotated tag before validation; the tag is not moved. Rerunning refreshes that draft and its
 assets; a published release is refused. Review the draft before publishing it
 manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
 secrets are required.

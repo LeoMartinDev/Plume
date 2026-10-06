@@ -5,29 +5,42 @@ on:
     branches: [main]
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated release tag to rebuild (unpublished releases only)
+        required: true
+        type: string
+
+# A manual rebuild uses the workflow on main while building the immutable tag.
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   release-check:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
+      # checkout can fetch the event's commit into the tag ref, dropping its
+      # annotation. Restore the actual remote tag object before validating it.
+      - name: Restore annotated release tag
+        run: git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
       - name: Check exact SemVer tag, versions, lockfile and committed notes
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: node release.mjs --check-tag "$RELEASE_TAG"
       - name: Require release commit on main
         run: |
@@ -41,6 +54,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -74,6 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -81,7 +98,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo fmt --check
   archive:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     needs: [release-check, build, lint]
     strategy:
       fail-fast: false
@@ -96,6 +113,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -140,7 +159,7 @@ jobs:
           if-no-files-found: error
           overwrite: true
   draft:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     needs: [release-check, build, lint, archive]
     runs-on: ubuntu-24.04
     permissions:
@@ -148,6 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -158,11 +178,12 @@ jobs:
           pattern: release-*
           path: release-assets
           merge-multiple: true
-      - name: Recheck main ancestry before creating or refreshing the draft
+      - name: Restore release tag and recheck main ancestry before creating or refreshing the draft
         run: |
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           git fetch origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor HEAD origin/main
       - name: Create or refresh draft (published releases are refused)
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/publish-release.mjs
+        run: GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$(git rev-parse HEAD)" node scripts/publish-release.mjs
