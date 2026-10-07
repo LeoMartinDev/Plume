@@ -95,13 +95,13 @@ fn set_native_visible(id: u32, visible: bool) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-pub(crate) fn hide_window(window: &Window) {
+pub(crate) fn hide_window(window: &Window, _cx: &App) {
     if let Err(error) = set_visible(window, false) {
         tracing::warn!("plume-app: hide settings: {error}");
     }
 }
 
-pub(crate) fn show_window(window: &Window) {
+pub(crate) fn show_window(window: &Window, _cx: &App) {
     if let Err(error) = set_visible(window, true) {
         tracing::warn!("plume-app: show settings: {error}");
     }

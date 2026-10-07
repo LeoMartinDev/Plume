@@ -165,8 +165,8 @@ pub fn show_settings(cx: &mut App) {
     let handle = *SETTINGS.lock().expect("settings handle");
     if let Some(handle) = handle {
         cx.activate(true);
-        let _ = handle.update(cx, |_, window, _| {
-            crate::tray::show_window(window);
+        let _ = handle.update(cx, |_, window, cx| {
+            crate::tray::show_window(window, cx);
             window.activate_window();
         });
     }
@@ -178,7 +178,7 @@ fn hide_settings(cx: &mut App) {
         let _ = handle.update(cx, |view, window, cx| {
             view.reset_for_phase();
             window.blur();
-            crate::tray::hide_window(window);
+            crate::tray::hide_window(window, cx);
             cx.notify();
         });
     }

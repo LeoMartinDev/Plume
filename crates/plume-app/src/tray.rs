@@ -56,7 +56,7 @@ mod linux;
 pub(crate) use linux::{hide_window, install, show_window};
 
 #[cfg(target_os = "macos")]
-pub(crate) fn show_window(_window: &gpui::Window) {}
+pub(crate) fn show_window(_window: &gpui::Window, _cx: &gpui::App) {}
 
 /// The Plume mark on a black tile, visible on light and dark trays.
 #[cfg(any(windows, target_os = "linux", test))]
@@ -317,7 +317,7 @@ mod macos {
         super::keep_alive(cx, Tray::new());
     }
 
-    pub(crate) fn hide_window(window: &Window) {
+    pub(crate) fn hide_window(window: &Window, _cx: &App) {
         let Ok(handle) = HasWindowHandle::window_handle(window) else {
             return;
         };
