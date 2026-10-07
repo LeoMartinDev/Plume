@@ -56,7 +56,7 @@ Outputs are `target/package/Plume.app` on macOS, `target/package/plume-windows` 
 
 On macOS, open `Plume.app` or copy it to Applications to see the icon in Finder/Launchpad. The local bundle is ad-hoc signed; public distribution requires signing and notarization. On Linux, copy the package's `bin` and `share` contents into a prefix such as `~/.local`, with its `bin` on `PATH`, and refresh the desktop icon cache if needed. On Windows, Explorer and shortcuts use the embedded icon without a separate icon file.
 
-Icon sources and platform exports are kept in `crates/plume-app/assets/brand`, so packaging does not depend on the design-output folder.
+Icon sources and platform exports are kept in `crates/plume-app/assets/brand`. Regenerate the native icons with `node scripts/generate-icons.mjs` (requires `sharp`; macOS also uses `iconutil` for ICNS).
 
 ## Configuration and history
 
