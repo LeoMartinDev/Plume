@@ -5,12 +5,20 @@ const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 use super::super::SettingsView;
 
 impl SettingsView {
+    fn invalidate_history_list(&self) {
+        super::super::history_view::invalidate_list(
+            &self.history_list,
+            self.history.entries().len(),
+        );
+    }
+
     pub(in crate::settings) fn record_result(
         &mut self,
         result: plume_session::DictationResult,
         cx: &mut Context<Self>,
     ) {
         self.history_error = self.history.push(result).err();
+        self.invalidate_history_list();
         cx.notify();
     }
 
@@ -47,11 +55,13 @@ impl SettingsView {
 
     pub(in crate::settings) fn delete_history(&mut self, id: u64, cx: &mut Context<Self>) {
         self.history_error = self.history.delete(id).err();
+        self.invalidate_history_list();
         cx.notify();
     }
 
     pub(in crate::settings) fn clear_history(&mut self, cx: &mut Context<Self>) {
         self.history_error = self.history.clear().err();
+        self.invalidate_history_list();
         cx.notify();
     }
 
@@ -77,6 +87,7 @@ impl SettingsView {
                 self.history_error = Some(error);
             }
         }
+        self.invalidate_history_list();
         cx.notify();
     }
 }

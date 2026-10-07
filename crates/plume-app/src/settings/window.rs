@@ -131,6 +131,14 @@ fn open_settings_window(
                         capture: ShortcutCapture::idle(),
                         hold_focus: cx.focus_handle().tab_stop(true),
                         content_scroll: ScrollHandle::new(),
+                        history_list: gpui::ListState::new(
+                            0,
+                            gpui::ListAlignment::Top,
+                            gpui::px(200.),
+                        )
+                        .measure_all(),
+                        history_list_width: None,
+                        scrollbar_drag: Default::default(),
                         hold_target: None,
                         engine_target: None,
                         language_target: None,

@@ -135,6 +135,16 @@ impl Render for SettingsView {
         };
         sync_native_titlebar(window, palette);
         let tokens = Tokens::new(palette);
+        let is_history = self.section == SettingsSection::History;
+        if is_history && self.history_list_width != Some(window.viewport_size().width) {
+            super::history_view::invalidate_list(&self.history_list, self.history.entries().len());
+            self.history_list_width = Some(window.viewport_size().width);
+        }
+        let scroll = if is_history {
+            ContentScroll::History(self.history_list.clone())
+        } else {
+            ContentScroll::Page(self.content_scroll.clone())
+        };
         let content = match self.section {
             SettingsSection::Dictation => dictation_page(self, &tokens, &prefs, cx),
             SettingsSection::Model => model_page(self, &tokens, &prefs, cx),
@@ -161,17 +171,18 @@ impl Render for SettingsView {
                         div()
                             .id("settings-content")
                             .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.content_scroll)
+                            .when(!is_history, |el| {
+                                el.overflow_y_scroll().track_scroll(&self.content_scroll)
+                            })
+                            .when(is_history, |el| el.overflow_hidden())
                             .rounded(px(12.))
                             .border_1()
                             .border_color(tokens.hairline)
                             .bg(tokens.content)
-                            .px(px(28.))
-                            .py(px(24.))
+                            .when(!is_history, |el| el.px(px(28.)).py(px(24.)))
                             .child(content),
                     )
-                    .child(scrollbar(self.content_scroll.clone(), tokens.muted)),
+                    .child(scrollbar(scroll, self.scrollbar_drag.clone(), tokens.muted)),
             );
 
         let shell = div()
@@ -188,37 +199,143 @@ impl Render for SettingsView {
     }
 }
 
-fn scrollbar(scroll: ScrollHandle, color: Rgba) -> impl IntoElement {
+#[derive(Clone)]
+enum ContentScroll {
+    Page(ScrollHandle),
+    History(gpui::ListState),
+}
+
+impl ContentScroll {
+    fn metrics(&self) -> (f32, f32, f32) {
+        let (maximum, viewport, offset) = match self {
+            Self::Page(handle) => (
+                handle.max_offset().height,
+                handle.bounds().size.height,
+                -handle.offset().y,
+            ),
+            Self::History(state) => (
+                state.max_offset_for_scrollbar().height,
+                state.viewport_bounds().size.height,
+                -state.scroll_px_offset_for_scrollbar().y,
+            ),
+        };
+        (maximum.into(), viewport.into(), offset.into())
+    }
+
+    fn set_offset(&self, offset: f32) {
+        let position = point(px(0.), px(-offset));
+        match self {
+            Self::Page(handle) => handle.set_offset(position),
+            Self::History(state) => state.set_offset_from_scrollbar(position),
+        }
+    }
+
+    fn start_drag(&self) {
+        if let Self::History(state) = self {
+            state.scrollbar_drag_started();
+        }
+    }
+
+    fn end_drag(&self) {
+        if let Self::History(state) = self {
+            state.scrollbar_drag_ended();
+        }
+    }
+}
+
+fn scrollbar(
+    scroll: ContentScroll,
+    drag: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    color: Rgba,
+) -> impl IntoElement {
+    use gpui::{
+        DispatchPhase, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    };
     canvas(
-        move |_, _, _| (),
-        move |track, _, window, _| {
-            let max_offset: f32 = scroll.max_offset().height.into();
-            if max_offset <= 0. {
+        move |track, window, _| window.insert_hitbox(track, HitboxBehavior::Normal),
+        move |track, hitbox, window, _| {
+            let (maximum, viewport, offset) = scroll.metrics();
+            if maximum <= 0. {
                 return;
             }
-
-            let viewport_height: f32 = scroll.bounds().size.height.into();
-            let track_height: f32 = track.size.height.into();
-            let thumb_height = (track_height * viewport_height / (viewport_height + max_offset))
+            let height: f32 = track.size.height.into();
+            let thumb_height = (height * viewport / (viewport + maximum))
                 .max(24.)
-                .min(track_height);
-            let offset: f32 = (-scroll.offset().y).into();
-            let thumb_top = (track_height - thumb_height) * (offset / max_offset);
-
+                .min(height);
+            let travel = height - thumb_height;
+            let top: f32 = track.top().into();
+            let thumb_top = travel * (offset / maximum).clamp(0., 1.);
             window.paint_quad(fill(
                 bounds(
-                    point(track.left(), track.top() + px(thumb_top)),
-                    size(track.size.width, px(thumb_height)),
+                    point(track.left() + px(4.), track.top() + px(thumb_top)),
+                    size(px(4.), px(thumb_height)),
                 ),
                 color,
             ));
+            let down_scroll = scroll.clone();
+            let down_drag = drag.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble
+                    || event.button != MouseButton::Left
+                    || !hitbox.is_hovered(window)
+                {
+                    return;
+                }
+                let y: f32 = event.position.y.into();
+                let relative = y - top - thumb_top;
+                let grab = if (0. ..=thumb_height).contains(&relative) {
+                    relative
+                } else {
+                    thumb_height / 2.
+                };
+                down_scroll.start_drag();
+                down_drag.set(Some(grab));
+                if travel > 0. {
+                    down_scroll.set_offset(((y - top - grab) / travel).clamp(0., 1.) * maximum);
+                }
+                cx.stop_propagation();
+                window.refresh();
+            });
+            let move_scroll = scroll.clone();
+            let move_drag = drag.clone();
+            // Capture movement across the entire window, including outside the narrow track.
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                let Some(grab) = move_drag.get() else {
+                    return;
+                };
+                if !event.dragging() {
+                    move_drag.set(None);
+                    move_scroll.end_drag();
+                    return;
+                }
+                let y: f32 = event.position.y.into();
+                let (maximum, _, _) = move_scroll.metrics();
+                if travel > 0. {
+                    move_scroll.set_offset(((y - top - grab) / travel).clamp(0., 1.) * maximum);
+                }
+                cx.stop_propagation();
+                window.refresh();
+            });
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture
+                    && event.button == MouseButton::Left
+                    && drag.take().is_some()
+                {
+                    scroll.end_drag();
+                    cx.stop_propagation();
+                    window.refresh();
+                }
+            });
         },
     )
     .absolute()
     .top(px(16.))
     .bottom(px(16.))
-    .right(px(12.))
-    .w(px(4.))
+    .right(px(8.))
+    .w(px(12.))
 }
 
 fn sidebar(
@@ -309,6 +426,8 @@ fn nav_item(
                     this.language_open = false;
                     this.insertion_open = false;
                     this.history_menu = None;
+                    this.scrollbar_drag.set(None);
+                    this.history_list.scrollbar_drag_ended();
                     this.section = section;
                     window.blur();
                     cx.notify();

@@ -182,7 +182,9 @@ fn catalog_model_row(
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(6.))
-                .children(can_delete.then(|| catalog_model_delete_button(tokens, entry.id, cx)))
+                .child(div().w(px(32.)).flex_shrink_0().children(
+                    can_delete.then(|| catalog_model_delete_button(tokens, entry.id, cx)),
+                ))
                 .child(catalog_model_button(tokens, entry.id, label, enabled, cx)),
         )
         .children(progress.and_then(|progress| catalog_model_progress(progress, tokens)))
@@ -197,7 +199,14 @@ fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoEleme
         .flex_row()
         .items_center()
         .gap(px(6.))
-        .child(div().text_xs().text_color(tokens.muted).child(label))
+        .child(
+            div()
+                .w(px(48.))
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(tokens.muted)
+                .child(label),
+        )
         .child(
             div()
                 .flex()
@@ -260,11 +269,16 @@ fn catalog_model_button(
             el.border_1().border_color(tokens.hairline).bg(tokens.fill)
         })
         .text_sm()
-        .text_color(if enabled { tokens.text } else { tokens.muted })
+        .text_color(if enabled || status {
+            tokens.text
+        } else {
+            tokens.muted
+        })
         .when(status, |el| el.font_weight(FontWeight::MEDIUM))
         .when(enabled, |el| {
             el.cursor_pointer()
                 .hover(|style| style.bg(tokens.fill_hover))
+                .active(|style| style.bg(tokens.group))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.capture.cancel();
                     let mut prefs = this.phase.prefs().clone();
@@ -292,6 +306,7 @@ fn catalog_model_delete_button(
         .text_color(tokens.muted)
         .cursor_pointer()
         .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
+        .active(|style| style.bg(tokens.fill))
         .on_click(cx.listener(move |this, _event, _window, cx| {
             this.capture.cancel();
             this.delete_model(id, cx);
@@ -405,6 +420,8 @@ fn language_row(
                 .text_sm()
                 .cursor_pointer()
                 .hover(|style| style.bg(tokens.fill_hover))
+                .when(open, |el| el.bg(tokens.fill_hover))
+                .active(|style| style.bg(tokens.group))
                 .on_click(cx.listener(|this, _event, _window, cx| {
                     this.language_open = !this.language_open;
                     cx.notify();

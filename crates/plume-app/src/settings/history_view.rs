@@ -1,18 +1,51 @@
 use gpui::{
-    deferred, div, prelude::*, px, svg, AnyElement, Context, ElementId, FontWeight, SharedString,
+    deferred, div, list, prelude::*, px, svg, AnyElement, Context, ElementId, FontWeight,
+    SharedString,
 };
-use plume_ui::{ListGroup, Tokens};
+use plume_ui::Tokens;
 
 use super::view::{error_text, page, settings_group};
 use super::{HistoryLimitMenu, SettingsView};
 use crate::history_policy::HistoryPolicy;
 
 pub(super) fn history_page(
+    view: &mut SettingsView,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    let item_count = view.history.entries().len() + 1;
+    if view.history_list.item_count() != item_count {
+        view.history_list.reset(item_count);
+    }
+    let entity = cx.entity();
+    let tokens = *tokens;
+    list(view.history_list.clone(), move |index, _, cx| {
+        entity.update(cx, |view, cx| {
+            let item = if index == 0 {
+                div()
+                    .pt(px(24.))
+                    .pb(px(10.))
+                    .child(history_header(view, &tokens, cx))
+                    .into_any_element()
+            } else {
+                div()
+                    .when(index == view.history.entries().len(), |el| el.pb(px(24.)))
+                    .child(history_entry(view, index - 1, &tokens, cx))
+                    .into_any_element()
+            };
+            div().w_full().px(px(28.)).child(item).into_any_element()
+        })
+    })
+    .size_full()
+    .into_any_element()
+}
+
+fn history_header(
     view: &SettingsView,
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let entries = view.history.entries().to_vec();
+    let entries = view.history.entries();
     let body = div()
         .flex()
         .flex_col()
@@ -61,95 +94,106 @@ pub(super) fn history_page(
                     .text_color(tokens.muted)
                     .child("No transcriptions yet."),
             )
-        })
-        .when(!entries.is_empty(), |list| {
-            list.child(
-                ListGroup::new(*tokens).children(entries.into_iter().map(move |entry| {
-                    let copy_text = entry.text.clone();
-                    let id = entry.id;
-                    let copied = view.copied_history_id == Some(id);
-                    div()
-                        .w_full()
-                        .px(px(14.))
-                        .py(px(12.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(7.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(7.))
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(entry.status),
-                                        )
-                                        .child(
-                                            div().text_xs().text_color(tokens.muted).child(
-                                                entry
-                                                    .application
-                                                    .unwrap_or_else(|| "Unknown app".into()),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(if copied {
-                                                    tokens.accent
-                                                } else {
-                                                    tokens.muted
-                                                })
-                                                .child(if copied {
-                                                    "Copied".to_string()
-                                                } else {
-                                                    crate::history::age_label(entry.created_at)
-                                                }),
-                                        )
-                                        .child(icon_button(
-                                            tokens,
-                                            ("history-copy", id),
-                                            "fluent/copy.svg",
-                                            cx,
-                                            move |this, cx| {
-                                                this.copy_history(id, copy_text.clone(), cx);
-                                            },
-                                        ))
-                                        .child(icon_button(
-                                            tokens,
-                                            ("history-delete", id),
-                                            "fluent/delete.svg",
-                                            cx,
-                                            move |this, cx| {
-                                                this.delete_history(id, cx);
-                                            },
-                                        )),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .max_h(px(64.))
-                                .overflow_hidden()
-                                .child(entry.text),
-                        )
-                })),
-            )
         });
 
     page("History", body)
+}
+
+fn history_entry(
+    view: &SettingsView,
+    index: usize,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    let entry = &view.history.entries()[index];
+    let copy_text = entry.text.clone();
+    let id = entry.id;
+    let copied = view.copied_history_id == Some(id);
+    div()
+        .id(("history-entry", id))
+        .max_w(px(480.))
+        .bg(tokens.group)
+        .border_color(tokens.hairline)
+        .border_x_1()
+        .border_b_1()
+        .when(index == 0, |el| el.border_t_1().rounded_t(px(6.)))
+        .when(index + 1 == view.history.entries().len(), |el| {
+            el.rounded_b(px(6.))
+        })
+        .w_full()
+        .px(px(14.))
+        .py(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(7.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.))
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(entry.status.clone()),
+                        )
+                        .child(
+                            div().text_xs().text_color(tokens.muted).child(
+                                entry
+                                    .application
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown app".into()),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if copied { tokens.accent } else { tokens.muted })
+                                .child(if copied {
+                                    "Copied".to_string()
+                                } else {
+                                    crate::history::age_label(entry.created_at)
+                                }),
+                        )
+                        .child(icon_button(
+                            tokens,
+                            ("history-copy", id),
+                            "fluent/copy.svg",
+                            cx,
+                            move |this, cx| {
+                                this.copy_history(id, copy_text.clone(), cx);
+                            },
+                        ))
+                        .child(icon_button(
+                            tokens,
+                            ("history-delete", id),
+                            "fluent/delete.svg",
+                            cx,
+                            move |this, cx| {
+                                this.delete_history(id, cx);
+                            },
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .max_h(px(64.))
+                .overflow_hidden()
+                .child(entry.text.clone()),
+        )
+        .into_any_element()
 }
 
 fn action_button(
@@ -331,4 +375,42 @@ fn history_limit_row(
                 .with_priority(1),
             )
         })
+}
+
+// Preserve the visible position while discarding heights cached before a data/width change.
+pub(super) fn invalidate_list(state: &gpui::ListState, entry_count: usize) {
+    let mut top = state.logical_scroll_top();
+    let item_count = entry_count + 1; // The settings header is the first virtual item.
+    if top.item_ix >= item_count {
+        top.item_ix = item_count - 1;
+        top.offset_in_item = px(0.);
+    }
+    state.reset(item_count);
+    state.scroll_to(top);
+}
+
+#[cfg(test)]
+mod virtual_history_tests {
+    use super::*;
+    use gpui::{ListAlignment, ListOffset, ListState};
+
+    #[test]
+    fn invalidation_preserves_visible_position_and_clamps_pruned_entries() {
+        let state = ListState::new(501, ListAlignment::Top, px(200.)).measure_all();
+        state.scroll_to(ListOffset {
+            item_ix: 100,
+            offset_in_item: px(17.),
+        });
+        invalidate_list(&state, 499);
+        assert_eq!(state.item_count(), 500);
+        assert_eq!(state.logical_scroll_top().item_ix, 100);
+        assert_eq!(state.logical_scroll_top().offset_in_item, px(17.));
+        invalidate_list(&state, 3);
+        assert_eq!(state.item_count(), 4);
+        assert_eq!(state.logical_scroll_top().item_ix, 3);
+        assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
+        invalidate_list(&state, 0);
+        assert_eq!(state.item_count(), 1);
+        assert_eq!(state.logical_scroll_top().item_ix, 0);
+    }
 }
