@@ -23,11 +23,22 @@ impl<I: TextInjector> TranscriptDelivery<I> {
             result_tx,
         }
     }
+    #[cfg(test)]
     pub(crate) fn drain(
         &mut self,
         completions: &mpsc::Receiver<Completion>,
         insertion: InsertionConfig,
     ) {
+        self.drain_with_feedback(completions, insertion, |_| {});
+    }
+
+    pub(crate) fn drain_with_feedback(
+        &mut self,
+        completions: &mpsc::Receiver<Completion>,
+        insertion: InsertionConfig,
+        mut feedback: impl FnMut(plume_overlay::Bubble),
+    ) {
+        use plume_overlay::{Bubble, Feedback};
         while let Ok(completion) = completions.try_recv() {
             self.pending.insert(completion.id, completion);
         }
@@ -38,13 +49,17 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                 self.group_has_text = false;
             }
             match completion.result {
-                Ok(text) if text.is_empty() => tracing::debug!("plume-session: empty release"),
+                Ok(text) if text.trim().is_empty() => {
+                    tracing::debug!("plume-session: empty release");
+                    feedback(Bubble::feedback(completion.id, Feedback::Empty));
+                }
                 Ok(text) => {
                     let text = prepare_insertion(
                         text,
                         completion.joins_previous,
                         &mut self.group_has_text,
                     );
+                    feedback(Bubble::feedback(completion.id, Feedback::Inserting));
                     match self
                         .target
                         .apply_edit_with_mode(&Edit::Insert(text.clone()), insertion.mode)
@@ -52,6 +67,7 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                         Ok(Some(report)) => {
                             self.target.reset();
                             tracing::debug!("plume-session: committed {} chars", text.len());
+                            feedback(Bubble::feedback(completion.id, Feedback::Success));
                             let _ = self.result_tx.send(DictationResult {
                                 text,
                                 injection: Ok(report),
@@ -64,6 +80,13 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                             let copied =
                                 insertion.copy_on_failure && self.target.copy_text(&text).is_ok();
                             tracing::warn!("plume-session: aborted: {reason}");
+                            feedback(Bubble::feedback(
+                                completion.id,
+                                Feedback::InsertionFailed {
+                                    text: text.clone(),
+                                    copied,
+                                },
+                            ));
                             let _ = self.result_tx.send(DictationResult {
                                 text,
                                 injection: Err(reason),
@@ -72,7 +95,16 @@ impl<I: TextInjector> TranscriptDelivery<I> {
                         }
                     }
                 }
-                Err(err) => tracing::warn!("plume-session: aborted: {err}"),
+                Err(err) => {
+                    tracing::warn!("plume-session: aborted: {err}");
+                    feedback(Bubble::feedback(
+                        completion.id,
+                        Feedback::Error {
+                            title: "Transcription unavailable".into(),
+                            advice: "Check your model in Settings and try again.".into(),
+                        },
+                    ));
+                }
             }
         }
     }
@@ -208,16 +240,30 @@ mod tests {
             };
             let mut delivery = TranscriptDelivery::new(injector, result_tx);
             tx.send(completion(0, false, "Final")).unwrap();
-            delivery.drain(
+            let mut feedback = Vec::new();
+            delivery.drain_with_feedback(
                 &rx,
                 InsertionConfig {
                     mode: InsertionMode::Clipboard,
                     copy_on_failure,
                 },
+                |bubble| feedback.push(bubble),
             );
             let result = results.recv().unwrap();
             assert_eq!(result.injection.is_err(), fail_insert);
             assert_eq!(result.copied_on_failure, expected_copied);
+            assert_eq!(feedback[0].feedback, plume_overlay::Feedback::Inserting);
+            assert_eq!(
+                feedback[1].feedback,
+                if fail_insert {
+                    plume_overlay::Feedback::InsertionFailed {
+                        text: result.text.clone(),
+                        copied: expected_copied,
+                    }
+                } else {
+                    plume_overlay::Feedback::Success
+                }
+            );
             assert_eq!(delivery.target.injector().copied.len(), copy_attempts);
             assert_eq!(
                 delivery.target.injector().inserted,

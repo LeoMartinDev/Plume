@@ -11,7 +11,7 @@ Closing Settings hides the window while the global dictation shortcut, downloads
 1. Focus the target application and place the cursor where the text should go.
 2. Hold the global shortcut, `Ctrl+Space` by default. Change it in Settings → Dictation; `Fn` is rejected.
 3. Speak. The bubble appears and reacts to microphone levels. Partial hypotheses are not inserted into the target application.
-4. Release the shortcut. Capture ends and the bubble hides. The background decoder finishes, then the final transcript is inserted.
+4. Release the shortcut. Capture ends; the bubble switches to three dots while transcription finishes, then a small progress indicator during insertion. A brief checkmark confirms completion. Normal dictation never displays transcript text in the bubble.
 5. If another capture began before earlier results were delivered, its text is delivered in capture order with a separator when needed.
 
 ## Cancel a session

@@ -10,6 +10,7 @@ tracing.workspace = true
 plume-core = { path = "../plume-core" }
 plume-ui = { path = "../plume-ui" }
 gpui = "=0.2.2"
+arboard = "3.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
@@ -18,6 +19,7 @@ raw-window-handle = "0.6.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13.2"
+raw-window-handle = "0.6.2"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6.2"

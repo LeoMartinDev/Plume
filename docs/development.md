@@ -234,7 +234,13 @@ cargo fmt --check
 
 CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests require `PLUME_MODEL_DIR`; model-opening tests marked ignored require their corresponding model environment variables. Unit tests use simulated engines and injectors to exercise the production decoder and delivery components without native permissions or model downloads.
 
-On a macOS desktop, `cargo run -p plume-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, hides on release and cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
+On a macOS desktop, `cargo run -p plume-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, stays visible during transcription after release, hides on cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
+
+To preview the new feedback without a microphone, model or actual insertion, run `cargo run -p plume-overlay --example feedback_preview`. It shows recording, transcription, insertion, success, then an insertion failure card. Use `-- failure` to show the Copy action immediately, or `-- copied` for the automatic clipboard fallback message. These examples use synthetic text and do not write dictation history.
+
+Insertion failures retain their text in the recovery card until dismissed and also go through the normal history storage path. Copy retries clipboard access; a failed copy keeps the text and explains that it can be retried. Further dictation temporarily hides recovery cards without discarding them. Windows uses a non-activating overlay; macOS keeps its non-activating panel. Windows and macOS animation preferences are read at startup; `PLUME_REDUCED_MOTION=1` disables progress animation and card expansion on any platform.
+
+Before accepting this change, test dictation into another app, release, cancellation, repeated recordings, and tray reopening. In the isolated preview, test Copy, Ctrl+V (Cmd+V on macOS), dismissal, and the copied fallback message. Native focus and visual behavior still need verification on each supported OS.
 
 See [the refactor verification record](readability-verification.md) for the checks performed and native checks still pending.
 

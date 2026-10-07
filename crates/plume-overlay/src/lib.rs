@@ -1,3 +1,4 @@
+mod feedback;
 mod frame;
 mod window;
 
@@ -13,6 +14,18 @@ pub use window::{attach, prepare_display, run, run_with, WINDOW_TITLE};
 pub struct Bubble {
     text: String,
     state: SessionState,
+    pub capture_id: u64,
+    pub feedback: Feedback,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Feedback {
+    Session,
+    Inserting,
+    Success,
+    Empty,
+    InsertionFailed { text: String, copied: bool },
+    Error { title: String, advice: String },
 }
 
 impl Bubble {
@@ -25,6 +38,22 @@ impl Bubble {
         Self {
             text,
             state: session.state(),
+            capture_id: 0,
+            feedback: Feedback::Session,
+        }
+    }
+
+    pub fn with_capture_id(mut self, id: u64) -> Self {
+        self.capture_id = id;
+        self
+    }
+
+    pub fn feedback(capture_id: u64, feedback: Feedback) -> Self {
+        Self {
+            text: String::new(),
+            state: SessionState::Idle,
+            capture_id,
+            feedback,
         }
     }
 

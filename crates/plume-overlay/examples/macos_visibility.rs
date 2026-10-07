@@ -28,7 +28,7 @@ fn main() {
             // Wait for the startup placement retries before exercising a session.
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let mut dictation = Dictation::new();
-            for (step, visible) in [false, true, false, true, false].into_iter().enumerate() {
+            for (step, visible) in [false, true, true, true, false].into_iter().enumerate() {
                 match step {
                     1 => dictation.hold(),
                     2 => dictation.release(),

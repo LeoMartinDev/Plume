@@ -46,8 +46,10 @@ impl BubbleSink {
         BubbleSink { tx }
     }
 
-    pub(crate) fn push_from(&self, dictation: &Dictation) {
-        let _ = self.tx.send(Bubble::from_dictation(dictation));
+    pub(crate) fn push_from(&self, dictation: &Dictation, id: u64) {
+        let _ = self
+            .tx
+            .send(Bubble::from_dictation(dictation).with_capture_id(id));
     }
 }
 
@@ -148,8 +150,13 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             while let Ok(insertion) = self.updates.insertion.try_recv() {
                 self.insertion = insertion;
             }
-            self.delivery
-                .drain(&self.decoder.completions, self.insertion);
+            self.delivery.drain_with_feedback(
+                &self.decoder.completions,
+                self.insertion,
+                |bubble| {
+                    let _ = self.outputs.bubbles.tx.send(bubble);
+                },
+            );
             self.retarget_hold();
             match self.hold.as_mut().and_then(|hold| hold.next_event()) {
                 Some(HotkeyEvent::Pressed) => {
@@ -159,7 +166,25 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                         Outcome::Released => {}
                         Outcome::Cancelled => tracing::debug!("plume-session: cancelled"),
                         Outcome::Aborted(reason) => {
-                            tracing::warn!("plume-session: aborted: {reason}")
+                            tracing::warn!("plume-session: aborted: {reason}");
+                            let (title, advice) = if reason.starts_with("mic:") {
+                                (
+                                    "Microphone unavailable",
+                                    "Check your microphone and microphone permissions.",
+                                )
+                            } else {
+                                (
+                                    "Dictation unavailable",
+                                    "Check your shortcut and model in Settings.",
+                                )
+                            };
+                            let _ = self.outputs.bubbles.tx.send(Bubble::feedback(
+                                self.next_capture_id,
+                                plume_overlay::Feedback::Error {
+                                    title: title.into(),
+                                    advice: advice.into(),
+                                },
+                            ));
                         }
                     }
                 }
@@ -180,7 +205,9 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             Ok(mic) => mic,
             Err(err) => {
                 dictation.cancel();
-                self.outputs.bubbles.push_from(&dictation);
+                self.outputs
+                    .bubbles
+                    .push_from(&dictation, self.next_capture_id);
                 self.hold = Some(hold);
                 return Outcome::Aborted(format!("mic: {err}"));
             }
@@ -196,7 +223,9 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             Ok(guard) => guard,
             Err(err) => {
                 dictation.cancel();
-                self.outputs.bubbles.push_from(&dictation);
+                self.outputs
+                    .bubbles
+                    .push_from(&dictation, self.next_capture_id);
                 self.hold = Some(hold);
                 return Outcome::Aborted(format!("cancel guard: {err}"));
             }
@@ -216,15 +245,18 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
             cancelled.store(true, Ordering::Release);
             pump.close();
             dictation.cancel();
-            self.outputs.bubbles.push_from(&dictation);
+            self.outputs
+                .bubbles
+                .push_from(&dictation, self.next_capture_id);
             self.hold = Some(hold);
             return Outcome::Aborted(err);
         }
         self.next_capture_id += 1;
         std::thread::spawn(move || mic_pump.run());
-        self.outputs.bubbles.push_from(&dictation);
+        self.outputs.bubbles.push_from(&dictation, id);
         let outcome = Self::live_loop(
             &mut hold,
+            id,
             &self.outputs.bubbles,
             &mut dictation,
             pump,
@@ -245,6 +277,7 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
 
     fn live_loop(
         hold: &mut Chord,
+        id: u64,
         bubbles: &BubbleSink,
         dictation: &mut Dictation,
         pump: AudioPump,
@@ -259,7 +292,7 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                 if let Some(pump) = pump.take() {
                     pump.close();
                 }
-                bubbles.push_from(dictation);
+                bubbles.push_from(dictation, id);
                 return Outcome::Cancelled;
             }
             if matches!(hold.next_event(), Some(HotkeyEvent::Released)) {
@@ -267,7 +300,7 @@ impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRunti
                 if let Some(pump) = pump.take() {
                     pump.finish();
                 }
-                bubbles.push_from(dictation);
+                bubbles.push_from(dictation, id);
                 return Outcome::Released;
             }
             std::thread::sleep(POLL_QUANTUM);

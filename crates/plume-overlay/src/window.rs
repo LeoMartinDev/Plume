@@ -2,15 +2,16 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, hsla, point, prelude::*, px, size, App, Application, AsyncApp, Bounds, BoxShadow, Context,
-    Pixels, Size, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    div, hsla, point, prelude::*, px, rgb, size, App, Application, AsyncApp, Bounds, BoxShadow,
+    Context, Pixels, Size, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowHandle, WindowKind, WindowOptions,
 };
-use plume_core::{Dictation, SessionState};
+use plume_core::Dictation;
 use plume_ui::BubbleFrame;
 
+use crate::feedback::{FeedbackState, Phase};
 use crate::frame::hide_server_frame;
-use crate::Bubble;
+use crate::{Bubble, Feedback};
 
 pub const WINDOW_TITLE: &str = "Plume — Dictation";
 
@@ -24,20 +25,185 @@ const BUBBLE_WIDTH: f32 = 96.;
 const BUBBLE_HEIGHT: f32 = 36.;
 const SHADOW_MARGIN: f32 = 12.;
 const BUBBLE_BOTTOM_GAP: f32 = 48.;
+const CARD_WIDTH: f32 = 360.;
+const CARD_HEIGHT: f32 = 88.;
 
 struct BubbleView {
-    bubble: Bubble,
+    feedback: FeedbackState,
     bars: [f32; 8],
     target_level: f32,
     last_animation_frame: Instant,
+    reduced_motion: bool,
+    placed_phase: Phase,
+    expansion: f32,
 }
 
 impl Render for BubbleView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let bars = if speaking(self.bubble.state()) {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let phase = self.feedback.phase();
+        let bars = if phase == Phase::Recording {
             self.bars
         } else {
             [0.0; 8]
+        };
+        let content = if phase == Phase::Attention {
+            let recovery = self.feedback.recoveries.front();
+            let copied = recovery.is_some_and(|recovery| recovery.copied);
+            let copy_failed = recovery.is_some_and(|recovery| recovery.copy_failed);
+            let (title, advice) = if recovery.is_some() {
+                if copy_failed {
+                    (
+                        "Clipboard unavailable",
+                        "Your text is safe. Try Copy again.",
+                    )
+                } else if copied {
+                    (
+                        "Text copied",
+                        if cfg!(target_os = "macos") {
+                            "Press Cmd+V to paste into your app."
+                        } else {
+                            "Press Ctrl+V to paste into your app."
+                        },
+                    )
+                } else {
+                    ("Insertion unavailable", "Your transcription is saved.")
+                }
+            } else if let Feedback::Error { title, advice } = &self.feedback.bubble.feedback {
+                (title.as_str(), advice.as_str())
+            } else {
+                ("Insertion unavailable", "Your transcription is saved.")
+            };
+            div()
+                .w(px(CARD_WIDTH))
+                .h(px(CARD_HEIGHT))
+                .rounded(px(18.))
+                .bg(rgb(0x171719))
+                .border_1()
+                .border_color(rgb(0x343438))
+                .px(px(18.))
+                .flex()
+                .items_center()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .text_color(rgb(if copied { 0x91d5ae } else { 0xf0c47b }))
+                        .text_size(px(20.))
+                        .child(if copied { "✓" } else { "!" }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.))
+                        .child(
+                            div()
+                                .text_color(rgb(0xf5f5f7))
+                                .text_size(px(13.))
+                                .child(title.to_owned()),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(0xa7a7ae))
+                                .text_size(px(11.))
+                                .child(advice.to_owned()),
+                        ),
+                )
+                .when(recovery.is_some(), |el| {
+                    el.child(
+                        div()
+                            .id("copy-recovery")
+                            .cursor_pointer()
+                            .px(px(11.))
+                            .py(px(7.))
+                            .rounded(px(9.))
+                            .bg(rgb(0xf5f5f7))
+                            .text_color(rgb(0x171719))
+                            .text_size(px(12.))
+                            .hover(|el| el.bg(rgb(0xdadade)))
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                if let Some(recovery) = view.feedback.recoveries.front_mut() {
+                                    let result =
+                                        arboard::Clipboard::new().and_then(|mut clipboard| {
+                                            clipboard.set_text(recovery.text.clone())
+                                        });
+                                    recovery.copied = result.is_ok();
+                                    recovery.copy_failed = result.is_err();
+                                }
+                                cx.notify();
+                            }))
+                            .child("Copy"),
+                    )
+                })
+                .child(
+                    div()
+                        .id("dismiss-recovery")
+                        .cursor_pointer()
+                        .text_color(rgb(0xa7a7ae))
+                        .text_size(px(18.))
+                        .px(px(4.))
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.feedback.dismiss();
+                            cx.notify();
+                        }))
+                        .child("×"),
+                )
+                .into_any_element()
+        } else if phase == Phase::Recording {
+            BubbleFrame::new(0.0).bars(bars).into_any_element()
+        } else {
+            let time = if self.reduced_motion {
+                0.
+            } else {
+                self.feedback.since.elapsed().as_secs_f32()
+            };
+            let mut indicator = div()
+                .size_full()
+                .rounded_full()
+                .bg(rgb(0x000000))
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(7.));
+            if phase == Phase::Success {
+                indicator = indicator
+                    .text_color(rgb(0x91d5ae))
+                    .text_size(px(20.))
+                    .child("✓");
+            } else if phase == Phase::Inserting {
+                indicator = indicator.child(
+                    div()
+                        .w(px(40.))
+                        .h(px(3.))
+                        .rounded_full()
+                        .bg(rgb(0x444448))
+                        .child(
+                            div()
+                                .w(px(if self.reduced_motion {
+                                    24.
+                                } else {
+                                    12. + (time * 5.).sin().abs() * 28.
+                                }))
+                                .h(px(3.))
+                                .rounded_full()
+                                .bg(rgb(0xffffff)),
+                        ),
+                );
+            } else {
+                indicator = indicator.children((0..3).map(|index| {
+                    let opacity = if self.reduced_motion {
+                        1.
+                    } else {
+                        0.35 + 0.65 * ((time * 5. - index as f32 * 0.9).sin() + 1.) / 2.
+                    };
+                    div()
+                        .size(px(5.))
+                        .rounded_full()
+                        .bg(rgb(0xffffff))
+                        .opacity(opacity)
+                }));
+            }
+            indicator.into_any_element()
         };
         div()
             .flex()
@@ -46,9 +212,13 @@ impl Render for BubbleView {
             .size_full()
             .child(
                 div()
-                    .w(px(BUBBLE_WIDTH))
-                    .h(px(BUBBLE_HEIGHT))
-                    .rounded_full()
+                    .w(px(
+                        BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * self.expansion
+                    ))
+                    .h(px(
+                        BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * self.expansion
+                    ))
+                    .rounded(px(if phase == Phase::Attention { 18. } else { 24. }))
                     .shadow(vec![
                         BoxShadow {
                             color: hsla(0., 0., 0., 0.28),
@@ -63,13 +233,9 @@ impl Render for BubbleView {
                             spread_radius: px(1.),
                         },
                     ])
-                    .child(BubbleFrame::new(0.0).bars(bars)),
+                    .child(content),
             )
     }
-}
-
-fn speaking(state: SessionState) -> bool {
-    matches!(state, SessionState::Recording | SessionState::Streaming)
 }
 
 /// Exponential smoothing towards the audio target. Slightly different lags
@@ -184,10 +350,10 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
         cx.background_executor()
             .timer(plume_ui::UI_REFRESH_INTERVAL)
             .await;
-        let mut latest = None;
+        let mut updates = Vec::new();
         loop {
             match bubbles.try_recv() {
-                Ok(bubble) => latest = Some(bubble),
+                Ok(bubble) => updates.push(bubble),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
@@ -202,22 +368,39 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                 let now = Instant::now();
                 let elapsed = now.saturating_duration_since(view.last_animation_frame);
                 view.last_animation_frame = now;
-                if let Some(bubble) = latest {
-                    let still_speaking = speaking(bubble.state());
-                    view.bubble = bubble;
+                for bubble in updates {
+                    view.feedback.receive(bubble, now);
+                    let still_speaking = view.feedback.phase() == Phase::Recording;
                     if !still_speaking {
                         view.bars = [0.0; 8];
                         view.target_level = 0.0;
                     }
-                    place_bubble(window, session_visible(view.bubble.state()));
+                    changed = true;
+                }
+                view.feedback.tick(now);
+                let phase = view.feedback.phase();
+                let target = if phase == Phase::Attention { 1. } else { 0. };
+                let previous = view.expansion;
+                view.expansion = if view.reduced_motion || (target - previous).abs() < 0.005 {
+                    target
+                } else {
+                    previous + (target - previous) * (elapsed.as_secs_f32() * 18.).min(1.)
+                };
+                changed |= view.expansion != previous;
+                if changed || phase != view.placed_phase {
+                    place_bubble(window, phase != Phase::Hidden, view.expansion, cx);
+                    changed = true;
+                    view.placed_phase = phase;
+                }
+                if !view.reduced_motion && matches!(phase, Phase::Transcribing | Phase::Inserting) {
                     changed = true;
                 }
                 if let Some(level) = level {
-                    if speaking(view.bubble.state()) {
+                    if phase == Phase::Recording {
                         view.target_level = level;
                     }
                 }
-                if speaking(view.bubble.state()) {
+                if phase == Phase::Recording {
                     for (index, bar) in view.bars.iter_mut().enumerate() {
                         let next = smooth_level_tuned(
                             *bar,
@@ -268,10 +451,16 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
             },
             |_window, cx| {
                 cx.new(|_cx| BubbleView {
-                    bubble: Bubble::from_dictation(&Dictation::new()),
+                    feedback: FeedbackState::new(
+                        Bubble::from_dictation(&Dictation::new()),
+                        Instant::now(),
+                    ),
                     bars: [0.0; 8],
                     target_level: 0.0,
                     last_animation_frame: Instant::now(),
+                    reduced_motion: reduced_motion(),
+                    placed_phase: Phase::Hidden,
+                    expansion: 0.,
                 })
             },
         )
@@ -292,28 +481,72 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
 }
 
 fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>, preview_visible: bool) {
-    let _ = handle.update(cx, |view, window, _cx| {
+    let _ = handle.update(cx, |view, window, cx| {
         place_bubble(
             window,
-            preview_visible || session_visible(view.bubble.state()),
+            preview_visible || view.feedback.phase() != Phase::Hidden,
+            view.expansion,
+            cx,
         );
     });
 }
 
-fn session_visible(state: SessionState) -> bool {
-    // Releasing push-to-talk ends the visible capture immediately. Whisper
-    // can take a noticeable time to produce its final transcript, but that
-    // work should not leave the recording indicator on screen.
-    matches!(state, SessionState::Recording | SessionState::Streaming)
+fn place_bubble(window: &mut Window, visible: bool, expansion: f32, cx: &App) {
+    let dimensions = size(
+        px(BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * expansion + SHADOW_MARGIN * 2.),
+        px(BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * expansion + SHADOW_MARGIN * 2.),
+    );
+    if window.bounds().size != dimensions {
+        window.resize(dimensions);
+    }
+    #[cfg(windows)]
+    stack::place(window, visible, dimensions, cx);
+    #[cfg(target_os = "macos")]
+    macos::place(window, visible, dimensions, cx);
+    #[cfg(target_os = "linux")]
+    linux::place(window, visible, bottom_center_bounds(dimensions, cx));
 }
 
-fn place_bubble(window: &mut Window, visible: bool) {
+fn reduced_motion() -> bool {
+    if std::env::var("PLUME_REDUCED_MOTION").is_ok_and(|value| value == "1") {
+        return true;
+    }
     #[cfg(windows)]
-    stack::place(window, visible);
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
+        };
+        let mut enabled: i32 = 1;
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        );
+        enabled == 0
+    }
     #[cfg(target_os = "macos")]
-    macos::place(window, visible);
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    let _ = (window, visible);
+    unsafe {
+        use objc::{
+            runtime::{Class, Sel},
+            Message,
+        };
+        let workspace: cocoa::base::id = Class::get("NSWorkspace")
+            .unwrap()
+            .send_message(Sel::register("sharedWorkspace"), ())
+            .unwrap();
+        workspace
+            .send_message::<_, cocoa::base::BOOL>(
+                Sel::register("accessibilityDisplayShouldReduceMotion"),
+                (),
+            )
+            .unwrap_or(cocoa::base::NO)
+            != cocoa::base::NO
+    }
+    #[cfg(target_os = "linux")]
+    {
+        false
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -364,17 +597,46 @@ mod macos {
         }
     }
 
-    pub(crate) fn place(window: &Window, visible: bool) {
+    pub(crate) fn place(
+        window: &Window,
+        visible: bool,
+        dimensions: gpui::Size<gpui::Pixels>,
+        cx: &gpui::App,
+    ) {
         let Some(native) = native_window(window) else {
             return;
         };
-        unsafe {
-            if visible {
-                native.orderFrontRegardless();
-            } else {
-                native.orderOut_(nil);
-            }
-        }
+        let native_address = native as usize;
+        let width = f64::from(f32::from(dimensions.width));
+        cx.foreground_executor()
+            .spawn(async move {
+                unsafe {
+                    let native = native_address as id;
+                    let screen: id = (&*native)
+                        .send_message(Sel::register("screen"), ())
+                        .unwrap_or(nil);
+                    if screen != nil {
+                        if let Ok(frame) = (&*screen).send_message::<_, cocoa::foundation::NSRect>(
+                            Sel::register("visibleFrame"),
+                            (),
+                        ) {
+                            let origin = cocoa::foundation::NSPoint::new(
+                                frame.origin.x + (frame.size.width - width) / 2.,
+                                frame.origin.y
+                                    + f64::from(super::BUBBLE_BOTTOM_GAP - super::SHADOW_MARGIN),
+                            );
+                            let _ = (&*native)
+                                .send_message::<_, ()>(Sel::register("setFrameOrigin:"), (origin,));
+                        }
+                    }
+                    if visible {
+                        native.orderFrontRegardless();
+                    } else {
+                        native.orderOut_(nil);
+                    }
+                }
+            })
+            .detach();
     }
 }
 
@@ -396,15 +658,42 @@ mod stack {
         SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA,
     };
 
-    pub(crate) fn place(window: &mut Window, visible: bool) {
+    pub(crate) fn place(
+        window: &mut Window,
+        visible: bool,
+        dimensions: gpui::Size<gpui::Pixels>,
+        cx: &gpui::App,
+    ) {
         let Ok(handle) = HasWindowHandle::window_handle(window) else {
             return;
         };
         let RawWindowHandle::Win32(win) = handle.as_raw() else {
             return;
         };
-        let hwnd = win.hwnd.get() as HWND;
+        let hwnd = win.hwnd.get();
+        let width = f32::from(dimensions.width);
+        let height = f32::from(dimensions.height);
+        // Native visibility/position messages can synchronously ask GPUI to
+        // draw. Dispatch them after the App/window update releases its borrow.
+        cx.foreground_executor()
+            .spawn(async move {
+                unsafe {
+                    place_native(hwnd as HWND, visible, width, height);
+                }
+            })
+            .detach();
+    }
+
+    unsafe fn place_native(hwnd: HWND, visible: bool, width: f32, height: f32) {
+        if windows_sys::Win32::UI::WindowsAndMessaging::IsWindow(hwnd) == 0 {
+            return;
+        }
         unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+            };
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE as isize);
             let non_client_policy = DWMNCRP_DISABLED;
             let _ = DwmSetWindowAttribute(
                 hwnd,
@@ -430,11 +719,7 @@ mod stack {
                 // Taille via GPUI (renderer suivi) plutot que resize externe
                 // qui desynchronise le swapchain DirectX et rend la bulle
                 // invisible. La position reste native (pas d'API move GPUI).
-                window.resize(gpui::size(
-                    gpui::px(super::BUBBLE_WIDTH + super::SHADOW_MARGIN * 2.0),
-                    gpui::px(super::BUBBLE_HEIGHT + super::SHADOW_MARGIN * 2.0),
-                ));
-                match bottom_center_on_nearest_monitor(hwnd) {
+                match bottom_center_on_nearest_monitor(hwnd, width, height) {
                     Some((x, y, w, h)) => {
                         let ok = SetWindowPos(
                             hwnd,
@@ -477,7 +762,11 @@ mod stack {
         }
     }
 
-    fn bottom_center_on_nearest_monitor(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+    fn bottom_center_on_nearest_monitor(
+        hwnd: HWND,
+        width: f32,
+        height: f32,
+    ) -> Option<(i32, i32, i32, i32)> {
         unsafe {
             // La fenetre demarre cachee avec une taille par defaut Windows
             // (CW_USEDEFAULT). On impose donc la taille reelle de la bulle
@@ -485,9 +774,8 @@ mod stack {
             // taille et la bulle finit vers le centre de l'ecran.
             let dpi = GetDpiForWindow(hwnd);
             let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
-            let win_w = ((super::BUBBLE_WIDTH + super::SHADOW_MARGIN * 2.0) * scale).round() as i32;
-            let win_h =
-                ((super::BUBBLE_HEIGHT + super::SHADOW_MARGIN * 2.0) * scale).round() as i32;
+            let win_w = (width * scale).round() as i32;
+            let win_h = (height * scale).round() as i32;
             if win_w <= 0 || win_h <= 0 {
                 return None;
             }
@@ -507,6 +795,55 @@ mod stack {
             Some((x, y, win_w, win_h))
         }
     }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, GetForegroundWindow, GetWindowLongPtrW,
+            IsWindowVisible, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+
+        #[test]
+        fn showing_overlay_preserves_foreground_and_sets_noactivate() {
+            struct TestWindow(HWND);
+            impl Drop for TestWindow {
+                fn drop(&mut self) {
+                    unsafe {
+                        DestroyWindow(self.0);
+                    }
+                }
+            }
+            // SAFETY: this test creates, uses and destroys its own native
+            // window on one thread without activating any other app.
+            unsafe {
+                let window = TestWindow(CreateWindowExW(
+                    0,
+                    windows_sys::w!("STATIC"),
+                    windows_sys::w!("Plume feedback test"),
+                    0,
+                    0,
+                    0,
+                    120,
+                    60,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                ));
+                assert!(!window.0.is_null());
+                let foreground = GetForegroundWindow();
+                place_native(window.0, true, 120., 60.);
+                assert_ne!(IsWindowVisible(window.0), 0);
+                assert_eq!(GetForegroundWindow(), foreground);
+                assert_ne!(
+                    GetWindowLongPtrW(window.0, GWL_EXSTYLE) & WS_EX_NOACTIVATE as isize,
+                    0
+                );
+                place_native(window.0, false, 120., 60.);
+                assert_eq!(IsWindowVisible(window.0), 0);
+            }
+        }
+    }
 }
 
 fn print_opened_line() {
@@ -516,22 +853,50 @@ fn print_opened_line() {
     );
 }
 
+#[cfg(target_os = "linux")]
+mod linux {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11rb::{
+        connection::Connection,
+        protocol::xproto::{ConfigureWindowAux, ConnectionExt},
+    };
+
+    pub fn place(window: &gpui::Window, visible: bool, bounds: gpui::Bounds<gpui::Pixels>) {
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let handle = window.window_handle()?;
+            let id = match handle.as_raw() {
+                RawWindowHandle::Xcb(handle) => handle.window.get(),
+                RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
+                _ => return Ok(()),
+            };
+            let (connection, _) = x11rb::connect(None)?;
+            if visible {
+                connection
+                    .configure_window(
+                        id,
+                        &ConfigureWindowAux::new()
+                            .x(f32::from(bounds.origin.x) as i32)
+                            .y(f32::from(bounds.origin.y) as i32),
+                    )?
+                    .check()?;
+                connection.map_window(id)?.check()?;
+            } else {
+                connection.unmap_window(id)?.check()?;
+            }
+            connection.flush()?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            tracing::warn!("plume-overlay: visibility: {error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use plume_core::SessionState;
-
-    use super::{bar_attack, session_visible, smooth_level_tuned};
-
-    #[test]
-    fn bubble_shows_only_while_a_session_runs() {
-        assert!(!session_visible(SessionState::Idle));
-        assert!(session_visible(SessionState::Recording));
-        assert!(session_visible(SessionState::Streaming));
-        assert!(!session_visible(SessionState::Finalizing));
-        assert!(!session_visible(SessionState::Cancelled));
-    }
+    use super::{bar_attack, smooth_level_tuned};
 
     #[test]
     fn voice_level_is_responsive_in_both_directions() {
