@@ -510,6 +510,8 @@ fn save_record(root: &Path, record: &Recording) -> Result<(), BoxError> {
     let file = private_file(&temp)?;
     serde_json::to_writer(&file, record)?;
     file.sync_all()?;
+    // ReplaceFileW opens the replacement exclusively; close our writer first.
+    drop(file);
     replace_file(&temp, &dest)?;
     Ok(())
 }
