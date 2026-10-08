@@ -26,7 +26,8 @@ test('macOS disk image stages only the app and Applications shortcut and saves a
   const calls = [];
   buildInstaller({ platform: 'darwin', version: '1.2.3', target: targets[2], stage, dist, run: (...args) => calls.push(args) });
   assert.deepEqual(fs.readdirSync(path.join(dist, 'dmg-root')), ['.DS_Store', 'Applications', 'Plume.app']);
-  assert.equal(fs.readlinkSync(path.join(dist, 'dmg-root/Applications')), '/Applications');
+  // Windows resolves a root-relative symlink against the current drive.
+  assert.equal(fs.readlinkSync(path.join(dist, 'dmg-root/Applications')), path.resolve('/Applications'));
   assert.equal(fs.readFileSync(path.join(dist, 'dmg-root/Plume.app/Contents/MacOS/plume'), 'utf8'), 'app');
   assert.deepEqual(calls.map(([cmd]) => cmd), ['hdiutil']);
   assert.ok(fs.readFileSync(path.join(dist, 'dmg-root/.DS_Store')).equals(fs.readFileSync('crates/plume-app/packaging/dmg-layout.ds-store')));
