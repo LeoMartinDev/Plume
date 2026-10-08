@@ -906,7 +906,8 @@ mod linux {
 
     pub fn place(window: &gpui::Window, visible: bool, bounds: gpui::Bounds<gpui::Pixels>) {
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            let handle = HasWindowHandle::window_handle(window)?;
+            let handle = HasWindowHandle::window_handle(window)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             let id = match handle.as_raw() {
                 RawWindowHandle::Xcb(handle) => handle.window.get(),
                 RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
