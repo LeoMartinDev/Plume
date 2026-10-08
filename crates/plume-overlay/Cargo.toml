@@ -1,6 +1,6 @@
 [package]
 name = "plume-overlay"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 # Linux gpui links -lxkbcommon-x11. CI needs the Debian/Ubuntu package
 # libxkbcommon-x11-dev. Do not commit an unversioned .so symlink.
