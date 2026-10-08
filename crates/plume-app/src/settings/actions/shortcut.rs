@@ -7,9 +7,20 @@ impl SettingsView {
     pub fn toggle_hold_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.capture.is_listening() {
             self.capture.cancel();
+            self.shortcut_edit.take();
             window.blur();
             cx.notify();
             return;
+        }
+        if let Some(control) = &self.session_control {
+            match control.reserve_shortcut_edit() {
+                Ok(guard) => self.shortcut_edit = Some(guard),
+                Err(error) => {
+                    self.capture.set_reject(error);
+                    cx.notify();
+                    return;
+                }
+            }
         }
         self.capture.begin();
         window.focus(&self.hold_focus);
@@ -74,54 +85,49 @@ impl SettingsView {
             }
             CaptureEffect::Offer(chord) => self.commit_hold(chord, window, cx),
         }
+        if !self.capture.is_listening() {
+            self.shortcut_edit.take();
+        }
     }
 
     pub(in crate::settings) fn reset_hold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.capture.cancel();
-        let previous = self.phase.prefs().hold().to_string();
-        match self.phase.prefs_mut().try_set_hold(DEFAULT_HOLD) {
-            Err(err) => {
-                self.capture.set_reject(err.to_string());
-                window.blur();
-                cx.notify();
-            }
-            Ok(()) if previous == DEFAULT_HOLD => {
-                window.blur();
-                cx.notify();
-            }
-            Ok(()) => {
-                self.save_prefs();
-                self.retarget_hold(DEFAULT_HOLD);
-                window.blur();
-                cx.notify();
-            }
-        }
+        let shortcut = if self.capture_toggle {
+            "Ctrl+Shift+Space"
+        } else {
+            DEFAULT_HOLD
+        };
+        self.apply_shortcut(shortcut, window, cx);
     }
-
     pub(in crate::settings) fn commit_hold(
         &mut self,
         chord: ChordText,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let previous = self.phase.prefs().hold().to_string();
-        match self.phase.prefs_mut().try_set_hold(chord.as_str()) {
-            Err(err) => {
-                self.capture.set_reject(err.to_string());
-                window.blur();
-                cx.notify();
-            }
-            Ok(()) if previous == chord.as_str() => {
-                window.blur();
-                cx.notify();
-            }
+        self.apply_shortcut(chord.as_str(), window, cx);
+    }
+    fn apply_shortcut(&mut self, shortcut: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let result = if self.capture_toggle {
+            self.phase.prefs_mut().try_set_toggle(Some(shortcut))
+        } else {
+            self.phase.prefs_mut().try_set_hold(shortcut)
+        };
+        match result {
+            Err(err) => self.capture.set_reject(err.to_string()),
             Ok(()) => {
                 self.save_prefs();
-                self.retarget_hold(chord.as_str());
-                window.blur();
-                cx.notify();
+                if self.capture_toggle {
+                    if let Some(control) = &self.session_control {
+                        control.set_toggle(Some(shortcut.to_string()));
+                    }
+                } else {
+                    self.retarget_hold(shortcut);
+                }
             }
         }
+        window.blur();
+        cx.notify();
     }
 
     pub(in crate::settings) fn retarget_hold(&self, hold: &str) {

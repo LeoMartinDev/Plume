@@ -7,9 +7,13 @@ use std::fmt;
 
 use plume_core::BoxError;
 
+#[cfg(target_os = "macos")]
+mod ax;
+mod clipboard;
 #[cfg(any(test, target_os = "macos"))]
 mod macos;
 mod ops;
+mod transaction;
 #[cfg(any(test, target_os = "windows"))]
 mod windows;
 #[cfg(target_os = "linux")]
@@ -91,6 +95,21 @@ fn connect_os() -> Result<NativeInjector, BoxError> {
 }
 
 impl TextInjector for NativeInjector {
+    fn field_context(&self) -> Option<plume_core::FieldContext> {
+        #[cfg(target_os = "macos")]
+        {
+            ax::context()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            windows::field_context()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            None
+        }
+    }
+
     fn insert(&mut self, text: &str) -> Result<(), BoxError> {
         match &mut self.inner {
             #[cfg(target_os = "linux")]
@@ -118,43 +137,27 @@ impl TextInjector for NativeInjector {
         text: &str,
         mode: plume_core::InsertionMode,
     ) -> Result<plume_core::InjectionReport, BoxError> {
+        self.insert_checked(text, mode, &mut || true)
+    }
+    fn insert_checked(
+        &mut self,
+        text: &str,
+        mode: plume_core::InsertionMode,
+        before_dispatch: &mut dyn FnMut() -> bool,
+    ) -> Result<plume_core::InjectionReport, BoxError> {
+        let context = self.field_context();
         let (application, target) = self.target_info();
-        match target {
-            plume_core::TargetAssessment::Sensitive => {
-                return Err(InjectError::Message("focused field is sensitive".into()).into())
-            }
-            plume_core::TargetAssessment::NonEditable => {
-                return Err(InjectError::Message("focused field is read-only".into()).into())
-            }
-            plume_core::TargetAssessment::Editable | plume_core::TargetAssessment::Unknown => {}
-        }
-
-        let method = match mode {
-            plume_core::InsertionMode::Typing => {
-                self.insert(text)?;
-                plume_core::InsertionMethod::Typing
-            }
-            plume_core::InsertionMode::Clipboard => {
-                self.set_clipboard(text)?;
-                self.paste()?;
-                plume_core::InsertionMethod::Clipboard
-            }
-            plume_core::InsertionMode::Auto => match self.set_clipboard(text) {
-                Ok(()) => {
-                    // Once dispatch begins we cannot know whether the target consumed part of the
-                    // shortcut. Do not type a second copy if posting the shortcut reports an error.
-                    self.paste()?;
-                    plume_core::InsertionMethod::Clipboard
-                }
-                Err(clipboard_error) => {
-                    tracing::warn!(
-                        "plume-inject: clipboard unavailable, using typing: {clipboard_error}"
-                    );
-                    self.insert(text)?;
-                    plume_core::InsertionMethod::Typing
-                }
-            },
+        reject_target(target)?;
+        let mut transaction = DeliveryTarget {
+            injector: self,
+            context,
+            application,
+            target,
+            before_dispatch,
         };
+        let method = transaction::deliver(&mut transaction, text, mode)?;
+        let application = transaction.application;
+        let target = transaction.target;
         Ok(plume_core::InjectionReport {
             method,
             application,
@@ -164,6 +167,71 @@ impl TextInjector for NativeInjector {
 
     fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
         self.set_clipboard(text)
+    }
+}
+
+fn reject_target(target: plume_core::TargetAssessment) -> Result<(), BoxError> {
+    match target {
+        plume_core::TargetAssessment::Sensitive => {
+            Err(InjectError::Message("focused field is sensitive".into()).into())
+        }
+        plume_core::TargetAssessment::NonEditable => {
+            Err(InjectError::Message("focused field is read-only".into()).into())
+        }
+        _ => Ok(()),
+    }
+}
+struct DeliveryTarget<'a> {
+    injector: &'a mut NativeInjector,
+    context: Option<plume_core::FieldContext>,
+    application: Option<String>,
+    target: plume_core::TargetAssessment,
+    before_dispatch: &'a mut dyn FnMut() -> bool,
+}
+impl transaction::Target for DeliveryTarget<'_> {
+    type Snapshot = clipboard::Snapshot;
+    fn snapshot(&mut self) -> Result<Self::Snapshot, BoxError> {
+        clipboard::Snapshot::capture()
+    }
+    fn prepare(&mut self, text: &str) -> Result<String, BoxError> {
+        let current = self.injector.field_context();
+        (self.application, self.target) = self.injector.target_info();
+        reject_target(self.target)?;
+        let context = current.as_ref().filter(|now| {
+            self.context
+                .as_ref()
+                .is_some_and(|old| now.target_id == old.target_id)
+        });
+        Ok(plume_core::boundary_spacing(text, context))
+    }
+    fn type_text(&mut self, text: &str) -> Result<(), BoxError> {
+        self.injector.insert(text)
+    }
+    fn stage(&mut self, text: &str) -> Result<(), BoxError> {
+        self.injector.set_clipboard(text)
+    }
+    fn version(&self) -> Result<u64, BoxError> {
+        clipboard::version()
+    }
+    fn paste(&mut self) -> Result<(), BoxError> {
+        self.injector.paste()
+    }
+    fn allow_dispatch(&mut self) -> bool {
+        (self.before_dispatch)()
+    }
+    fn consumed(&mut self) {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    fn restore(&mut self, snapshot: Self::Snapshot, token: u64) -> Result<(), BoxError> {
+        #[cfg(windows)]
+        {
+            snapshot.restore_if_owned(token)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = token;
+            snapshot.restore()
+        }
     }
 }
 

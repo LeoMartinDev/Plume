@@ -70,7 +70,7 @@ fn should_block_windows_key(vk: u32, block_super: bool, super_down: bool) -> boo
 #[cfg(windows)]
 mod backend {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Mutex, OnceLock};
     use std::thread::{self, JoinHandle};
 
@@ -94,19 +94,23 @@ mod backend {
         msg: u32,
     }
 
-    static HOOK_TX: OnceLock<Mutex<Option<Sender<WinRaw>>>> = OnceLock::new();
+    static HOOK_TX: OnceLock<Mutex<Option<Sender<crate::BindingEvent>>>> = OnceLock::new();
+    type TrackedBinding = (crate::HotkeyAction, ChordTracker, bool);
+    static TRACKERS: OnceLock<Mutex<Vec<TrackedBinding>>> = OnceLock::new();
+    static CANCEL_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static PASSTHROUGH: AtomicBool = AtomicBool::new(false);
+    static CANCEL_SUPER: AtomicBool = AtomicBool::new(false);
     static BLOCK_SUPER: AtomicBool = AtomicBool::new(false);
     static SUPER_DOWN: AtomicBool = AtomicBool::new(false);
 
-    fn hook_tx() -> &'static Mutex<Option<Sender<WinRaw>>> {
+    fn hook_tx() -> &'static Mutex<Option<Sender<crate::BindingEvent>>> {
         HOOK_TX.get_or_init(|| Mutex::new(None))
     }
 
     pub struct WindowsHotkey {
-        events: Receiver<WinRaw>,
+        events: Receiver<crate::BindingEvent>,
         thread_id: u32,
         hook_thread: Option<JoinHandle<()>>,
-        tracker: Option<ChordTracker>,
     }
 
     impl WindowsHotkey {
@@ -147,7 +151,6 @@ mod backend {
                     events: rx,
                     thread_id,
                     hook_thread: Some(hook_thread),
-                    tracker: None,
                 }),
                 Ok(Err(err)) => Err(err.into()),
                 Err(err) => Err(HotkeyError::Os(err.to_string()).into()),
@@ -168,13 +171,39 @@ mod backend {
             if super::is_injected(info.flags) {
                 return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
             }
-            if let Ok(guard) = hook_tx().lock() {
-                if let Some(tx) = guard.as_ref() {
-                    let _ = tx.send(WinRaw {
-                        vk: info.vkCode,
-                        flags: info.flags,
-                        msg: w_param as u32,
-                    });
+            let mut consumed = false;
+            if let Some((id, edge)) = decode_windows(info.vkCode, info.flags, w_param as u32) {
+                if let Ok(mut trackers) = TRACKERS.get_or_init(|| Mutex::new(Vec::new())).lock() {
+                    for (action, tracker, owned) in trackers.iter_mut() {
+                        let enabled = *action != crate::HotkeyAction::Cancel
+                            || CANCEL_ACTIVE.load(Ordering::Relaxed);
+                        let signal = tracker.push(id, edge);
+                        let trigger =
+                            matches!(id, super::KeyId::Trigger(_)) && tracker.owns_trigger(id);
+                        if enabled
+                            && trigger
+                            && signal == Some(HotkeyEvent::Pressed)
+                            && !PASSTHROUGH.load(Ordering::Relaxed)
+                        {
+                            *owned = true;
+                        }
+                        consumed |= trigger && *owned;
+                        if trigger && edge == super::Edge::Up {
+                            *owned = false;
+                        }
+                        if enabled {
+                            if let Some(edge) = signal {
+                                if let Ok(guard) = hook_tx().lock() {
+                                    if let Some(tx) = guard.as_ref() {
+                                        let _ = tx.send(crate::BindingEvent {
+                                            action: *action,
+                                            edge,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             let is_super = matches!(
@@ -187,48 +216,74 @@ mod backend {
             }
             let block = should_block_windows_key(
                 info.vkCode,
-                BLOCK_SUPER.load(Ordering::Relaxed),
+                BLOCK_SUPER.load(Ordering::Relaxed)
+                    || CANCEL_ACTIVE.load(Ordering::Relaxed)
+                        && CANCEL_SUPER.load(Ordering::Relaxed),
                 SUPER_DOWN.load(Ordering::Relaxed),
             );
             if is_super && is_up {
                 SUPER_DOWN.store(false, Ordering::Relaxed);
             }
-            if block {
+            if !PASSTHROUGH.load(Ordering::Relaxed) && (consumed || block) {
                 return 1;
             }
         }
         CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
     }
 
-    impl GlobalHotkey for WindowsHotkey {
-        fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
-            let shortcut = Shortcut::parse(shortcut)?;
-            BLOCK_SUPER.store(shortcut.super_key, Ordering::Relaxed);
-            SUPER_DOWN.store(false, Ordering::Relaxed);
-            self.tracker = Some(ChordTracker::new(shortcut));
+    impl WindowsHotkey {
+        pub fn set_passthrough(&mut self, active: bool) {
+            PASSTHROUGH.store(active, Ordering::Relaxed);
+        }
+        pub fn register_bindings(
+            &mut self,
+            bindings: &[crate::HotkeyBinding],
+        ) -> Result<(), BoxError> {
+            let mut trackers = Vec::new();
+            let mut block_super = false;
+            let mut cancel_super = false;
+            for b in bindings {
+                let key = Shortcut::parse(&b.shortcut)?;
+                if b.action == crate::HotkeyAction::Cancel {
+                    cancel_super |= key.super_key;
+                } else {
+                    block_super |= key.super_key;
+                }
+                trackers.push((b.action, ChordTracker::new(key), false));
+            }
+            BLOCK_SUPER.store(block_super, Ordering::Relaxed);
+            CANCEL_SUPER.store(cancel_super, Ordering::Relaxed);
+            *TRACKERS
+                .get_or_init(|| Mutex::new(Vec::new()))
+                .lock()
+                .unwrap() = trackers;
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
-
+        pub fn set_cancel_active(&mut self, active: bool) {
+            CANCEL_ACTIVE.store(active, Ordering::Relaxed);
+        }
+        pub fn next_binding_event(&mut self) -> Option<crate::BindingEvent> {
+            self.events.try_recv().ok()
+        }
+    }
+    impl GlobalHotkey for WindowsHotkey {
+        fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
+            self.register_bindings(&[crate::HotkeyBinding {
+                action: crate::HotkeyAction::Hold,
+                shortcut: shortcut.into(),
+            }])
+        }
         fn next_event(&mut self) -> Option<HotkeyEvent> {
-            let tracker = self.tracker.as_mut()?;
-            loop {
-                match self.events.try_recv() {
-                    Ok(raw) => {
-                        if let Some((id, edge)) = decode_windows(raw.vk, raw.flags, raw.msg) {
-                            if let Some(event) = tracker.push(id, edge) {
-                                return Some(event);
-                            }
-                        }
-                    }
-                    Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return None,
-                }
-            }
+            self.next_binding_event().map(|e| e.edge)
         }
     }
 
     impl Drop for WindowsHotkey {
         fn drop(&mut self) {
+            PASSTHROUGH.store(false, Ordering::Relaxed);
+            CANCEL_ACTIVE.store(false, Ordering::Relaxed);
+            CANCEL_SUPER.store(false, Ordering::Relaxed);
             BLOCK_SUPER.store(false, Ordering::Relaxed);
             SUPER_DOWN.store(false, Ordering::Relaxed);
             {

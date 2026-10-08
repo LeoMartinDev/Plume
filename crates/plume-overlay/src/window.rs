@@ -149,6 +149,32 @@ impl Render for BubbleView {
                         .child("×"),
                 )
                 .into_any_element()
+        } else if phase == Phase::Notice {
+            div()
+                .text_color(rgb(0xf5f5f7))
+                .text_size(px(10.))
+                .child("No speech")
+                .into_any_element()
+        } else if phase == Phase::Recording
+            && matches!(
+                self.feedback.bubble.feedback,
+                Feedback::RecordingNotice { silence: true, .. }
+                    | Feedback::RecordingNotice { limit: true, .. }
+            )
+        {
+            let warning = if matches!(
+                self.feedback.bubble.feedback,
+                Feedback::RecordingNotice { limit: true, .. }
+            ) {
+                "1 minute left"
+            } else {
+                "Mic is on"
+            };
+            div()
+                .text_color(rgb(0xf0c47b))
+                .text_size(px(10.))
+                .child(warning)
+                .into_any_element()
         } else if phase == Phase::Recording {
             BubbleFrame::new(0.0).bars(bars).into_any_element()
         } else {
@@ -165,7 +191,16 @@ impl Render for BubbleView {
                 .items_center()
                 .justify_center()
                 .gap(px(7.));
-            if phase == Phase::Success {
+            if phase == Phase::Starting || phase == Phase::Cancelling {
+                indicator = indicator
+                    .text_color(rgb(0xf5f5f7))
+                    .text_size(px(10.))
+                    .child(if phase == Phase::Starting {
+                        "Starting…"
+                    } else {
+                        "Cancelling…"
+                    });
+            } else if phase == Phase::Success {
                 indicator = indicator
                     .text_color(rgb(0x91d5ae))
                     .text_size(px(20.))
@@ -212,9 +247,10 @@ impl Render for BubbleView {
             .size_full()
             .child(
                 div()
-                    .w(px(
-                        BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * self.expansion
-                    ))
+                    .w(px(notice_width(&self.feedback.bubble.feedback)
+                        + (CARD_WIDTH
+                            - notice_width(&self.feedback.bubble.feedback))
+                            * self.expansion))
                     .h(px(
                         BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * self.expansion
                     ))
@@ -388,7 +424,13 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                 };
                 changed |= view.expansion != previous;
                 if changed || phase != view.placed_phase {
-                    place_bubble(window, phase != Phase::Hidden, view.expansion, cx);
+                    place_bubble(
+                        window,
+                        phase != Phase::Hidden,
+                        view.expansion,
+                        notice_width(&view.feedback.bubble.feedback),
+                        cx,
+                    );
                     changed = true;
                     view.placed_phase = phase;
                 }
@@ -486,14 +528,15 @@ fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>, preview_visible
             window,
             preview_visible || view.feedback.phase() != Phase::Hidden,
             view.expansion,
+            notice_width(&view.feedback.bubble.feedback),
             cx,
         );
     });
 }
 
-fn place_bubble(window: &mut Window, visible: bool, expansion: f32, cx: &App) {
+fn place_bubble(window: &mut Window, visible: bool, expansion: f32, width: f32, cx: &App) {
     let dimensions = size(
-        px(BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * expansion + SHADOW_MARGIN * 2.),
+        px(width + (CARD_WIDTH - width) * expansion + SHADOW_MARGIN * 2.),
         px(BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * expansion + SHADOW_MARGIN * 2.),
     );
     if window.bounds().size != dimensions {
@@ -535,7 +578,7 @@ fn reduced_motion() -> bool {
             .unwrap()
             .send_message(Sel::register("sharedWorkspace"), ())
             .unwrap();
-        workspace
+        (&*workspace)
             .send_message::<_, cocoa::base::BOOL>(
                 Sel::register("accessibilityDisplayShouldReduceMotion"),
                 (),
@@ -889,6 +932,14 @@ mod linux {
         if let Err(error) = result {
             tracing::warn!("plume-overlay: visibility: {error}");
         }
+    }
+}
+
+fn notice_width(feedback: &Feedback) -> f32 {
+    if *feedback == Feedback::NoSpeech {
+        196.
+    } else {
+        BUBBLE_WIDTH
     }
 }
 

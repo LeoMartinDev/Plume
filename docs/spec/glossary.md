@@ -8,7 +8,7 @@ A local automatic speech recognition engine implementing `AsrEngine`: audio chun
 
 ## Bubble
 
-The overlay shown while capturing speech. It reacts to microphone levels and hides after release or cancellation; background decoding can continue after it hides.
+The overlay shown while capturing speech. It reacts to microphone levels and represents microphone opening, capture, transcription, insertion and cancellation. It also shows silence/limit reminders and recovery errors.
 
 ## Cleanup pass — planned
 
@@ -20,7 +20,7 @@ The completed text returned by the engine. The desktop app inserts this text onc
 
 ## Global hotkey
 
-An OS shortcut received outside the focused app. Hold-to-talk defaults to `Ctrl+Space`; the active capture can be cancelled with `Esc`.
+An OS shortcut received outside the focused app. Hold-to-talk defaults to `Ctrl+Space`, hands-free to `Ctrl+Shift+Space`, and capture/transcription cancellation to `Esc`. One native service observes all three actions and physical press/release edges.
 
 ## Hold-to-talk
 
@@ -36,27 +36,19 @@ An intermediate best guess at the text. It can change during recognition and is 
 
 ## Session
 
-A capture and its transcription result, from shortcut press through release/finalization or cancellation. Captures may overlap pending background decoding; results are delivered in capture order.
+A capture and its transcription result, from shortcut press through release/finalization or cancellation. A take cannot overlap another take, pending decoding, insertion or manual recovery.
 
 ## Session state machine
 
-The dependency-free domain model has five states:
-
-- `idle`: no active domain session.
-- `recording`: capture has started.
-- `streaming`: the domain model has received partial hypotheses.
-- `finalizing`: capture has ended and the domain model awaits final text.
-- `cancelled`: the session discards hypotheses.
-
-The desktop capture coordinator publishes recording, finalizing and cancellation snapshots; it does not feed decoder hypotheses back into that model. Its background decoder and delivery components handle final results separately.
+The desktop controller in `plume-session` uses `Ready`, `Starting`, `Recording(Hold|Toggle)`, `Transcribing`, `Inserting` and `Cancelling`. One operation owns the controller until its native resources are released. Manual recovery uses the same worker and never inserts text. The older domain edit/state types remain available, but do not drive the desktop runtime.
 
 ## Target app
 
 The focused application receiving final text when delivery occurs.
 
-## Toggle mode — planned
+## Toggle mode
 
-Start and stop capture by successive presses. Domain transitions exist, but the desktop runtime exposes hold-to-talk only.
+Start and stop hands-free capture by successive presses of its own shortcut. Its release and other start gestures do not stop recording.
 
 ## History policy
 

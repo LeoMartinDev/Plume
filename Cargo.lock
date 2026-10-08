@@ -4437,7 +4437,9 @@ name = "plume-inject"
 version = "0.1.2"
 dependencies = [
  "arboard",
+ "core-foundation 0.10.0",
  "core-graphics 0.24.0",
+ "objc",
  "plume-core",
  "tracing",
  "windows 0.61.3",
@@ -4473,6 +4475,7 @@ dependencies = [
 name = "plume-session"
 version = "0.1.2"
 dependencies = [
+ "hound",
  "plume-audio",
  "plume-core",
  "plume-engine",
@@ -4480,7 +4483,10 @@ dependencies = [
  "plume-inject",
  "plume-logging",
  "plume-overlay",
+ "serde",
+ "serde_json",
  "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -127,6 +127,9 @@ fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.capture.is_listening() {
+            self.shortcut_edit.take();
+        }
         let prefs = self.phase.prefs().clone();
         let palette = match prefs.appearance() {
             AppearancePref::Fixed(Scheme::Light) => Palette::Light,

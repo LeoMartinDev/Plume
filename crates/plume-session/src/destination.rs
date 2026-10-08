@@ -1,4 +1,6 @@
-use plume_core::{BoxError, Edit, InjectionReport, InsertionMode, TextInjector};
+#[cfg(test)]
+use plume_core::Edit;
+use plume_core::{BoxError, InjectionReport, InsertionMode, TextInjector};
 
 pub(crate) struct TextDestination<I: TextInjector> {
     injector: I,
@@ -19,6 +21,7 @@ impl<I: TextInjector> TextDestination<I> {
             .map(|_| ())
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_edit_with_mode(
         &mut self,
         edit: &Edit,
@@ -52,6 +55,14 @@ impl<I: TextInjector> TextDestination<I> {
     pub(crate) fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
         self.injector.copy_text(text)
     }
+    pub(crate) fn insert_checked(
+        &mut self,
+        text: &str,
+        mode: InsertionMode,
+        before_dispatch: &mut dyn FnMut() -> bool,
+    ) -> Result<InjectionReport, BoxError> {
+        self.injector.insert_checked(text, mode, before_dispatch)
+    }
 
     #[cfg(test)]
     pub(crate) fn retract(&mut self) -> Result<(), BoxError> {
@@ -79,12 +90,14 @@ impl<I: TextInjector> TextDestination<I> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) enum InsertionError {
     Desync { expected_suffix: String },
     Inject(BoxError),
 }
 
+#[cfg(test)]
 impl std::fmt::Display for InsertionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -99,6 +112,7 @@ impl std::fmt::Display for InsertionError {
     }
 }
 
+#[cfg(test)]
 impl std::error::Error for InsertionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

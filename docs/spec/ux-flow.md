@@ -1,6 +1,6 @@
 # UX flow
 
-The current desktop app supports hold-to-talk dictation, Esc cancellation and final-text insertion. The [glossary](glossary.md) distinguishes current behavior from planned capabilities.
+The current desktop app supports hold-to-talk and hands-free dictation, Esc cancellation during capture or transcription, and final-text insertion. The [glossary](glossary.md) distinguishes current behavior from planned capabilities.
 
 ## Background operation
 
@@ -12,11 +12,11 @@ Closing Settings hides the window while the global dictation shortcut, downloads
 2. Hold the global shortcut, `Ctrl+Space` by default. Change it in Settings → Dictation; `Fn` is rejected.
 3. Speak. The bubble appears and reacts to microphone levels. Partial hypotheses are not inserted into the target application.
 4. Release the shortcut. Capture ends; the bubble switches to three dots while transcription finishes, then a small progress indicator during insertion. A brief checkmark confirms completion. Normal dictation never displays transcript text in the bubble.
-5. If another capture began before earlier results were delivered, its text is delivered in capture order with a separator when needed.
+5. One operation occupies Plume until insertion finishes. Presses during starting, transcription, insertion or cancellation are ignored; release and press again when ready. A checkmark indicates dispatch, rather than an acknowledgment from every target application.
 
 ## Cancel a session
 
-Press `Esc` while holding the shortcut. Capture ends and the cancelled job's result is discarded, including output that arrives later. No partial text needs to be removed. After release the capture is already queued for finalization; the current desktop flow does not cancel it through Esc.
+Press `Esc` during microphone opening, capture, transcription or manual retranscription. Capture stops without the normal 120 ms release tail, the worker aborts and the audio is deleted. The bubble remains busy until microphone closure, worker return and deletion are confirmed. A paste already dispatched is not cancelled. No late result is inserted.
 
 ## Insertion and history
 
@@ -24,9 +24,23 @@ Settings → Dictation selects Automatic, Paste or Typing insertion. Clipboard f
 
 Changing a history limit saves it and immediately prunes older or excess transcriptions. Defaults are 30 days and 500 entries. Each setting offers three finite choices (7/30/90 days and 100/500/5,000 entries) plus Unlimited; the two limits can be disabled independently. Reducing limits deletes entries permanently. Save failures appear in the History page; the displayed list remains intact when history persistence fails.
 
-## Planned toggle mode
+## Hands-free recording
 
-A toggle shortcut for recording without holding a key is planned. The domain state machine contains toggle transitions, but the desktop runtime does not expose this interaction.
+Press the toggle shortcut, `Ctrl+Shift+Space`, once to start, then press it again to stop. Releasing this shortcut does not stop recording; hold-to-talk gestures cannot control its take. Change either shortcut in Settings → Dictation. The editor temporarily receives configured shortcuts without starting a dictation, and rejects normalized collisions. Older preferences that conflict with the new default keep their shortcuts and disable hands-free with a warning.
+
+Timers begin when the microphone delivers audio. After thirty seconds without speech, hands-free recording displays a reminder that clears on speech. Every take warns at nine minutes and stops for transcription at ten minutes. Speech detection is shared between local engines; silence alone shows “Aucune parole détectée” briefly and saves no audio.
+
+## Audio recovery
+
+The eight latest voiced takes remain available independently of text-history retention, including STT failures. A ninth voiced take evicts the oldest audio. The active recording is a separate temporary PCM16 mono 16 kHz WAV, written progressively. Storage must be writable before microphone opening; a write error stops capture explicitly.
+
+On restart, interrupted voiced takes become recoverable in History without automatic insertion. Retranscribe reads the existing WAV by buffers with the selected model and language frozen at launch, updates the same take and preserves its previous insertion outcome. Recovered text can be read or copied. A new result starts its own text-retention period; the recording's original age and audio eviction order remain unchanged. Delete audio alone, or delete an entry/clear history to remove associated audio.
+
+## Delivery compatibility
+
+Only boundary spaces can change when macOS Accessibility or Windows UI Automation supplies reliable adjacent characters and selection. Unknown context, including X11, receives the exact transcript. A focus change discards the old context and delivers to the currently active target. Known sensitive/read-only fields are refused; Plume never restores an earlier focus.
+
+Paste snapshots the clipboard, stages text, dispatches paste, waits 300 ms, then restores supported content if the native version still belongs to the transaction. A new user copy survives. Empty content, text, HTML with text and images are supported. An unsupported snapshot uses typing in Automatic mode and reports a limitation in explicit Paste mode. After a paste dispatch error, typing is never attempted as a second insertion. Recovery copies intentionally keep the transcription in the clipboard.
 
 ## Planned cleanup pass
 

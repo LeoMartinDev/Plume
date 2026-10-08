@@ -3,6 +3,9 @@
 Validation performed on 2026-10-05. Native UI checks use the full settings
 preview and isolated storage under `/tmp/plume-settings-validation`.
 
+This report records the earlier refactor. For the current dictation contract and
+its validation, see [Dictation contract validation](dictation-validation.md).
+
 ## Automated checks
 
 | Environment | Result |

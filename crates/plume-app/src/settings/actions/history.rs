@@ -5,10 +5,38 @@ const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 use super::super::SettingsView;
 
 impl SettingsView {
+    pub(in crate::settings) fn display_history(&self) -> Vec<crate::history::HistoryEntry> {
+        let mut entries = self.history.entries().to_vec();
+        if let Some(store) = &self.recordings {
+            let store = store.lock().unwrap();
+            for record in store.records() {
+                if (!record.history_saved && !store.audio_path(record.id).is_file())
+                    || !store.has_audio(record.id)
+                    || entries.iter().any(|e| e.record_id == Some(record.id))
+                {
+                    continue;
+                }
+                entries.push(crate::history::HistoryEntry {
+                    id: record.id,
+                    record_id: Some(record.id),
+                    created_at: record.created_at,
+                    text: String::new(),
+                    application: None,
+                    method: None,
+                    status: "Saved audio".into(),
+                    copied_on_failure: false,
+                    error: None,
+                    transcription_error: record.error,
+                });
+            }
+        }
+        entries.sort_by_key(|e| std::cmp::Reverse((e.created_at, e.id)));
+        entries
+    }
     fn invalidate_history_list(&self) {
         super::super::history_view::invalidate_list(
             &self.history_list,
-            self.history.entries().len(),
+            self.display_history().len(),
         );
     }
 
@@ -17,7 +45,37 @@ impl SettingsView {
         result: plume_session::DictationResult,
         cx: &mut Context<Self>,
     ) {
+        let record_id = result.record_id;
+        // Text retention can leave an audio-only row. Recreate it from durable
+        // metadata first so retry also keeps its previous insertion outcome.
+        if result.recovered {
+            if let (Some(id), Some(store)) = (record_id, &self.recordings) {
+                let records: Vec<_> = store
+                    .lock()
+                    .unwrap()
+                    .records()
+                    .into_iter()
+                    .filter(|record| record.id == id)
+                    .collect();
+                if let Err(error) = self.history.import_recordings(&records) {
+                    self.history_error = Some(error);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
         self.history_error = self.history.push(result).err();
+        if self.history_error.is_none() {
+            if let (Some(id), Some(store)) = (record_id, &self.recordings) {
+                self.history_error = store
+                    .lock()
+                    .unwrap()
+                    .acknowledge_history(id)
+                    .err()
+                    .map(|e| e.to_string());
+            }
+        }
+        self.sync_audio_text_retention();
         self.invalidate_history_list();
         cx.notify();
     }
@@ -54,14 +112,107 @@ impl SettingsView {
     }
 
     pub(in crate::settings) fn delete_history(&mut self, id: u64, cx: &mut Context<Self>) {
+        let record = self
+            .history
+            .entries()
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.record_id)
+            .or_else(|| {
+                self.recordings.as_ref().and_then(|store| {
+                    store
+                        .lock()
+                        .unwrap()
+                        .records()
+                        .into_iter()
+                        .find(|r| r.id == id)
+                        .map(|r| r.id)
+                })
+            });
+        if let Some(record) = record {
+            if let Err(e) = self.remove_recording(record, false) {
+                self.history_error = Some(e);
+                cx.notify();
+                return;
+            }
+        }
         self.history_error = self.history.delete(id).err();
         self.invalidate_history_list();
         cx.notify();
     }
 
     pub(in crate::settings) fn clear_history(&mut self, cx: &mut Context<Self>) {
+        let _reservation = match self
+            .session_control
+            .as_ref()
+            .map(|c| c.reserve_history_edit())
+            .transpose()
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                self.history_error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        if let Some(store) = &self.recordings {
+            if let Err(e) = store.lock().unwrap().clear() {
+                self.history_error = Some(e.to_string());
+                cx.notify();
+                return;
+            }
+        }
         self.history_error = self.history.clear().err();
         self.invalidate_history_list();
+        cx.notify();
+    }
+
+    fn sync_audio_text_retention(&mut self) {
+        if self.history_error.is_some() {
+            return;
+        }
+        let ids: Vec<_> = self
+            .history
+            .entries()
+            .iter()
+            .filter_map(|e| e.record_id)
+            .collect();
+        if let Some(store) = &self.recordings {
+            self.history_error = store
+                .lock()
+                .unwrap()
+                .retain_history_text(&ids)
+                .err()
+                .map(|e| e.to_string());
+        }
+    }
+    fn remove_recording(&self, id: u64, audio_only: bool) -> Result<(), String> {
+        let _reservation = self
+            .session_control
+            .as_ref()
+            .map(|c| c.reserve_history_edit())
+            .transpose()?;
+        if let Some(store) = &self.recordings {
+            let mut store = store.lock().unwrap();
+            if audio_only {
+                store.delete_audio(id)
+            } else {
+                store.delete(id)
+            }
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    pub(in crate::settings) fn delete_audio(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.history_error = self.remove_recording(id, true).err();
+        self.invalidate_history_list();
+        cx.notify();
+    }
+    pub(in crate::settings) fn retry_recording(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.history_error = match &self.session_control {
+            Some(c) => c.retry(id).err(),
+            None => Some("Start Plume with a model before retrying.".into()),
+        };
         cx.notify();
     }
 
@@ -87,6 +238,7 @@ impl SettingsView {
                 self.history_error = Some(error);
             }
         }
+        self.sync_audio_text_retention();
         self.invalidate_history_list();
         cx.notify();
     }

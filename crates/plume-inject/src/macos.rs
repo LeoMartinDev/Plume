@@ -65,6 +65,10 @@ mod sys {
                 let mut utf8 = [0u8; 4];
                 event.set_string(ch.encode_utf8(&mut utf8));
             }
+            event.set_integer_value_field(
+                core_graphics::event::EventField::EVENT_SOURCE_USER_DATA,
+                0x504c554d45,
+            );
             events.push(event);
         }
         for event in events {
@@ -105,7 +109,7 @@ impl MacInjector {
     }
 
     pub(crate) fn target_info(&self) -> (Option<String>, plume_core::TargetAssessment) {
-        (None, plume_core::TargetAssessment::Unknown)
+        crate::ax::target()
     }
 }
 

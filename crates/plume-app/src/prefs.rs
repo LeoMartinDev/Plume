@@ -78,6 +78,7 @@ pub const DEFAULT_HOLD: &str = plume_session::Config::DEFAULT_HOLD;
 pub struct Prefs {
     hold: String,
     cancel: String,
+    toggle: Option<String>,
     pub model: ModelId,
     appearance: AppearancePref,
     language: LanguagePref,
@@ -91,6 +92,7 @@ impl Prefs {
         Prefs {
             hold: DEFAULT_HOLD.to_string(),
             cancel: plume_session::Config::DEFAULT_CANCEL.to_string(),
+            toggle: Some(plume_session::Config::DEFAULT_TOGGLE.into()),
             model: ModelId::default(),
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
@@ -110,6 +112,19 @@ impl Prefs {
 
     pub fn hold(&self) -> &str {
         &self.hold
+    }
+
+    pub fn toggle(&self) -> Option<&str> {
+        self.toggle.as_deref()
+    }
+    pub fn try_set_toggle(
+        &mut self,
+        toggle: Option<&str>,
+    ) -> Result<(), plume_session::ConfigError> {
+        plume_session::Config::from_prefs(self.hold(), self.cancel(), PathBuf::from("/"))?
+            .with_toggle(toggle)?;
+        self.toggle = toggle.map(str::to_string);
+        Ok(())
     }
 
     pub fn cancel(&self) -> &str {
@@ -149,7 +164,8 @@ impl Prefs {
     }
 
     pub fn try_set_hold(&mut self, hold: &str) -> Result<(), plume_session::ConfigError> {
-        plume_session::Config::from_prefs(hold, self.cancel(), PathBuf::from("/"))?;
+        plume_session::Config::from_prefs(hold, self.cancel(), PathBuf::from("/"))?
+            .with_toggle(self.toggle())?;
         if self.hold != hold {
             self.hold = hold.to_string();
         }

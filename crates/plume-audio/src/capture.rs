@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -39,8 +39,29 @@ pub fn default_input_name() -> Result<String, CaptureError> {
     device.name().map_err(|_| CaptureError::NoInputDevice)
 }
 
+enum RawSamples {
+    F32(Vec<f32>),
+    I16(Vec<i16>),
+    U16(Vec<u16>),
+}
+struct RawBuffer {
+    samples: RawSamples,
+    rate: u32,
+    channels: u16,
+}
+impl RawBuffer {
+    fn mono(self) -> AudioChunk {
+        let buffer = match &self.samples {
+            RawSamples::F32(v) => InputBuffer::F32(v),
+            RawSamples::I16(v) => InputBuffer::I16(v),
+            RawSamples::U16(v) => InputBuffer::U16(v),
+        };
+        to_audio_chunk(buffer, self.rate, self.channels)
+    }
+}
 pub struct Mic {
-    rx: mpsc::Receiver<AudioChunk>,
+    rx: mpsc::Receiver<RawBuffer>,
+    error: Arc<Mutex<Option<String>>>,
     shutdown: Option<mpsc::Sender<()>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -48,26 +69,31 @@ pub struct Mic {
 impl Mic {
     pub fn open() -> Result<Self, CaptureError> {
         let (ready_tx, ready_rx) = mpsc::channel();
-        let (chunk_tx, chunk_rx) = mpsc::channel();
+        let (chunk_tx, chunk_rx) = mpsc::sync_channel(256);
+        let error = Arc::new(Mutex::new(None));
+        let stream_error = error.clone();
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
         // cpal::Stream is !Send on every host, so the handle stays on this thread.
         let thread = thread::Builder::new()
             .name("plume-audio-mic".into())
-            .spawn(move || match bind_stream(chunk_tx, ready_tx.clone()) {
-                Ok(stream) => {
-                    let _ = shutdown_rx.recv();
-                    let _ = stream.pause();
-                }
-                Err(err) => {
-                    let _ = ready_tx.send(Err(err));
-                }
-            })
+            .spawn(
+                move || match bind_stream(chunk_tx, ready_tx.clone(), stream_error) {
+                    Ok(stream) => {
+                        let _ = shutdown_rx.recv();
+                        let _ = stream.pause();
+                    }
+                    Err(err) => {
+                        let _ = ready_tx.send(Err(err));
+                    }
+                },
+            )
             .map_err(|err| CaptureError::Backend(err.to_string()))?;
         // play() only schedules capture on WASAPI. Do not report readiness
         // until the device has actually delivered its first audio buffer.
         match ready_rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Ok(())) => Ok(Self {
                 rx: chunk_rx,
+                error,
                 shutdown: Some(shutdown_tx),
                 thread: Some(thread),
             }),
@@ -90,7 +116,11 @@ impl Mic {
     }
 
     pub fn recv_timeout(&self, timeout: Duration) -> Result<AudioChunk, mpsc::RecvTimeoutError> {
-        self.rx.recv_timeout(timeout)
+        self.rx.recv_timeout(timeout).map(RawBuffer::mono)
+    }
+
+    pub fn take_error(&self) -> Option<String> {
+        self.error.lock().unwrap().take()
     }
 
     /// Stop callbacks before draining the buffers already captured by the device.
@@ -106,7 +136,7 @@ impl Iterator for Mic {
     type Item = AudioChunk;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.rx.recv().ok()
+        self.rx.recv().ok().map(RawBuffer::mono)
     }
 }
 
@@ -117,21 +147,17 @@ impl Drop for Mic {
 }
 
 fn bind_stream(
-    tx: mpsc::Sender<AudioChunk>,
+    tx: mpsc::SyncSender<RawBuffer>,
     ready: mpsc::Sender<Result<(), CaptureError>>,
+    error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, CaptureError> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or(CaptureError::NoInputDevice)?;
     let (config, sample_format) = preferred_or_default(&device)?;
-    tracing::debug!(
-        "plume-audio: device={:?} sample_rate={} channels={} format={sample_format:?}",
-        device.name().unwrap_or_else(|_| "unknown".into()),
-        config.sample_rate.0,
-        config.channels,
-    );
-    let stream = build_stream(&device, &config, sample_format, tx, ready)?;
+    tracing::debug!(state = "opening", "microphone requested");
+    let stream = build_stream(&device, &config, sample_format, tx, ready, error)?;
     stream
         .play()
         .map_err(|err| CaptureError::Backend(err.to_string()))?;
@@ -159,12 +185,17 @@ fn build_stream(
     device: &cpal::Device,
     config: &StreamConfig,
     sample_format: SampleFormat,
-    tx: mpsc::Sender<AudioChunk>,
+    tx: mpsc::SyncSender<RawBuffer>,
     ready: mpsc::Sender<Result<(), CaptureError>>,
+    error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, CaptureError> {
     let sample_rate = config.sample_rate.0;
     let channels = config.channels;
     let mut ready = Some(ready);
+    let overflow = error.clone();
+    let report_error = move |err: cpal::StreamError| {
+        *error.lock().unwrap() = Some(err.to_string());
+    };
     match sample_format {
         SampleFormat::F32 => device
             .build_input_stream(
@@ -176,9 +207,10 @@ fn build_stream(
                         InputBuffer::F32(data),
                         sample_rate,
                         channels,
+                        &overflow,
                     );
                 },
-                ignore_stream_error,
+                report_error,
                 None,
             )
             .map_err(|err| CaptureError::Backend(err.to_string())),
@@ -192,9 +224,10 @@ fn build_stream(
                         InputBuffer::I16(data),
                         sample_rate,
                         channels,
+                        &overflow,
                     );
                 },
-                ignore_stream_error,
+                report_error,
                 None,
             )
             .map_err(|err| CaptureError::Backend(err.to_string())),
@@ -208,9 +241,10 @@ fn build_stream(
                         InputBuffer::U16(data),
                         sample_rate,
                         channels,
+                        &overflow,
                     );
                 },
-                ignore_stream_error,
+                report_error,
                 None,
             )
             .map_err(|err| CaptureError::Backend(err.to_string())),
@@ -219,25 +253,34 @@ fn build_stream(
 }
 
 fn send_buffer(
-    tx: &mpsc::Sender<AudioChunk>,
+    tx: &mpsc::SyncSender<RawBuffer>,
     ready: &mut Option<mpsc::Sender<Result<(), CaptureError>>>,
     buffer: InputBuffer<'_>,
     sample_rate: u32,
     channels: u16,
+    error: &Arc<Mutex<Option<String>>>,
 ) {
-    let chunk = to_audio_chunk(buffer, sample_rate, channels);
-    if chunk.samples.is_empty() {
-        return;
-    }
-    if tx.send(chunk).is_ok() {
-        if let Some(ready) = ready.take() {
-            let _ = ready.send(Ok(()));
+    let samples = match buffer {
+        InputBuffer::F32(v) if !v.is_empty() => RawSamples::F32(v.to_vec()),
+        InputBuffer::I16(v) if !v.is_empty() => RawSamples::I16(v.to_vec()),
+        InputBuffer::U16(v) if !v.is_empty() => RawSamples::U16(v.to_vec()),
+        _ => return,
+    };
+    match tx.try_send(RawBuffer {
+        samples,
+        rate: sample_rate,
+        channels,
+    }) {
+        Ok(()) => {
+            if let Some(ready) = ready.take() {
+                let _ = ready.send(Ok(()));
+            }
         }
+        Err(mpsc::TrySendError::Full(_)) => {
+            *error.lock().unwrap() = Some("microphone buffer overflow".into())
+        }
+        Err(mpsc::TrySendError::Disconnected(_)) => {}
     }
-}
-
-fn ignore_stream_error(err: cpal::StreamError) {
-    tracing::warn!("plume-audio: input stream error: {err}");
 }
 
 #[cfg(test)]
@@ -246,15 +289,23 @@ mod tests {
 
     #[test]
     fn microphone_is_ready_only_after_a_nonempty_buffer_is_queued() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(8);
         let (ready_tx, ready_rx) = mpsc::channel();
         let mut ready = Some(ready_tx);
-        send_buffer(&tx, &mut ready, InputBuffer::F32(&[]), 16_000, 1);
+        let errors = Arc::new(Mutex::new(None));
+        send_buffer(&tx, &mut ready, InputBuffer::F32(&[]), 16_000, 1, &errors);
         assert!(ready_rx.try_recv().is_err());
         assert!(rx.try_recv().is_err());
-        send_buffer(&tx, &mut ready, InputBuffer::F32(&[0.25]), 16_000, 1);
+        send_buffer(
+            &tx,
+            &mut ready,
+            InputBuffer::F32(&[0.25]),
+            16_000,
+            1,
+            &errors,
+        );
         assert!(ready_rx.try_recv().unwrap().is_ok());
-        assert_eq!(rx.try_recv().unwrap().samples, vec![0.25]);
+        assert_eq!(rx.try_recv().unwrap().mono().samples, vec![0.25]);
         assert!(ready.is_none());
     }
 

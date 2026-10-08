@@ -9,6 +9,10 @@ use crate::history_policy::HistoryPolicy;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct HistoryEntry {
     pub id: u64,
+    #[serde(default)]
+    pub record_id: Option<u64>,
+    #[serde(default)]
+    pub transcription_error: Option<String>,
     pub created_at: u64,
     pub text: String,
     pub application: Option<String>,
@@ -83,6 +87,23 @@ impl HistoryStore {
     }
 
     pub fn push(&mut self, result: DictationResult) -> Result<(), String> {
+        let mut entries = self.entries.clone();
+        if result.recovered {
+            if let Some(entry) = entries
+                .iter_mut()
+                .find(|e| e.record_id == result.record_id && result.record_id.is_some())
+            {
+                if result.transcription_error.is_none() {
+                    entry.text = result.text;
+                }
+                entry.transcription_error = result.transcription_error;
+                // The take's age remains in RecordingStore. This new result
+                // starts its own text-retention period and remains visible.
+                entry.created_at = now_secs();
+                prune(&mut entries, now_secs(), self.policy);
+                return self.commit(entries);
+            }
+        }
         let (application, method, status, error) = match result.injection {
             Ok(report) => (
                 report.application,
@@ -90,13 +111,15 @@ impl HistoryStore {
                     InsertionMethod::Clipboard => "Paste".to_string(),
                     InsertionMethod::Typing => "Typing".to_string(),
                 }),
-                "Inserted".to_string(),
+                "Dispatched".to_string(),
                 None,
             ),
             Err(error) => (
                 None,
                 None,
-                if result.copied_on_failure {
+                if result.recovered && result.transcription_error.is_none() {
+                    "Recovered"
+                } else if result.copied_on_failure {
                     "Copied"
                 } else {
                     "Failed"
@@ -105,11 +128,15 @@ impl HistoryStore {
                 Some(error),
             ),
         };
-        let mut entries = self.entries.clone();
+        if let Some(id) = result.record_id {
+            entries.retain(|e| e.record_id != Some(id));
+        }
         entries.insert(
             0,
             HistoryEntry {
                 id: self.next_id,
+                record_id: result.record_id,
+                transcription_error: result.transcription_error,
                 created_at: now_secs(),
                 text: result.text,
                 application,
@@ -123,6 +150,50 @@ impl HistoryStore {
         self.commit(entries)?;
         self.next_id += 1;
         Ok(())
+    }
+
+    /// Import durable results after a crash, without delivering text to another application.
+    pub fn import_recordings(
+        &mut self,
+        records: &[plume_session::Recording],
+    ) -> Result<(), String> {
+        let mut entries = self.entries.clone();
+        for record in records {
+            if record.history_saved {
+                continue;
+            }
+            if let Some(entry) = entries.iter_mut().find(|e| e.record_id == Some(record.id)) {
+                if record.error.is_none() {
+                    if let Some(text) = &record.text {
+                        entry.text = text.clone();
+                    }
+                }
+                entry.transcription_error = record.error.clone();
+                entry.created_at = now_secs();
+                continue;
+            }
+            entries.push(HistoryEntry {
+                id: self.next_id,
+                record_id: Some(record.id),
+                transcription_error: record.error.clone(),
+                created_at: now_secs(),
+                text: record.text.clone().unwrap_or_default(),
+                application: record
+                    .insertion
+                    .as_ref()
+                    .and_then(|i| i.application.clone()),
+                method: record.insertion.as_ref().and_then(|i| i.method.clone()),
+                status: record
+                    .insertion
+                    .as_ref()
+                    .map_or_else(|| "Recovered".into(), |i| i.status.clone()),
+                copied_on_failure: record.insertion.as_ref().is_some_and(|i| i.copied),
+                error: record.insertion.as_ref().and_then(|i| i.error.clone()),
+            });
+            self.next_id += 1;
+        }
+        prune(&mut entries, now_secs(), self.policy);
+        self.commit(entries)
     }
 
     pub fn delete(&mut self, id: u64) -> Result<(), String> {
@@ -201,6 +272,8 @@ mod tests {
     fn entry(id: u64, created_at: u64) -> HistoryEntry {
         HistoryEntry {
             id,
+            record_id: None,
+            transcription_error: None,
             created_at,
             text: format!("text {id}"),
             application: None,
@@ -340,6 +413,10 @@ mod tests {
         std::fs::remove_dir(path.with_extension("json.tmp")).unwrap();
         store
             .push(DictationResult {
+                record_id: None,
+                audio_available: false,
+                recovered: false,
+                transcription_error: None,
                 text: "new".into(),
                 injection: Err("failed".into()),
                 copied_on_failure: true,
@@ -396,5 +473,67 @@ mod tests {
             entries.iter().map(|entry| entry.id).collect::<Vec<_>>(),
             [2]
         );
+    }
+}
+
+#[cfg(test)]
+mod recording_history_tests {
+    use super::*;
+    #[test]
+    fn legacy_entries_default_to_no_audio_and_retry_keeps_insertion_status() {
+        let entry:HistoryEntry=serde_json::from_str(r#"{"id":1,"created_at":1,"text":"old","application":null,"method":null,"status":"Inserted","copied_on_failure":false,"error":null}"#).unwrap();
+        assert_eq!(entry.record_id, None);
+        let root = std::env::temp_dir().join(format!(
+            "plume-history-retry-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut store = HistoryStore::empty(root.join("history.json"), HistoryPolicy::default());
+        let first = DictationResult {
+            text: "old".into(),
+            record_id: Some(7),
+            audio_available: true,
+            transcription_error: None,
+            recovered: false,
+            copied_on_failure: true,
+            injection: Err("dispatch failed".into()),
+        };
+        store.push(first).unwrap();
+        store.entries[0].created_at = 1;
+        store
+            .push(DictationResult {
+                text: "recovered".into(),
+                record_id: Some(7),
+                audio_available: true,
+                transcription_error: None,
+                recovered: true,
+                copied_on_failure: false,
+                injection: Err("not inserted".into()),
+            })
+            .unwrap();
+        let entry = &store.entries()[0];
+        assert!(entry.created_at > 1);
+        assert_eq!(entry.status, "Copied");
+        assert_eq!(entry.text, "recovered");
+        assert!(entry.copied_on_failure);
+        assert_eq!(store.entries().len(), 1);
+        // The original text can expire while its audio remains indefinitely.
+        store.clear().unwrap();
+        let audio_only: plume_session::Recording = serde_json::from_value(serde_json::json!({
+            "version": 1, "id": 7, "created_at": 1, "has_speech": true,
+            "duration_ms": 1000, "status": "Transcribed", "text": "new recovery",
+            "error": null, "history_saved": false,
+            "insertion": { "status": "Copied", "method": null, "application": null,
+                "error": "old dispatch failure", "copied": true }
+        }))
+        .unwrap();
+        store.import_recordings(&[audio_only]).unwrap();
+        store.apply_policy(HistoryPolicy::default()).unwrap();
+        assert_eq!(store.entries()[0].text, "new recovery");
+        assert_eq!(store.entries()[0].status, "Copied");
+        assert_eq!(store.entries()[0].record_id, Some(7));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

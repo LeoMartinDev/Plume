@@ -1,6 +1,6 @@
 # Developing Plume
 
-A local desktop dictation app written in Rust and GPUI. Hold `Ctrl+Space`, speak, then release: the final transcript is inserted into the focused application. `Esc` cancels an active capture. Audio stays on the machine; downloading a model requires a network connection.
+A local desktop dictation app written in Rust and GPUI. Hold `Ctrl+Space`, speak, then release, or use `Ctrl+Shift+Space` hands-free: the final transcript is inserted into the focused application. `Esc` cancels capture or transcription. Audio stays on the machine; downloading a model requires a network connection.
 
 ## Run
 
@@ -20,7 +20,7 @@ For the standalone session runner, provide an installed model directory:
 PLUME_MODEL_DIR=/path/to/model cargo run -p plume-session
 ```
 
-Its environment configuration is `PLUME_MODEL_DIR` (required), `PLUME_HOLD` (default `Ctrl+Space`) and `PLUME_CANCEL` (default `Esc`). `Fn` shortcuts are rejected.
+Its environment configuration is `PLUME_MODEL_DIR` (required), `PLUME_HOLD` (default `Ctrl+Space`), `PLUME_TOGGLE` (default `Ctrl+Shift+Space`, empty disables it) and `PLUME_CANCEL` (default `Esc`). `Fn` shortcuts are rejected.
 
 The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Linux and the Vulkan SDK on Windows. See [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the exact dependencies. Native integrations exist for macOS, Windows and Linux X11; Wayland support remains planned.
 
@@ -38,9 +38,13 @@ The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Li
 | `plume-ui` | Shared controls, palette and UI refresh interval |
 | `plume-app` | Startup, model downloads, preferences, history and settings |
 
-A shortcut press starts capture. Audio flows to a bounded background decoder queue. Releasing ends capture; the decoder returns the final text. `TranscriptDelivery` preserves capture order, inserts separators between overlapping captures, applies the insertion mode and attempts clipboard fallback when configured. Partial hypotheses are not inserted by the desktop session. A cancelled capture returns no text to insert.
+`plume-session::controller` owns one operation through Ready → Starting → Recording(Hold/Toggle) → Transcribing → Inserting → Ready. Cancellation waits for the microphone, decoder and audio deletion before readiness. Native bindings share one hook/service and report action and press/release edges. Busy presses are consumed; no STT queue, capture joining or timing-based separators remain. The model/language snapshot is fixed at launch. Only the final transcript is delivered.
 
-Within `plume-session`, `runtime` coordinates capture and configuration updates, `decoder` owns the decoding queue and worker, `delivery` owns ordered insertion, and `startup` connects the native adapters. Within `plume-app`, preference types are separate from TOML conversion and storage; settings actions are grouped by shortcut, preferences, models and history.
+The CPAL callback copies native samples into a bounded queue; conversion, stateful mono/16 kHz normalization, Silero CPU VAD and progressive WAV writes run outside it. Silero receives 512-sample windows, threshold 0.5, no minimum speech duration and a fresh recurrent state. STT starts with 250 ms of pre-roll on the first voiced window and keeps subsequent pauses. Release retains 120 ms of tail; cancellation has no tail. Monotonic timers begin after microphone readiness: 30-second hands-free silence reminder, nine-minute warning and ten-minute capture limit.
+
+`RecordingStore` retains eight voiced audios plus an active partial WAV. Flushes refresh its header each second; versioned JSON metadata is atomically replaced (ReplaceFileW on Windows). Interrupted voiced takes are recovered manually at startup. Text is persisted before insertion. Retry reads buffers through the same decoder and VAD, updates an existing take, preserves its insertion status and never injects. Audio-only deletion and explicit history clearing remove associated files; automatic text retention remains independent. Acknowledged evicted metadata is removed, and expired stored text is cleared independently of retained audio.
+
+Within `plume-session`, `runtime` coordinates the event-driven controller, capture and configuration updates, `decoder` owns the single worker, `recordings` owns durable takes, `delivery` owns final insertion, and `startup` connects the native adapters. Within `plume-app`, preference types are separate from TOML conversion and storage; settings actions are grouped by shortcut, preferences, models and history.
 
 ## Application icon and native packaging
 
@@ -66,6 +70,7 @@ Example preferences:
 
 ```toml
 hold = "Ctrl+Space"
+toggle = "Ctrl+Shift+Space"
 cancel = "Esc"
 model = "nemotron-3.5-compact"
 appearance = "auto"
@@ -84,7 +89,7 @@ History settings accept 1–3,650 days and 1–100,000 entries, or `"unlimited"`
 
 Reducing a limit immediately deletes older or excess entries, retaining the newest ones. Limits also apply on startup and when recording a result. Increasing a limit cannot restore deleted entries. A failed preference save leaves the selected policy unchanged. A failed history write preserves the displayed list and reports an error; the saved policy is retried on the next transcription or restart. Preferences and history use temporary files and native file replacement.
 
-Toggle mode, live correction and a local LLM cleanup pass remain planned features. They are not settings available in the current app. The original implementation plan is available in Git history; the [UX flow](spec/ux-flow.md) describes current behavior.
+Live correction and a local LLM cleanup pass are not connected to the production flow. The [UX flow](spec/ux-flow.md) describes current behavior and the [dictation validation](dictation-validation.md) records automated checks and remaining native acceptance sessions.
 
 A settings preview keeps the sidebar, uses temporary storage and disables model/capture actions. It seeds 150 synthetic history entries; pass a storage directory to reuse preferences across launches:
 
@@ -106,7 +111,7 @@ cargo run --release -p plume-app
 
 Logs go to stderr unless `PLUME_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
 
-The per-sample audio statistics (RMS, peak, sample counts and nonfinite samples) run only when `trace` is enabled for `plume_session::decoder`. Otherwise the decoder uses the original audio stream without the diagnostic allocation, mutex or sample scan. Capture/decoder timers run only at `debug` or above. Diagnostics record lengths and timings rather than transcript contents. Native engine libraries may still emit their own messages independently of this filter. The version probe remains ordinary output.
+Session logs contain identifiers, state transitions, durations and errors. They never include audio, transcripts, adjacent-field text or clipboard snapshots. Whisper/GGML log bodies are suppressed because native debug builds can include decoded tokens; the session reports typed engine errors. The version probe remains ordinary output.
 
 ## Verification
 

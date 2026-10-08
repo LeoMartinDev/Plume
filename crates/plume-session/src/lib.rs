@@ -1,4 +1,7 @@
 mod capture;
+mod controller;
+mod recordings;
+pub use recordings::{RecordId, Recording, RecordingStore, SharedRecordings, MAX_RECORDINGS};
 mod chords;
 mod config;
 mod decoder;
@@ -14,7 +17,7 @@ pub use config::{Config, ConfigError};
 pub use plume_core::{InjectionReport, InsertionMethod, InsertionMode, TargetAssessment};
 pub use startup::{
     start, DictationResult, EngineTarget, HoldTarget, InsertionConfig, InsertionTarget,
-    LiveSession, PreparedSession,
+    LiveSession, PreparedSession, SessionControl, ShortcutEditGuard,
 };
 
 /// Startup failure with its process exit code: 4 for a missing or invalid

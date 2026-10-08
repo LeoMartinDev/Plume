@@ -52,6 +52,8 @@ impl<'de> Deserialize<'de> for AppearanceWire {
 #[derive(Deserialize)]
 struct WireIn {
     #[serde(default)]
+    toggle: Option<String>,
+    #[serde(default)]
     history: Option<toml::Value>,
     hold: String,
     cancel: String,
@@ -69,6 +71,7 @@ struct WireIn {
 
 #[derive(Serialize)]
 struct WireOut {
+    toggle: String,
     history: HistoryWireOut,
     hold: String,
     cancel: String,
@@ -93,11 +96,36 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
         .ok_or_else(|| format!("prefs model {} is unknown", wire.model))?;
     plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
         .map_err(|err| format!("prefs chords rejected: {err}"))?;
-    let (history, warnings) = parse_history(wire.history);
+    let (history, mut warnings) = parse_history(wire.history);
+    let toggle = match wire.toggle {
+        Some(raw) if raw.is_empty() => None,
+        Some(raw) => {
+            plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
+                .map_err(|e| e.to_string())?
+                .with_toggle(Some(&raw))
+                .map_err(|e| e.to_string())?;
+            Some(raw)
+        }
+        None => {
+            let default = plume_session::Config::DEFAULT_TOGGLE;
+            let config =
+                plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
+                    .map_err(|e| e.to_string())?;
+            if config.with_toggle(Some(default)).is_ok() {
+                Some(default.into())
+            } else {
+                warnings.push(
+                    "Hands-free shortcut disabled because it overlaps an existing shortcut.".into(),
+                );
+                None
+            }
+        }
+    };
     Ok((
         Prefs {
             hold: wire.hold,
             cancel: wire.cancel,
+            toggle,
             model,
             appearance: wire.appearance.0,
             language: wire.language.0,
@@ -136,6 +164,7 @@ struct HistoryWireOut {
 
 pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
     let wire = WireOut {
+        toggle: prefs.toggle.clone().unwrap_or_default(),
         hold: prefs.hold.clone(),
         cancel: prefs.cancel.clone(),
         model: prefs.model.as_str().to_string(),
@@ -286,5 +315,24 @@ mod tests {
             assert_eq!(loaded, prefs);
             assert!(warnings.is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod toggle_migration_tests {
+    use super::*;
+    #[test]
+    fn migration_preserves_existing_shortcuts_when_default_collides() {
+        let (prefs, warnings) =
+            parse_wire("hold='Ctrl+Shift+Space'\ncancel='Esc'\nmodel='whisper-base'").unwrap();
+        assert_eq!(prefs.hold(), "Ctrl+Shift+Space");
+        assert_eq!(prefs.toggle(), None);
+        assert_eq!(warnings.len(), 1);
+        let (mut prefs, warnings) =
+            parse_wire("hold='Ctrl+Space'\ncancel='Esc'\nmodel='whisper-base'").unwrap();
+        assert_eq!(prefs.toggle(), Some("Ctrl+Shift+Space"));
+        assert!(warnings.is_empty());
+        assert!(prefs.try_set_toggle(Some("Control+Space")).is_err());
+        assert_eq!(prefs.toggle(), Some("Ctrl+Shift+Space"));
     }
 }

@@ -1,7 +1,7 @@
-use plume_core::{BoxError, GlobalHotkey, HotkeyEvent};
+use plume_core::BoxError;
 use plume_hotkey::{global_hotkey, PlatformHotkey};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ChordSpec {
     raw: String,
 }
@@ -31,58 +31,23 @@ impl ChordSpec {
 pub(crate) struct Chord {
     hotkey: PlatformHotkey,
 }
-
 impl Chord {
-    pub(crate) fn bind(spec: &ChordSpec) -> Result<Self, BoxError> {
+    pub fn bind(config: &crate::Config) -> Result<Self, BoxError> {
         let mut hotkey = global_hotkey()?;
-        hotkey.register(spec.as_str())?;
-        Ok(Chord { hotkey })
+        hotkey.register_bindings(&config.bindings())?;
+        Ok(Self { hotkey })
     }
-
-    pub(crate) fn next_event(&mut self) -> Option<HotkeyEvent> {
-        self.hotkey.next_event()
+    pub fn register(&mut self, config: &crate::Config) -> Result<(), BoxError> {
+        self.hotkey.register_bindings(&config.bindings())
     }
-}
-
-/// Windows installs one process-wide low-level hook, so a second
-/// `PlatformHotkey` fails. `arm` returns a disarmed guard and `cancelled`
-/// never fires. Linux opens two X11 connections, one per chord.
-pub(crate) struct CancelGuard {
-    #[cfg(not(windows))]
-    hotkey: PlatformHotkey,
-}
-
-impl CancelGuard {
-    pub(crate) fn arm(spec: &ChordSpec) -> Result<Self, BoxError> {
-        #[cfg(windows)]
-        {
-            let _ = spec;
-            use std::sync::Once;
-            static LOG: Once = Once::new();
-            LOG.call_once(|| {
-                tracing::warn!(
-                    "plume-session: Esc cancel is unavailable on Windows (one keyboard hook per process)"
-                );
-            });
-            Ok(CancelGuard {})
-        }
-        #[cfg(not(windows))]
-        {
-            let mut hotkey = global_hotkey()?;
-            hotkey.register(spec.as_str())?;
-            Ok(CancelGuard { hotkey })
-        }
+    pub fn next_event(&mut self) -> Option<plume_hotkey::BindingEvent> {
+        self.hotkey.next_binding_event()
     }
-
-    pub(crate) fn cancelled(&mut self) -> bool {
-        #[cfg(windows)]
-        {
-            false
-        }
-        #[cfg(not(windows))]
-        {
-            matches!(self.hotkey.next_event(), Some(HotkeyEvent::Pressed))
-        }
+    pub fn cancel_active(&mut self, active: bool) {
+        self.hotkey.set_cancel_active(active);
+    }
+    pub fn passthrough(&mut self, active: bool) -> Result<(), BoxError> {
+        self.hotkey.set_passthrough(active)
     }
 }
 

@@ -22,15 +22,15 @@ rustfft = "6"
 # compatible driver and device are present.
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }
-whisper-rs = { version = "0.16", features = ["vulkan"] }
+whisper-rs = { version = "0.16", features = ["vulkan", "raw-api"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["coreml"] }
-whisper-rs = { version = "0.16", features = ["metal"] }
+whisper-rs = { version = "0.16", features = ["metal", "raw-api"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
 ort = "=2.0.0-rc.13"
-whisper-rs = "0.16"
+whisper-rs = { version = "0.16", features = ["raw-api"] }
 
 [dev-dependencies]
 plume-core = { path = "../plume-core" }

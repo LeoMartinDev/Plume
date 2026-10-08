@@ -223,7 +223,9 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
         prefs.hold(),
         prefs.cancel(),
         prefs.model.data_dir(),
-    ) {
+    )
+    .and_then(|config| config.with_toggle(prefs.toggle()))
+    {
         Ok(config) => config,
         Err(err) => {
             settings_window_show_fetch_failed(cx, err);
@@ -236,11 +238,21 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
             copy_on_failure: prefs.copy_on_failure(),
         },
     );
+    let dirs = crate::dirs::AppDirs::resolve();
+    let ready = ready.with_recordings(dirs.recordings_path(), dirs.vad_path());
     match plume_session::start(ready) {
         Ok(live) => {
             log_line("plume-app: compositor started");
             plume_overlay::attach(cx, live.bubbles, live.levels);
-            settings_window_show_live(cx, live.hold, live.engine, language_target, live.insertion);
+            settings_window_show_live(
+                cx,
+                live.hold,
+                live.engine,
+                language_target,
+                live.insertion,
+                live.control,
+                live.recordings,
+            );
             drain_results(cx, live.results);
         }
         Err(err) => {

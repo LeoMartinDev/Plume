@@ -21,126 +21,128 @@ pub(super) fn dictation_page(
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let listening = view.capture.is_listening();
-    let label = if listening {
-        SharedString::from(
-            view.capture
-                .preview()
-                .unwrap_or_else(|| pill_label(view.capture.phase(), prefs.hold()))
-                .to_string(),
-        )
-    } else {
-        SharedString::from(pretty_hold(prefs.hold()))
-    };
     let error = view
         .capture
         .reject()
         .map(str::to_string)
         .or_else(|| view.save_error.clone());
-
-    page(
-        "Dictation",
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(
-                settings_group(tokens)
-                    .id(HOLD_CAPTURE_ID)
-                    .track_focus(&view.hold_focus)
-                    .min_h(px(58.))
-                    .px(px(14.))
-                    .py(px(11.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(16.))
-                    .when(listening, |el| el.bg(tokens.fill))
-                    .when(listening, |el| {
-                        el.on_key_down(cx.listener(SettingsView::on_hold_key))
-                            .on_key_up(cx.listener(SettingsView::on_hold_key_up))
-                            .on_modifiers_changed(cx.listener(SettingsView::on_hold_modifiers))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(div().text_sm().child("Push to talk"))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(tokens.muted)
-                                    .child(if listening {
-                                        if view.capture.preview().is_some() {
-                                            "Release the keys to apply"
-                                        } else {
-                                            "Press the new shortcut"
-                                        }
-                                    } else {
-                                        "Hold while speaking"
-                                    }),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .id("hold-change")
-                                    .h(px(32.))
-                                    .px(px(11.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(6.))
-                                    .bg(tokens.fill)
-                                    .border_1()
-                                    .border_color(tokens.hairline)
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(tokens.fill_hover))
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.toggle_hold_capture(window, cx);
-                                    }))
-                                    .child(label),
-                            )
-                            .child(
-                                div()
-                                    .id("hold-reset")
-                                    .h(px(32.))
-                                    .px(px(10.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(6.))
-                                    .text_xs()
-                                    .text_color(tokens.muted)
-                                    .cursor_pointer()
-                                    .hover(|style| {
-                                        style.bg(tokens.fill_hover).text_color(tokens.text)
-                                    })
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.reset_hold(window, cx);
-                                    }))
-                                    .child("Reset"),
-                            ),
-                    ),
-            )
-            .child(insertion_mode_row(
-                tokens,
-                prefs.insertion_mode(),
-                view.insertion_open,
-                cx,
-            ))
-            .child(copy_on_failure_row(tokens, prefs.copy_on_failure(), cx))
-            .children(error.map(|text| error_text(tokens, text))),
-    )
+    page("Dictation", div().flex().flex_col().gap(px(10.))
+        .child(shortcut_row(view,tokens,prefs,false,cx))
+        .child(shortcut_row(view,tokens,prefs,true,cx))
+        .child(div().text_xs().text_color(tokens.muted).child("Esc cancels recording or transcription. One recording at a time, up to 10 minutes."))
+        .child(insertion_mode_row(tokens,prefs.insertion_mode(),view.insertion_open,cx))
+        .child(copy_on_failure_row(tokens,prefs.copy_on_failure(),cx))
+        .children(error.map(|text|error_text(tokens,text))))
+}
+fn shortcut_row(
+    view: &SettingsView,
+    tokens: &Tokens,
+    prefs: &Prefs,
+    toggle: bool,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    let listening = view.capture.is_listening() && view.capture_toggle == toggle;
+    let shortcut = if toggle {
+        prefs.toggle().unwrap_or("Disabled")
+    } else {
+        prefs.hold()
+    };
+    let label = if listening {
+        view.capture
+            .preview()
+            .unwrap_or_else(|| pill_label(view.capture.phase(), shortcut))
+            .to_string()
+    } else {
+        pretty_hold(shortcut)
+    };
+    settings_group(tokens)
+        .id(if toggle {
+            "toggle-capture"
+        } else {
+            HOLD_CAPTURE_ID
+        })
+        .when(listening, |el| {
+            el.track_focus(&view.hold_focus)
+                .on_key_down(cx.listener(SettingsView::on_hold_key))
+                .on_key_up(cx.listener(SettingsView::on_hold_key_up))
+                .on_modifiers_changed(cx.listener(SettingsView::on_hold_modifiers))
+        })
+        .min_h(px(58.))
+        .px(px(14.))
+        .py(px(11.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(16.))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_sm()
+                        .child(if toggle { "Hands free" } else { "Push to talk" }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(tokens.muted)
+                        .child(if listening {
+                            "Press a shortcut, then release to apply"
+                        } else if toggle {
+                            "Press to start, press again to stop"
+                        } else {
+                            "Hold while speaking"
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .id(if toggle {
+                            "toggle-change"
+                        } else {
+                            "hold-change"
+                        })
+                        .h(px(32.))
+                        .px(px(11.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .bg(tokens.fill)
+                        .text_sm()
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _event, window, cx| {
+                            if this.capture.is_listening() && this.capture_toggle != toggle {
+                                this.capture.cancel();
+                                this.shortcut_edit.take();
+                            }
+                            this.capture_toggle = toggle;
+                            this.toggle_hold_capture(window, cx);
+                        }))
+                        .child(SharedString::from(label)),
+                )
+                .child(
+                    div()
+                        .id(if toggle { "toggle-reset" } else { "hold-reset" })
+                        .h(px(32.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .text_xs()
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _event, window, cx| {
+                            this.capture_toggle = toggle;
+                            this.reset_hold(window, cx);
+                        }))
+                        .child("Reset"),
+                ),
+        )
 }
 
 fn insertion_mode_row(
@@ -171,7 +173,7 @@ fn insertion_mode_row(
                     div()
                         .text_xs()
                         .text_color(tokens.muted)
-                        .child("Paste mode replaces the clipboard contents"),
+                        .child("Paste temporarily uses the clipboard, then restores it"),
                 ),
         )
         .child(

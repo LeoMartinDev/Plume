@@ -48,6 +48,13 @@ impl AppDirs {
         self.local_data.join("lock")
     }
 
+    pub fn recordings_path(&self) -> PathBuf {
+        self.local_data.join("recordings")
+    }
+    pub fn vad_path(&self) -> PathBuf {
+        self.local_data.join("speech").join("silero_vad.onnx")
+    }
+
     pub fn history_path(&self) -> PathBuf {
         self.local_data.join("history.json")
     }

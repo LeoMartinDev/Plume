@@ -221,6 +221,8 @@ impl Mel {
 type DecoderStep = (Vec<f32>, Vec<f32>, Vec<f32>);
 
 pub(crate) struct NemotronStream {
+    cancel: plume_core::CancellationToken,
+    options: Option<Arc<ort::session::RunOptions>>,
     inner: Arc<OrtInner>,
     audio: AudioStream,
     pcm: Vec<f32>,
@@ -245,6 +247,8 @@ impl NemotronStream {
         let cache_time = vec![0.0; inner.cache_time_len];
         let lstm = vec![0.0; inner.lstm_len];
         Self {
+            cancel: plume_core::CancellationToken::default(),
+            options: None,
             last_token: inner.vocab.blank as i64,
             inner,
             audio,
@@ -266,7 +270,33 @@ impl NemotronStream {
         }
     }
 
+    pub fn controlled(
+        inner: Arc<OrtInner>,
+        audio: AudioStream,
+        lang_id: i64,
+        cancel: plume_core::CancellationToken,
+    ) -> Result<Self, BoxError> {
+        let options = Arc::new(ort::session::RunOptions::new()?);
+        let abort = options.clone();
+        cancel.on_cancel(move || {
+            let _ = abort.terminate();
+        });
+        let mut stream = Self::new(inner, audio, lang_id);
+        stream.cancel = cancel;
+        stream.options = Some(options);
+        Ok(stream)
+    }
+
+    fn check_cancelled(&self) -> Result<(), BoxError> {
+        if self.cancel.is_cancelled() {
+            Err("transcription cancelled".into())
+        } else {
+            Ok(())
+        }
+    }
+
     fn decode_chunk(&mut self) -> Result<String, BoxError> {
+        self.check_cancelled()?;
         let frames = self.inner.mel.chunk_frames(&self.pcm, self.next_chunk);
         let mut signal = Vec::with_capacity((CACHE_MEL + CHUNK_MEL) * N_MELS);
         signal.extend_from_slice(&self.mel_tail);
@@ -276,14 +306,18 @@ impl NemotronStream {
         let inner = self.inner.clone();
         let (encoded, encoded_len) = {
             let mut encoder = inner.encoder.lock().map_err(|_| "encoder lock poisoned")?;
-            let outputs = encoder.run(ort::inputs![
+            let options = match &self.options {
+                Some(options) => options.clone(),
+                None => Arc::new(ort::session::RunOptions::new()?),
+            };
+            let outputs = encoder.run_with_options(ort::inputs![
                 "audio_signal" => ort::value::Tensor::from_array(([1, CACHE_MEL + CHUNK_MEL, N_MELS], signal))?,
                 "length" => ort::value::Tensor::from_array(([1], vec![(CACHE_MEL + CHUNK_MEL) as i64]))?,
                 "cache_last_channel" => ort::value::Tensor::from_array((inner.cache_channel_shape.clone(), self.cache_channel.clone()))?,
                 "cache_last_time" => ort::value::Tensor::from_array((inner.cache_time_shape.clone(), self.cache_time.clone()))?,
                 "cache_last_channel_len" => ort::value::Tensor::from_array(([1], vec![self.cache_len]))?,
                 "lang_id" => ort::value::Tensor::from_array(([1], vec![self.lang_id]))?
-            ])?;
+            ], &*options)?;
             let (_, encoded) = outputs["outputs"].try_extract_tensor::<f32>()?;
             let (_, lens) = outputs["encoded_lengths"].try_extract_tensor::<i64>()?;
             let (_, next_channel) =
@@ -311,6 +345,7 @@ impl NemotronStream {
             let frame = &encoded[t * inner.enc_hidden..(t + 1) * inner.enc_hidden];
             let mut symbols = 0;
             loop {
+                self.check_cancelled()?;
                 let (dec, h_new, c_new) = self.run_decoder()?;
                 let logits = self.run_joint(frame, &dec)?;
                 let mut best = 0;
@@ -338,11 +373,15 @@ impl NemotronStream {
     fn run_decoder(&self) -> Result<DecoderStep, BoxError> {
         let inner = &self.inner;
         let mut decoder = inner.decoder.lock().map_err(|_| "decoder lock poisoned")?;
-        let outputs = decoder.run(ort::inputs![
+        let options = match &self.options {
+            Some(options) => options.clone(),
+            None => Arc::new(ort::session::RunOptions::new()?),
+        };
+        let outputs = decoder.run_with_options(ort::inputs![
             "targets" => ort::value::Tensor::from_array(([1, 1], vec![self.last_token]))?,
             "h_in" => ort::value::Tensor::from_array((inner.lstm_shape.clone(), self.h.clone()))?,
             "c_in" => ort::value::Tensor::from_array((inner.lstm_shape.clone(), self.c.clone()))?
-        ])?;
+        ], &*options)?;
         let (_, dec) = outputs["decoder_output"].try_extract_tensor::<f32>()?;
         let (_, h) = outputs["h_out"].try_extract_tensor::<f32>()?;
         let (_, c) = outputs["c_out"].try_extract_tensor::<f32>()?;
@@ -355,10 +394,14 @@ impl NemotronStream {
     fn run_joint(&self, frame: &[f32], dec: &[f32]) -> Result<Vec<f32>, BoxError> {
         let inner = &self.inner;
         let mut joint = inner.joint.lock().map_err(|_| "joint lock poisoned")?;
-        let outputs = joint.run(ort::inputs![
+        let options = match &self.options {
+            Some(options) => options.clone(),
+            None => Arc::new(ort::session::RunOptions::new()?),
+        };
+        let outputs = joint.run_with_options(ort::inputs![
             "encoder_output" => ort::value::Tensor::from_array(([1, 1, inner.enc_hidden], frame.to_vec()))?,
             "decoder_output" => ort::value::Tensor::from_array(([1, 1, inner.dec_hidden], dec.to_vec()))?
-        ])?;
+        ], &*options)?;
         let (_, logits) = outputs["joint_output"].try_extract_tensor::<f32>()?;
         if logits.len() != inner.joint_dim {
             return Err("joint returned an unexpected tensor shape".into());
@@ -375,7 +418,15 @@ impl Iterator for NemotronStream {
             if self.finished {
                 return None;
             }
+            if self.cancel.is_cancelled() {
+                self.finished = true;
+                return Some(Err("transcription cancelled".into()));
+            }
             while !self.eof && self.pcm.len() < samples_needed(self.next_chunk) {
+                if self.cancel.is_cancelled() {
+                    self.finished = true;
+                    return Some(Err("transcription cancelled".into()));
+                }
                 match self.audio.next() {
                     Some(chunk) => {
                         if chunk.sample_rate == 0 {
@@ -393,14 +444,7 @@ impl Iterator for NemotronStream {
             {
                 self.finished = true;
                 let text = std::mem::take(&mut self.cumulative);
-                tracing::debug!(
-                    "plume-engine: nemotron lang_id={} pcm_samples={} decoded_chunks={} tokens={} final_chars={}",
-                    self.lang_id,
-                    self.pcm.len(),
-                    self.next_chunk,
-                    self.tokens.len(),
-                    text.chars().count(),
-                );
+                tracing::debug!(state = "complete", "Nemotron decode finished");
                 return Some(Ok(Hypothesis::Final(Transcript { text })));
             }
             match self.decode_chunk() {

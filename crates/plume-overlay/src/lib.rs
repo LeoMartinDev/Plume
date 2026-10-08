@@ -20,6 +20,11 @@ pub struct Bubble {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Feedback {
+    Starting,
+    Transcribing,
+    Cancelling,
+    NoSpeech,
+    RecordingNotice { silence: bool, limit: bool },
     Session,
     Inserting,
     Success,

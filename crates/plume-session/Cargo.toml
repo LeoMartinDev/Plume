@@ -12,3 +12,9 @@ plume-audio = { path = "../plume-audio" }
 plume-inject = { path = "../plume-inject" }
 plume-hotkey = { path = "../plume-hotkey" }
 plume-overlay = { path = "../plume-overlay" }
+hound = "3.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

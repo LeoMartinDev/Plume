@@ -129,6 +129,8 @@ fn open_settings_window(
                         insertion_open: false,
                         save_error: None,
                         capture: ShortcutCapture::idle(),
+                        capture_toggle: false,
+                        shortcut_edit: None,
                         hold_focus: cx.focus_handle().tab_stop(true),
                         content_scroll: ScrollHandle::new(),
                         history_list: gpui::ListState::new(
@@ -140,6 +142,8 @@ fn open_settings_window(
                         history_list_width: None,
                         scrollbar_drag: Default::default(),
                         hold_target: None,
+                        session_control: None,
+                        recordings: None,
                         engine_target: None,
                         language_target: None,
                         insertion_target: None,
@@ -242,10 +246,34 @@ pub fn settings_window_show_live(
     engine_target: EngineTarget,
     language_target: LanguageTarget,
     insertion_target: InsertionTarget,
+    control: plume_session::SessionControl,
+    recordings: plume_session::SharedRecordings,
 ) {
     let handle = *SETTINGS.lock().expect("settings handle");
     if let Some(handle) = handle {
         let _ = handle.update(cx, |view, _window, cx| {
+            view.session_control = Some(control);
+            let records = recordings.lock().unwrap().records();
+            view.history_error = view.history.import_recordings(&records).err();
+            if view.history_error.is_none() {
+                let mut store = recordings.lock().unwrap();
+                for record in records {
+                    if let Err(e) = store.acknowledge_history(record.id) {
+                        view.history_error = Some(e.to_string());
+                        break;
+                    }
+                }
+                let ids: Vec<_> = view
+                    .history
+                    .entries()
+                    .iter()
+                    .filter_map(|e| e.record_id)
+                    .collect();
+                if let Err(e) = store.retain_history_text(&ids) {
+                    view.history_error = Some(e.to_string());
+                }
+            }
+            view.recordings = Some(recordings);
             view.show_live(
                 hold_target,
                 engine_target,

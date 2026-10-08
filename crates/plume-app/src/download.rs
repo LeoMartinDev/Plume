@@ -155,6 +155,13 @@ impl Staging {
         request: DownloadRequest,
         events: &mpsc::Sender<DownloadEvent>,
     ) -> Result<(), DownloadError> {
+        if self.dest.is_dir() {
+            if let Ok(engine) = try_open(self.offer.id, &self.dest) {
+                prepare_vad(fetch, &self.dest, request, events)?;
+                let _ = events.send(DownloadEvent::Proven { request, engine });
+                return Ok(());
+            }
+        }
         let entry = self.offer.id.entry();
         let repo = entry.repo;
         let revision = entry.revision;
@@ -208,6 +215,7 @@ impl Staging {
         std::fs::rename(&self.partial, &self.dest)?;
         match try_open(self.offer.id, &self.dest) {
             Ok(engine) => {
+                prepare_vad(fetch, &self.dest, request, events)?;
                 let _ = events.send(DownloadEvent::Proven { request, engine });
                 Ok(())
             }
@@ -223,7 +231,16 @@ impl Staging {
 pub fn reconcile(offer: PackOffer, dest: &Path) -> Result<PackStatus, DownloadError> {
     if dest.is_dir() {
         match try_open(offer.id, dest) {
-            Ok(engine) => return Ok(PackStatus::Proven(engine)),
+            Ok(engine) => {
+                let common = shared_vad_path(dest);
+                if !vad_ready(&common) {
+                    copy_existing_vad(dest, &common)?;
+                }
+                if vad_ready(&common) {
+                    return Ok(PackStatus::Proven(engine));
+                }
+                // A valid ASR pack is retained while downloading only the shared VAD.
+            }
             Err(_) => move_failed(dest),
         }
     }
@@ -232,6 +249,73 @@ pub fn reconcile(offer: PackOffer, dest: &Path) -> Result<PackStatus, DownloadEr
         partial: sibling_partial(dest),
         offer,
     }))
+}
+
+fn shared_vad_path(dest: &Path) -> PathBuf {
+    dest.parent()
+        .and_then(Path::parent)
+        .unwrap_or(dest)
+        .join("speech")
+        .join("silero_vad.onnx")
+}
+fn vad_ready(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.len() == 2_243_022)
+        && plume_engine::SpeechDetector::open(path).is_ok()
+}
+fn copy_existing_vad(dest: &Path, common: &Path) -> Result<(), DownloadError> {
+    let mut candidates = vec![dest.join("silero_vad.onnx")];
+    if let Some(packs) = dest.parent() {
+        candidates.push(packs.join("light/silero_vad.onnx"));
+    }
+    for candidate in candidates {
+        if vad_ready(&candidate) {
+            std::fs::create_dir_all(common.parent().unwrap())?;
+            let temp = common.with_extension("onnx.copy.tmp");
+            std::fs::copy(candidate, &temp)?;
+            crate::file_store::replace_file(&temp, common)?;
+            break;
+        }
+    }
+    Ok(())
+}
+fn prepare_vad(
+    fetch: &dyn Fetch,
+    dest: &Path,
+    request: DownloadRequest,
+    events: &mpsc::Sender<DownloadEvent>,
+) -> Result<(), DownloadError> {
+    let common = shared_vad_path(dest);
+    if !vad_ready(&common) {
+        copy_existing_vad(dest, &common)?;
+    }
+    if !vad_ready(&common) {
+        std::fs::create_dir_all(common.parent().unwrap())?;
+        let entry = ModelId::Nemotron35Compact.entry();
+        let url = format!(
+            "https://huggingface.co/{}/resolve/{}/silero_vad.onnx",
+            entry.repo, entry.revision
+        );
+        let temp = common.with_extension(format!("onnx.{}.part", request.generation));
+        fetch.fetch_to_file(&url, &temp, &|bytes, _| {
+            let _ = events.send(DownloadEvent::Progress {
+                request,
+                last: Progress {
+                    file: "Speech detection".into(),
+                    bytes,
+                    total: Some(2_243_022),
+                    bytes_per_second: None,
+                },
+            });
+        })?;
+        if std::fs::metadata(&temp)?.len() != 2_243_022 {
+            return Err(DownloadError::Fetch("speech detector size mismatch".into()));
+        }
+        plume_engine::SpeechDetector::open(&temp)
+            .map_err(|e| DownloadError::Open(e.to_string()))?;
+        crate::file_store::replace_file(&temp, &common)?;
+    }
+    plume_engine::SpeechDetector::open(&common).map_err(|e| DownloadError::Open(e.to_string()))?;
+    Ok(())
 }
 
 /// Removes a downloaded model and any interrupted download for the same model.
@@ -366,7 +450,7 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir.join(ModelId::Nemotron35Compact.as_str())
+        dir.join("packs").join(ModelId::Nemotron35Compact.as_str())
     }
 
     fn dummy_files() -> HashMap<String, Vec<u8>> {
@@ -381,6 +465,34 @@ mod tests {
             model: ModelId::Nemotron35Compact,
             generation: 1,
         }
+    }
+
+    #[test]
+    fn corrupt_shared_vad_is_replaced_during_preparation() {
+        let Ok(asset) = std::env::var("PLUME_VAD_PATH") else {
+            return;
+        };
+        let dest = temp_dest("vad-repair");
+        let common = shared_vad_path(&dest);
+        std::fs::create_dir_all(common.parent().unwrap()).unwrap();
+        std::fs::write(&common, b"interrupted asset").unwrap();
+        let fetch = MapFetch {
+            files: [("silero_vad.onnx".into(), std::fs::read(asset).unwrap())].into(),
+        };
+        let (tx, _rx) = mpsc::channel();
+        prepare_vad(&fetch, &dest, request(), &tx).unwrap();
+        assert!(vad_ready(&common));
+        // Once prepared, no fetch is necessary at the next start.
+        prepare_vad(
+            &MapFetch {
+                files: HashMap::new(),
+            },
+            &dest,
+            request(),
+            &tx,
+        )
+        .unwrap();
+        std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -451,7 +563,7 @@ mod tests {
                 .unwrap_or(false)
         });
         assert!(failed, "open failure must move dest aside");
-        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+        let _ = std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -470,7 +582,7 @@ mod tests {
             !dest.exists(),
             "failed dest must be renamed away so the next resume can fetch"
         );
-        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+        let _ = std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -486,7 +598,7 @@ mod tests {
 
         assert!(!dest.exists());
         assert!(!partial.exists());
-        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+        let _ = std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -508,7 +620,7 @@ mod tests {
             .expect("huggingface vocab.txt");
         let n = std::fs::metadata(&file).unwrap().len();
         assert!(n > 100, "vocab.txt too small: {n}");
-        let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+        let _ = std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -544,7 +656,7 @@ mod tests {
             Err(err) => panic!("{err}"),
         }
         if std::env::var_os("PLUME_KEEP_PACK").is_none() {
-            let _ = std::fs::remove_dir_all(dest.parent().unwrap());
+            let _ = std::fs::remove_dir_all(dest.parent().unwrap().parent().unwrap());
         }
     }
 }

@@ -72,12 +72,16 @@ pub struct SettingsView {
     insertion_open: bool,
     save_error: Option<String>,
     capture: ShortcutCapture,
+    capture_toggle: bool,
+    shortcut_edit: Option<plume_session::ShortcutEditGuard>,
     hold_focus: FocusHandle,
     content_scroll: ScrollHandle,
     history_list: gpui::ListState,
     history_list_width: Option<gpui::Pixels>,
     scrollbar_drag: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     hold_target: Option<HoldTarget>,
+    session_control: Option<plume_session::SessionControl>,
+    recordings: Option<plume_session::SharedRecordings>,
     engine_target: Option<EngineTarget>,
     language_target: Option<LanguageTarget>,
     insertion_target: Option<InsertionTarget>,
@@ -94,6 +98,7 @@ pub struct SettingsView {
 impl SettingsView {
     fn reset_for_phase(&mut self) {
         self.capture.cancel();
+        self.shortcut_edit.take();
         self.language_open = false;
         self.insertion_open = false;
         self.history_menu = None;

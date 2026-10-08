@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
+mod bindings;
 mod chord;
+pub use bindings::{validate_bindings, BindingEvent, HotkeyAction, HotkeyBinding};
 mod macos;
 mod shortcut;
 mod windows;
@@ -75,6 +77,56 @@ pub fn global_hotkey() -> Result<PlatformHotkey, BoxError> {
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Err(HotkeyError::Unsupported("global hotkeys are not implemented on this OS").into())
+    }
+}
+
+impl PlatformHotkey {
+    pub fn set_passthrough(&mut self, active: bool) -> Result<(), BoxError> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::X11(inner) => inner.set_passthrough(active),
+            #[cfg(target_os = "macos")]
+            Self::Macos(inner) => {
+                inner.set_passthrough(active);
+                Ok(())
+            }
+            #[cfg(windows)]
+            Self::Windows(inner) => {
+                inner.set_passthrough(active);
+                Ok(())
+            }
+        }
+    }
+    pub fn register_bindings(&mut self, bindings: &[HotkeyBinding]) -> Result<(), BoxError> {
+        validate_bindings(bindings)?;
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::X11(inner) => inner.register_bindings(bindings),
+            #[cfg(target_os = "macos")]
+            Self::Macos(inner) => inner.register_bindings(bindings),
+            #[cfg(windows)]
+            Self::Windows(inner) => inner.register_bindings(bindings),
+        }
+    }
+    pub fn next_binding_event(&mut self) -> Option<BindingEvent> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::X11(inner) => inner.next_binding_event(),
+            #[cfg(target_os = "macos")]
+            Self::Macos(inner) => inner.next_binding_event(),
+            #[cfg(windows)]
+            Self::Windows(inner) => inner.next_binding_event(),
+        }
+    }
+    pub fn set_cancel_active(&mut self, active: bool) {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::X11(inner) => inner.set_cancel_active(active),
+            #[cfg(target_os = "macos")]
+            Self::Macos(inner) => inner.set_cancel_active(active),
+            #[cfg(windows)]
+            Self::Windows(inner) => inner.set_cancel_active(active),
+        }
     }
 }
 

@@ -283,6 +283,96 @@ impl plume_core::TextInjector for WinInjector {
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn field_context() -> Option<plume_core::FieldContext> {
+    use windows::Win32::System::Ole::{
+        SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
+    };
+    use windows::Win32::{
+        System::Com::{
+            CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+        },
+        UI::Accessibility::*,
+    };
+    unsafe {
+        if sys::target_info().1 != plume_core::TargetAssessment::Editable {
+            return None;
+        }
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let element = automation.GetFocusedElement().ok()?;
+        if element.CurrentIsPassword().ok()?.as_bool() {
+            return None;
+        }
+        let pattern = element
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .ok()?;
+        let selections = pattern.GetSelection().ok()?;
+        if selections.Length().ok()? != 1 {
+            return None;
+        }
+        let selection = selections.GetElement(0).ok()?;
+        let has_selection = selection
+            .CompareEndpoints(
+                TextPatternRangeEndpoint_Start,
+                &selection,
+                TextPatternRangeEndpoint_End,
+            )
+            .ok()?
+            != 0;
+        let before = selection.Clone().ok()?;
+        before
+            .MoveEndpointByRange(
+                TextPatternRangeEndpoint_End,
+                &selection,
+                TextPatternRangeEndpoint_Start,
+            )
+            .ok()?;
+        before
+            .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1)
+            .ok()?;
+        let before = before.GetText(8).ok()?.to_string().chars().next_back();
+        let after = selection.Clone().ok()?;
+        after
+            .MoveEndpointByRange(
+                TextPatternRangeEndpoint_Start,
+                &selection,
+                TextPatternRangeEndpoint_End,
+            )
+            .ok()?;
+        after
+            .MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, 1)
+            .ok()?;
+        let after = after.GetText(8).ok()?.to_string().chars().next();
+        let ids = element.GetRuntimeId().ok()?;
+        if ids.is_null() {
+            return None;
+        }
+        let identity = (|| {
+            let low = SafeArrayGetLBound(ids, 1).ok()?;
+            let high = SafeArrayGetUBound(ids, 1).ok()?;
+            if high - low > 64 {
+                return None;
+            }
+            let mut result = Vec::new();
+            for index in low..=high {
+                let mut value = 0i32;
+                SafeArrayGetElement(ids, &index, (&mut value as *mut i32).cast()).ok()?;
+                result.push(value);
+            }
+            Some(format!("{}:{result:?}", element.CurrentProcessId().ok()?))
+        })();
+        let _ = SafeArrayDestroy(ids);
+        Some(plume_core::FieldContext {
+            before,
+            after,
+            has_selection,
+            target_id: identity?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{win_strokes, WinStroke};

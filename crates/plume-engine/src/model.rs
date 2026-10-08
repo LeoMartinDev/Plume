@@ -189,6 +189,20 @@ impl Engine {
     }
 
     pub fn open_whisper(path: impl AsRef<Path>) -> Result<Self, BoxError> {
+        // Debug builds of whisper.cpp can log decoded token strings even when
+        // print_realtime is disabled. Never forward vendor log bodies: typed
+        // errors are reported by the session without exposing audio or text.
+        static LOGGING: std::sync::Once = std::sync::Once::new();
+        unsafe extern "C" fn private_log(
+            _: whisper_rs::whisper_rs_sys::ggml_log_level,
+            _: *const std::ffi::c_char,
+            _: *mut std::ffi::c_void,
+        ) {
+        }
+        LOGGING.call_once(|| unsafe {
+            whisper_rs::whisper_rs_sys::whisper_log_set(Some(private_log), std::ptr::null_mut());
+            whisper_rs::whisper_rs_sys::ggml_log_set(Some(private_log), std::ptr::null_mut());
+        });
         let path = path.as_ref();
         if !path.is_file() {
             return Err(format!("whisper model {} is not a file", path.display()).into());
@@ -201,6 +215,13 @@ impl Engine {
             backend: EngineBackend::Whisper(Arc::new(context)),
             language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
         })
+    }
+
+    pub fn snapshot(&self) -> Self {
+        Self {
+            backend: self.backend.clone(),
+            language: Arc::new(AtomicI64::new(self.language.load(Ordering::Relaxed))),
+        }
     }
 
     pub fn set_language(&self, language: Language) {

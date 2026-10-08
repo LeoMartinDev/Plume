@@ -4,9 +4,9 @@ One row per platform that ships. Each shipping row names the mechanism for text 
 
 | Platform | Text injection | Global hotkey | Overlay | Tray |
 | --- | --- | --- | --- | --- |
-| macOS | `CGEvent` keyboard events with Unicode text, clipboard paste as fallback | Quartz event tap reports key down and key up | Borderless non-activating `NSWindow` at floating level | AppKit `NSStatusItem` |
-| Windows | `SendInput` with `KEYEVENTF_UNICODE`, clipboard paste as fallback | Low-level keyboard hook `WH_KEYBOARD_LL` reports key down and key up | Topmost layered window with `WS_EX_NOACTIVATE` | Notification area via `tray-icon` |
-| Linux X11 | XTEST fake key events, clipboard paste as fallback | XRecord extension reports key down and key up | Override-redirect window | D-Bus StatusNotifierItem via `ksni` |
+| macOS | Clipboard paste with native snapshot/restore, or `CGEvent` Unicode typing; AX context | One Quartz event tap reports all action edges | Borderless non-activating `NSWindow` at floating level | AppKit `NSStatusItem` |
+| Windows | Clipboard paste with native snapshot/restore, or `SendInput` Unicode typing; UI Automation context | One `WH_KEYBOARD_LL` hook reports all action edges, including Esc | Topmost layered window with `WS_EX_NOACTIVATE` | Notification area via `tray-icon` |
+| Linux X11 | Clipboard paste with snapshot/XFixes ownership, or XTEST typing; unknown context | One connection with passive grabs and XKB detectable autorepeat | Override-redirect window | D-Bus StatusNotifierItem via `ksni` |
 
 ## Wayland
 
@@ -21,5 +21,5 @@ Wayland is not a supported platform yet. `plume-hotkey` and `plume-inject` refus
 - macOS requires accessibility permission for the event tap and for injection.
 - A Linux session with `DISPLAY` set uses the X11 row, including when `WAYLAND_DISPLAY` is also set.
 - A Linux session with only `WAYLAND_DISPLAY` fails with the requirement for an X11 `DISPLAY`.
-- The clipboard fallback pastes with the target app's paste shortcut. PR-4 specifies when each fallback applies.
-- Each shipping mechanism maps onto the `TextInjector` and `GlobalHotkey` traits from `plume-core`. PR-4 owns that mapping.
+- Automatic insertion prefers a preservable paste transaction, falling back to typing before any clipboard change when a snapshot is unsupported. Explicit Paste reports that limitation. Native receiving-app compatibility still needs interactive validation.
+- Native adapters implement the text-injection and multi-binding hotkey contracts. Supported clipboard content is restored after 300 ms only if the transaction still owns it. See [validation](../dictation-validation.md) for measured checks and remaining native sessions.

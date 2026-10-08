@@ -1,274 +1,165 @@
-use crate::decoder::Completion;
-use crate::destination::{InsertionError, TextDestination};
+use crate::destination::TextDestination;
 use crate::startup::{DictationResult, InsertionConfig};
-use plume_core::{Edit, TextInjector};
-use std::collections::BTreeMap;
+use plume_core::{CancellationToken, TextInjector};
+use plume_overlay::Feedback;
 use std::sync::mpsc;
 
 pub(crate) struct TranscriptDelivery<I: TextInjector> {
-    pub(crate) next_commit_id: u64,
-    pending: BTreeMap<u64, Completion>,
-    group_has_text: bool,
-    pub(crate) target: TextDestination<I>,
+    pub target: TextDestination<I>,
+    last_result: Option<DictationResult>,
     result_tx: mpsc::Sender<DictationResult>,
 }
-
 impl<I: TextInjector> TranscriptDelivery<I> {
-    pub(crate) fn new(injector: I, result_tx: mpsc::Sender<DictationResult>) -> Self {
+    pub fn new(injector: I, result_tx: mpsc::Sender<DictationResult>) -> Self {
         Self {
-            next_commit_id: 0,
-            pending: BTreeMap::new(),
-            group_has_text: false,
             target: TextDestination::new(injector),
             result_tx,
+            last_result: None,
         }
     }
     #[cfg(test)]
-    pub(crate) fn drain(
-        &mut self,
-        completions: &mpsc::Receiver<Completion>,
-        insertion: InsertionConfig,
-    ) {
-        self.drain_with_feedback(completions, insertion, |_| {});
-    }
-
-    pub(crate) fn drain_with_feedback(
-        &mut self,
-        completions: &mpsc::Receiver<Completion>,
-        insertion: InsertionConfig,
-        mut feedback: impl FnMut(plume_overlay::Bubble),
-    ) {
-        use plume_overlay::{Bubble, Feedback};
-        while let Ok(completion) = completions.try_recv() {
-            self.pending.insert(completion.id, completion);
+    pub fn deliver(&mut self, id: u64, text: String, config: InsertionConfig) -> Feedback {
+        let feedback =
+            self.deliver_checked(id, text, config, &CancellationToken::default(), &mut || {
+                true
+            });
+        if let Some(result) = self.take_result() {
+            self.publish(result);
         }
-        while let Some(completion) =
-            take_next_completion(&mut self.pending, &mut self.next_commit_id)
-        {
-            if !completion.joins_previous {
-                self.group_has_text = false;
-            }
-            match completion.result {
-                Ok(text) if text.trim().is_empty() => {
-                    tracing::debug!("plume-session: empty release");
-                    feedback(Bubble::feedback(completion.id, Feedback::Empty));
-                }
-                Ok(text) => {
-                    let text = prepare_insertion(
-                        text,
-                        completion.joins_previous,
-                        &mut self.group_has_text,
-                    );
-                    feedback(Bubble::feedback(completion.id, Feedback::Inserting));
-                    match self
-                        .target
-                        .apply_edit_with_mode(&Edit::Insert(text.clone()), insertion.mode)
-                    {
-                        Ok(Some(report)) => {
-                            self.target.reset();
-                            tracing::debug!("plume-session: committed {} chars", text.len());
-                            feedback(Bubble::feedback(completion.id, Feedback::Success));
-                            let _ = self.result_tx.send(DictationResult {
-                                text,
-                                injection: Ok(report),
-                                copied_on_failure: false,
-                            });
-                        }
-                        Ok(None) => unreachable!("insert must return an injection report"),
-                        Err(err) => {
-                            let reason = describe_target_error(&err);
-                            let copied =
-                                insertion.copy_on_failure && self.target.copy_text(&text).is_ok();
-                            tracing::warn!("plume-session: aborted: {reason}");
-                            feedback(Bubble::feedback(
-                                completion.id,
-                                Feedback::InsertionFailed {
-                                    text: text.clone(),
-                                    copied,
-                                },
-                            ));
-                            let _ = self.result_tx.send(DictationResult {
-                                text,
-                                injection: Err(reason),
-                                copied_on_failure: copied,
-                            });
-                        }
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!("plume-session: aborted: {err}");
-                    feedback(Bubble::feedback(
-                        completion.id,
-                        Feedback::Error {
-                            title: "Transcription unavailable".into(),
-                            advice: "Check your model in Settings and try again.".into(),
-                        },
-                    ));
-                }
-            }
+        feedback
+    }
+    pub fn deliver_checked(
+        &mut self,
+        id: u64,
+        text: String,
+        config: InsertionConfig,
+        cancel: &CancellationToken,
+        before_dispatch: &mut dyn FnMut() -> bool,
+    ) -> Feedback {
+        self.last_result = None;
+        let injection = self
+            .target
+            .insert_checked(&text, config.mode, before_dispatch);
+        if injection.is_err() {
+            before_dispatch();
         }
+        if cancel.is_cancelled() {
+            return match injection {
+                Err(error) if error.to_string() != "dictation cancelled" => Feedback::Error {
+                    title: "Dictation cancelled".into(),
+                    advice: error.to_string(),
+                },
+                _ => Feedback::Empty,
+            };
+        }
+        let (injection, copied) = match injection {
+            Ok(report) => (Ok(report), false),
+            Err(error) => {
+                let copied = config.copy_on_failure && self.target.copy_text(&text).is_ok();
+                (Err(error.to_string()), copied)
+            }
+        };
+        self.target.reset();
+        let feedback = if injection.is_ok() {
+            Feedback::Success
+        } else {
+            Feedback::InsertionFailed {
+                text: text.clone(),
+                copied,
+            }
+        };
+        let result = DictationResult {
+            text,
+            injection,
+            copied_on_failure: copied,
+            record_id: Some(id),
+            audio_available: true,
+            transcription_error: None,
+            recovered: false,
+        };
+        self.last_result = Some(result);
+        feedback
     }
-}
-
-fn take_next_completion(
-    pending: &mut BTreeMap<u64, Completion>,
-    next_commit_id: &mut u64,
-) -> Option<Completion> {
-    let completion = pending.remove(next_commit_id)?;
-    *next_commit_id += 1;
-    Some(completion)
-}
-
-fn prepare_insertion(mut text: String, joins_previous: bool, group_has_text: &mut bool) -> String {
-    if !joins_previous {
-        *group_has_text = false;
+    pub fn publish(&self, result: DictationResult) {
+        let _ = self.result_tx.send(result);
     }
-    if *group_has_text && !text.starts_with(char::is_whitespace) {
-        text.insert(0, ' ');
+    pub fn take_result(&mut self) -> Option<DictationResult> {
+        self.last_result.take()
     }
-    *group_has_text = true;
-    text
-}
-
-fn describe_target_error(err: &InsertionError) -> String {
-    format!("target: {err}")
+    pub fn failed(&self, id: u64, error: String, recovered: bool, audio_available: bool) {
+        let _ = self.result_tx.send(DictationResult {
+            text: String::new(),
+            injection: Err(error.clone()),
+            copied_on_failure: false,
+            record_id: Some(id),
+            audio_available,
+            transcription_error: Some(error),
+            recovered,
+        });
+    }
+    pub fn recovered(&self, id: u64, text: String) {
+        let _ = self.result_tx.send(DictationResult {
+            text,
+            injection: Err("Recovered in History; not inserted".into()),
+            copied_on_failure: false,
+            record_id: Some(id),
+            audio_available: true,
+            transcription_error: None,
+            recovered: true,
+        });
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plume_core::{BoxError, InjectionReport, InsertionMethod, InsertionMode, TargetAssessment};
-
-    #[derive(Default)]
-    struct FakeInjector {
-        inserted: Vec<(String, InsertionMode)>,
-        copied: Vec<String>,
-        fail_insert: bool,
-        fail_copy: bool,
-    }
-    impl TextInjector for FakeInjector {
+    use plume_core::BoxError;
+    struct Failed;
+    impl TextInjector for Failed {
         fn insert(&mut self, _: &str) -> Result<(), BoxError> {
-            unreachable!()
+            Err("failed".into())
         }
         fn replace_last(&mut self, _: &str, _: &str) -> Result<(), BoxError> {
             unreachable!()
         }
-        fn insert_with_mode(
-            &mut self,
-            text: &str,
-            mode: InsertionMode,
-        ) -> Result<InjectionReport, BoxError> {
-            self.inserted.push((text.into(), mode));
-            if self.fail_insert {
-                return Err("insert failed".into());
-            }
-            Ok(InjectionReport {
-                method: InsertionMethod::Clipboard,
-                application: Some("Editor".into()),
-                target: TargetAssessment::Editable,
-            })
-        }
-        fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
-            self.copied.push(text.into());
-            if self.fail_copy {
-                Err("copy failed".into())
-            } else {
-                Ok(())
-            }
-        }
-    }
-    fn completion(id: u64, joins_previous: bool, text: &str) -> Completion {
-        Completion {
-            id,
-            joins_previous,
-            result: Ok(text.into()),
+        fn copy_text(&mut self, _: &str) -> Result<(), BoxError> {
+            Ok(())
         }
     }
     #[test]
-    fn out_of_order_results_wait_and_joined_groups_get_one_separator() {
+    fn pre_dispatch_cancellation_never_copies_or_publishes_the_text() {
         let (tx, rx) = mpsc::channel();
-        let (result_tx, results) = mpsc::channel();
-        let mut delivery = TranscriptDelivery::new(FakeInjector::default(), result_tx);
-        tx.send(completion(1, true, "Second.")).unwrap();
-        delivery.drain(&rx, InsertionConfig::default());
-        assert!(results.try_recv().is_err());
-        tx.send(completion(0, false, "First.")).unwrap();
-        tx.send(completion(2, true, "\nThird.")).unwrap();
-        tx.send(completion(3, false, "New field.")).unwrap();
-        delivery.drain(&rx, InsertionConfig::default());
-        let texts: Vec<_> = results.try_iter().map(|result| result.text).collect();
-        assert_eq!(texts, ["First.", " Second.", "\nThird.", "New field."]);
-        assert_eq!(delivery.next_commit_id, 4);
-        assert_eq!(delivery.target.injector().inserted.len(), 4);
-    }
-    #[test]
-    fn empty_and_failed_decode_results_do_not_insert_or_block_later_results() {
-        let (tx, rx) = mpsc::channel();
-        let (result_tx, results) = mpsc::channel();
-        let mut delivery = TranscriptDelivery::new(FakeInjector::default(), result_tx);
-        tx.send(completion(0, false, "")).unwrap();
-        tx.send(Completion {
-            id: 1,
-            joins_previous: true,
-            result: Err("decode failed".into()),
-        })
-        .unwrap();
-        tx.send(completion(2, true, "Text")).unwrap();
-        delivery.drain(&rx, InsertionConfig::default());
+        let mut delivery = TranscriptDelivery::new(Failed, tx);
+        let token = CancellationToken::default();
+        let cancel = token.clone();
+        let mut guard = move || {
+            cancel.cancel();
+            false
+        };
         assert_eq!(
-            results
-                .try_iter()
-                .map(|result| result.text)
-                .collect::<Vec<_>>(),
-            ["Text"]
+            delivery.deliver_checked(
+                7,
+                "text".into(),
+                InsertionConfig::default(),
+                &token,
+                &mut guard
+            ),
+            Feedback::Empty
         );
-        assert_eq!(delivery.target.injector().inserted.len(), 1);
+        assert!(delivery.take_result().is_none());
+        assert!(rx.try_recv().is_err());
     }
     #[test]
-    fn insertion_mode_and_copy_fallback_are_applied_by_production_delivery() {
-        for (fail_insert, copy_on_failure, fail_copy, expected_copied, copy_attempts) in [
-            (false, true, false, false, 0),
-            (true, true, false, true, 1),
-            (true, true, true, false, 1),
-            (true, false, false, false, 0),
-        ] {
-            let (tx, rx) = mpsc::channel();
-            let (result_tx, results) = mpsc::channel();
-            let injector = FakeInjector {
-                fail_insert,
-                fail_copy,
-                ..Default::default()
-            };
-            let mut delivery = TranscriptDelivery::new(injector, result_tx);
-            tx.send(completion(0, false, "Final")).unwrap();
-            let mut feedback = Vec::new();
-            delivery.drain_with_feedback(
-                &rx,
-                InsertionConfig {
-                    mode: InsertionMode::Clipboard,
-                    copy_on_failure,
-                },
-                |bubble| feedback.push(bubble),
-            );
-            let result = results.recv().unwrap();
-            assert_eq!(result.injection.is_err(), fail_insert);
-            assert_eq!(result.copied_on_failure, expected_copied);
-            assert_eq!(feedback[0].feedback, plume_overlay::Feedback::Inserting);
-            assert_eq!(
-                feedback[1].feedback,
-                if fail_insert {
-                    plume_overlay::Feedback::InsertionFailed {
-                        text: result.text.clone(),
-                        copied: expected_copied,
-                    }
-                } else {
-                    plume_overlay::Feedback::Success
-                }
-            );
-            assert_eq!(delivery.target.injector().copied.len(), copy_attempts);
-            assert_eq!(
-                delivery.target.injector().inserted,
-                [("Final".into(), InsertionMode::Clipboard)]
-            );
-        }
+    fn insertion_failure_and_recovery_are_distinct() {
+        let (tx, rx) = mpsc::channel();
+        let mut delivery = TranscriptDelivery::new(Failed, tx);
+        assert!(matches!(
+            delivery.deliver(1, "text".into(), InsertionConfig::default()),
+            Feedback::InsertionFailed { copied: true, .. }
+        ));
+        assert!(rx.recv().unwrap().copied_on_failure);
+        delivery.recovered(1, "new".into());
+        let result = rx.recv().unwrap();
+        assert!(result.recovered);
+        assert_eq!(result.text, "new");
     }
 }

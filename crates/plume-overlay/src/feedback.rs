@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Hidden,
+    Starting,
+    Cancelling,
+    Notice,
     Recording,
     Transcribing,
     Inserting,
@@ -62,6 +65,11 @@ impl FeedbackState {
     }
 
     pub fn tick(&mut self, now: Instant) {
+        if self.bubble.feedback == Feedback::NoSpeech
+            && now.duration_since(self.since) >= Duration::from_secs(2)
+        {
+            self.bubble.feedback = Feedback::Empty;
+        }
         if self.pending.is_some() && now.duration_since(self.since) >= Duration::from_millis(150) {
             self.bubble = self.pending.take().unwrap();
             self.since = now;
@@ -75,6 +83,11 @@ impl FeedbackState {
 
     pub fn phase(&self) -> Phase {
         match &self.bubble.feedback {
+            Feedback::Starting => Phase::Starting,
+            Feedback::Transcribing => Phase::Transcribing,
+            Feedback::Cancelling => Phase::Cancelling,
+            Feedback::NoSpeech => Phase::Notice,
+            Feedback::RecordingNotice { .. } => Phase::Recording,
             Feedback::Session => match self.bubble.state() {
                 SessionState::Recording | SessionState::Streaming => Phase::Recording,
                 SessionState::Finalizing => Phase::Transcribing,

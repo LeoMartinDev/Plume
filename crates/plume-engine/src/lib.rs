@@ -3,22 +3,38 @@ mod model;
 mod wav;
 
 pub use model::{Engine, Language, LanguageTarget, ModelDir};
-use plume_core::{AsrEngine, AudioStream, BoxError, Hypothesis, HypothesisStream, Transcript};
+use plume_core::{
+    AsrEngine, AudioStream, BoxError, CancellationToken, Hypothesis, HypothesisStream, Transcript,
+};
 use std::sync::atomic::Ordering;
-pub use wav::audio_from_wav;
+pub use wav::{audio_from_wav, audio_from_wav_with_control, gate_recording, AudioReadStatus};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 impl AsrEngine for Engine {
+    fn snapshot(&self) -> Self {
+        Engine::snapshot(self)
+    }
     fn stream(&self, audio: AudioStream) -> HypothesisStream {
+        self.stream_with_control(audio, CancellationToken::default())
+    }
+
+    fn stream_with_control(
+        &self,
+        audio: AudioStream,
+        cancel: CancellationToken,
+    ) -> HypothesisStream {
         let language = self.language.load(Ordering::Relaxed);
         match &self.backend {
             model::EngineBackend::Nemotron(inner) => {
-                Box::new(decode::NemotronStream::new(inner.clone(), audio, language))
+                match decode::NemotronStream::controlled(inner.clone(), audio, language, cancel) {
+                    Ok(stream) => Box::new(stream),
+                    Err(error) => Box::new(std::iter::once(Err(error))),
+                }
             }
             model::EngineBackend::Whisper(context) => {
                 let context = context.clone();
                 Box::new(std::iter::once_with(move || {
-                    transcribe_whisper(&context, audio, language)
+                    transcribe_whisper(&context, audio, language, cancel)
                         .map(|text| Hypothesis::Final(Transcript { text }))
                 }))
             }
@@ -30,8 +46,15 @@ fn transcribe_whisper(
     context: &WhisperContext,
     audio: AudioStream,
     language: i64,
+    cancel: CancellationToken,
 ) -> Result<String, BoxError> {
-    let samples = collect_whisper_samples(audio)?;
+    let samples = collect_whisper_samples(Box::new(audio.take_while({
+        let cancel = cancel.clone();
+        move |_| !cancel.is_cancelled()
+    })))?;
+    if cancel.is_cancelled() {
+        return Err("transcription cancelled".into());
+    }
     if samples.is_empty() {
         return Ok(String::new());
     }
@@ -50,11 +73,23 @@ fn transcribe_whisper(
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    unsafe extern "C" fn abort(data: *mut std::ffi::c_void) -> bool {
+        // The token lives until the synchronous full() call returns.
+        unsafe { (*(data as *const CancellationToken)).is_cancelled() }
+    }
+    unsafe {
+        params.set_abort_callback(Some(abort));
+        params
+            .set_abort_callback_user_data((&cancel as *const CancellationToken).cast_mut().cast());
+    }
     state.full(params, &samples)?;
 
     let count = state.full_n_segments();
     let mut text = String::new();
     for index in 0..count {
+        if cancel.is_cancelled() {
+            return Err("transcription cancelled".into());
+        }
         let segment = state
             .get_segment(index)
             .ok_or_else(|| format!("whisper segment {index} is missing"))?;
@@ -98,11 +133,15 @@ mod whisper_tests {
         let model = std::env::var("PLUME_WHISPER_MODEL").expect("PLUME_WHISPER_MODEL");
         let engine = Engine::open_whisper(model).expect("open Whisper model");
         engine.set_language(Language::English);
+        let frozen = engine.snapshot();
+        engine.language_target().set(Language::French);
+        assert_eq!(frozen.language.load(Ordering::Relaxed), 0);
+        assert_eq!(engine.language.load(Ordering::Relaxed), 8);
         let wav = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures")
             .join("en-hello.wav");
         let audio = audio_from_wav(&wav).expect("load fixture");
-        let final_text = engine
+        let final_text = frozen
             .stream(audio)
             .find_map(|item| match item.expect("Whisper decode") {
                 Hypothesis::Final(transcript) => Some(transcript.text),
@@ -138,3 +177,9 @@ mod whisper_tests {
         );
     }
 }
+
+mod vad;
+pub use vad::SpeechDetector;
+
+mod gate;
+pub use gate::SpeechGate;

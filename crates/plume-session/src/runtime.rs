@@ -1,322 +1,738 @@
-use crate::capture::{self, AudioPump};
-use crate::chords::{CancelGuard, Chord, ChordSpec};
-use crate::decoder::{DecodeJob, Decoder};
+use crate::capture::{self, CaptureCommand, CaptureEvent};
+use crate::chords::Chord;
+use crate::controller::{Action, Controller, Mode, Phase};
+use crate::decoder::{Completion, DecodeJob, DecodeOutcome, Decoder};
 use crate::delivery::TranscriptDelivery;
-use crate::startup::InsertionConfig;
-use plume_audio::Mic;
-use plume_core::{AsrEngine, Dictation, HotkeyEvent, TextInjector};
-use plume_overlay::Bubble;
+use crate::startup::{InsertionConfig, SessionCommand};
+use crate::{Recording, SharedRecordings};
+use plume_core::{AsrEngine, CancellationToken, TextInjector};
+use plume_overlay::{Bubble, Feedback};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-const POLL_QUANTUM: Duration = Duration::from_millis(5);
-
+const POLL: Duration = Duration::from_millis(5);
 pub(crate) struct RuntimeConfig<E> {
-    pub(crate) session: crate::Config,
-    pub(crate) hold: Chord,
-    pub(crate) engine: E,
-    pub(crate) insertion: InsertionConfig,
+    pub session: crate::Config,
+    pub hold: Chord,
+    pub engine: E,
+    pub insertion: InsertionConfig,
+    pub recordings: SharedRecordings,
+    pub vad_path: std::path::PathBuf,
 }
-
 pub(crate) struct RuntimeUpdates<E> {
-    pub(crate) hold: mpsc::Receiver<String>,
-    pub(crate) engine: mpsc::Receiver<E>,
-    pub(crate) insertion: mpsc::Receiver<InsertionConfig>,
+    pub hold: mpsc::Receiver<String>,
+    pub engine: mpsc::Receiver<E>,
+    pub insertion: mpsc::Receiver<InsertionConfig>,
+    pub toggle: mpsc::Receiver<Option<String>>,
+    pub commands: mpsc::Receiver<SessionCommand>,
+    pub busy: Arc<AtomicBool>,
 }
-
 pub(crate) struct SessionOutputs {
-    pub(crate) bubbles: BubbleSink,
-    pub(crate) levels: mpsc::SyncSender<f32>,
+    pub bubbles: BubbleSink,
+    pub levels: mpsc::SyncSender<f32>,
 }
-
-#[derive(Debug)]
-enum Outcome {
-    Released,
-    Cancelled,
-    Aborted(String),
-}
-
 pub(crate) struct BubbleSink {
     tx: mpsc::Sender<Bubble>,
 }
-
 impl BubbleSink {
-    pub(crate) fn new(tx: mpsc::Sender<Bubble>) -> Self {
-        BubbleSink { tx }
+    pub fn new(tx: mpsc::Sender<Bubble>) -> Self {
+        Self { tx }
     }
-
-    pub(crate) fn push_from(&self, dictation: &Dictation, id: u64) {
-        let _ = self
-            .tx
-            .send(Bubble::from_dictation(dictation).with_capture_id(id));
+    fn feedback(&self, id: u64, feedback: Feedback) {
+        let _ = self.tx.send(Bubble::feedback(id, feedback));
     }
 }
-
+struct Active {
+    id: u64,
+    ui_id: u64,
+    cancel: CancellationToken,
+    commands: Option<mpsc::Sender<CaptureCommand>>,
+    events: Option<mpsc::Receiver<CaptureEvent>>,
+    capture_done: bool,
+    cleanup_retry_at: Option<Instant>,
+    completion: Option<Completion>,
+    read_status: Option<plume_engine::AudioReadStatus>,
+    record: Option<Recording>,
+    error: Option<String>,
+    started: Option<Instant>,
+    last_speech: Option<Instant>,
+    mode: Option<Mode>,
+    silence_shown: bool,
+    limit_shown: bool,
+    retry: bool,
+    cancel_feedback: Option<Feedback>,
+}
 pub(crate) struct SessionRuntime<E: AsrEngine, I: TextInjector> {
-    hold: Option<Chord>,
-    hold_raw: String,
-    cancel_spec: ChordSpec,
+    config: crate::Config,
+    hold: Chord,
     engine: E,
     insertion: InsertionConfig,
     updates: RuntimeUpdates<E>,
     outputs: SessionOutputs,
     decoder: Decoder<E>,
     delivery: TranscriptDelivery<I>,
-    next_capture_id: u64,
+    recordings: SharedRecordings,
+    vad_path: std::path::PathBuf,
+    controller: Controller,
+    active: Option<Active>,
+    ui_serial: u64,
 }
-
-impl<E: AsrEngine, I: TextInjector> SessionRuntime<E, I> {
-    pub(crate) fn new(
+impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRuntime<E, I> {
+    pub fn new(
         config: RuntimeConfig<E>,
         updates: RuntimeUpdates<E>,
         outputs: SessionOutputs,
         decoder: Decoder<E>,
         delivery: TranscriptDelivery<I>,
     ) -> Self {
-        let RuntimeConfig {
-            session,
-            hold,
-            engine,
-            insertion,
-        } = config;
         Self {
-            hold: Some(hold),
-            hold_raw: session.hold.as_str().to_string(),
-            cancel_spec: session.cancel,
-            engine,
-            insertion,
+            config: config.session,
+            hold: config.hold,
+            engine: config.engine,
+            insertion: config.insertion,
+            recordings: config.recordings,
+            vad_path: config.vad_path,
             updates,
             outputs,
             decoder,
             delivery,
-            next_capture_id: 0,
+            controller: Controller::new(),
+            active: None,
+            ui_serial: 0,
         }
     }
-
-    fn retarget_hold(&mut self) {
-        let Some(raw) = drain_latest(&self.updates.hold) else {
-            return;
-        };
-        if raw == self.hold_raw {
-            return;
-        }
-        let spec = match ChordSpec::parse(&raw) {
-            Ok(spec) => spec,
-            Err(err) => {
-                tracing::warn!("plume-session: hold rejected: {err}");
-                return;
-            }
-        };
-        self.hold = None;
-        match Chord::bind(&spec) {
-            Ok(chord) => {
-                tracing::debug!("plume-session: hold is {}", spec.as_str());
-                self.hold_raw = spec.as_str().to_string();
-                self.hold = Some(chord);
-            }
-            Err(err) => {
-                tracing::warn!("plume-session: hold bind failed: {err}");
-                self.restore_hold();
-            }
-        }
-    }
-
-    fn restore_hold(&mut self) {
-        let Ok(spec) = ChordSpec::parse(&self.hold_raw) else {
-            return;
-        };
-        match Chord::bind(&spec) {
-            Ok(chord) => self.hold = Some(chord),
-            Err(err) => tracing::warn!("plume-session: hold restore failed: {err}"),
-        }
-    }
-}
-
-fn drain_latest(rx: &mpsc::Receiver<String>) -> Option<String> {
-    let mut latest = None;
-    while let Ok(raw) = rx.try_recv() {
-        latest = Some(raw);
-    }
-    latest
-}
-
-impl<E: AsrEngine + Sync + Send + Clone + 'static, I: TextInjector> SessionRuntime<E, I> {
-    pub(crate) fn run(mut self) -> ! {
+    pub fn run(mut self) -> ! {
+        let mut previous = None;
         loop {
-            while let Ok(engine) = self.updates.engine.try_recv() {
-                self.engine = engine;
+            if previous != Some(self.controller.phase) {
+                tracing::debug!(state=?self.controller.phase,record_id=self.active.as_ref().map(|a|a.id),"dictation transition");
+                previous = Some(self.controller.phase);
             }
-            while let Ok(insertion) = self.updates.insertion.try_recv() {
-                self.insertion = insertion;
+            // All physical edges are consumed in the phase in which they occurred.
+            self.drain_keys();
+            while let Ok(completion) = self.decoder.completions.try_recv() {
+                if let Some(active) = &mut self.active {
+                    if completion.id == active.id {
+                        if matches!(completion.outcome, DecodeOutcome::Failed(_))
+                            && !active.capture_done
+                        {
+                            if let Some(commands) = &active.commands {
+                                let _ = commands.send(CaptureCommand::Finish);
+                            }
+                            self.controller.phase = Phase::Transcribing;
+                        }
+                        active.completion = Some(completion);
+                    }
+                }
             }
-            self.delivery.drain_with_feedback(
-                &self.decoder.completions,
-                self.insertion,
-                |bubble| {
-                    let _ = self.outputs.bubbles.tx.send(bubble);
-                },
-            );
-            self.retarget_hold();
-            match self.hold.as_mut().and_then(|hold| hold.next_event()) {
-                Some(HotkeyEvent::Pressed) => {
-                    let outcome = self.session_once();
-                    self.delivery.target.reset();
-                    match &outcome {
-                        Outcome::Released => {}
-                        Outcome::Cancelled => tracing::debug!("plume-session: cancelled"),
-                        Outcome::Aborted(reason) => {
-                            tracing::warn!("plume-session: aborted: {reason}");
-                            let (title, advice) = if reason.starts_with("mic:") {
-                                (
-                                    "Microphone unavailable",
-                                    "Check your microphone and microphone permissions.",
-                                )
-                            } else {
-                                (
-                                    "Dictation unavailable",
-                                    "Check your shortcut and model in Settings.",
-                                )
-                            };
-                            let _ = self.outputs.bubbles.tx.send(Bubble::feedback(
-                                self.next_capture_id,
-                                plume_overlay::Feedback::Error {
-                                    title: title.into(),
-                                    advice: advice.into(),
-                                },
-                            ));
+            self.capture_events();
+            self.tick();
+            self.commit_if_finished();
+            if self.controller.phase == Phase::Ready {
+                self.update_settings();
+                if let Ok(command) = self.updates.commands.try_recv() {
+                    match command {
+                        SessionCommand::Retry(id) => self.start_retry(id),
+                        SessionCommand::EditShortcuts(active, reply) => {
+                            let result = self.hold.passthrough(active).map_err(|e| e.to_string());
+                            if !active {
+                                self.controller = Controller::new();
+                            }
+                            if let Err(error) = &result {
+                                self.ui_serial += 1;
+                                self.outputs.bubbles.feedback(
+                                    self.ui_serial,
+                                    Feedback::Error {
+                                        title: "Shortcut service unavailable".into(),
+                                        advice: error.clone(),
+                                    },
+                                );
+                            }
+                            if let Some(reply) = reply {
+                                let _ = reply.send(result);
+                            }
                         }
                     }
                 }
-                _ => std::thread::sleep(POLL_QUANTUM),
+            }
+            self.hold.cancel_active(matches!(
+                self.controller.phase,
+                Phase::Starting(_) | Phase::Recording(_) | Phase::Transcribing | Phase::Cancelling
+            ));
+            std::thread::sleep(POLL);
+        }
+    }
+    fn drain_keys(&mut self) {
+        while let Some(event) = self.hold.next_event() {
+            match self.controller.event(event) {
+                Some(Action::Start(mode)) => self.start_capture(mode),
+                Some(Action::Stop) => {
+                    if let Some(active) = &self.active {
+                        if let Some(tx) = &active.commands {
+                            let _ = tx.send(CaptureCommand::Finish);
+                        }
+                        self.outputs
+                            .bubbles
+                            .feedback(active.ui_id, Feedback::Transcribing);
+                    }
+                }
+                Some(Action::Cancel) => {
+                    if let Some(active) = &self.active {
+                        active.cancel.cancel();
+                        if let Some(tx) = &active.commands {
+                            let _ = tx.send(CaptureCommand::Cancel);
+                        }
+                        if let Err(e) = self.recordings.lock().unwrap().mark_cancelled(active.id) {
+                            tracing::warn!("cancel marker: {e}");
+                        }
+                        self.outputs
+                            .bubbles
+                            .feedback(active.ui_id, Feedback::Cancelling);
+                    }
+                }
+                None => {}
             }
         }
     }
-
-    fn session_once(&mut self) -> Outcome {
-        let Some(mut hold) = self.hold.take() else {
-            return Outcome::Aborted("hold chord is not bound".into());
-        };
-        let mut dictation = Dictation::new();
-        dictation.hold();
-        let started = tracing::enabled!(tracing::Level::DEBUG).then(Instant::now);
-        tracing::debug!("plume-session: capture={} pressed", self.next_capture_id);
-        let mic = match Mic::open() {
-            Ok(mic) => mic,
-            Err(err) => {
-                dictation.cancel();
-                self.outputs
-                    .bubbles
-                    .push_from(&dictation, self.next_capture_id);
-                self.hold = Some(hold);
-                return Outcome::Aborted(format!("mic: {err}"));
-            }
-        };
-        if let Some(started) = started {
-            tracing::debug!(
-                capture = self.next_capture_id,
-                microphone_ready_ms = started.elapsed().as_millis(),
-                "Microphone ready"
-            );
+    fn start_capture(&mut self, mode: Mode) {
+        self.ui_serial += 1;
+        if self
+            .updates
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            self.controller.phase = Phase::Ready;
+            return;
         }
-        let guard = match CancelGuard::arm(&self.cancel_spec) {
-            Ok(guard) => guard,
-            Err(err) => {
-                dictation.cancel();
-                self.outputs
-                    .bubbles
-                    .push_from(&dictation, self.next_capture_id);
-                self.hold = Some(hold);
-                return Outcome::Aborted(format!("cancel guard: {err}"));
+        let engine = self.engine.snapshot();
+        let writer = match self.recordings.lock().unwrap().begin() {
+            Ok(w) => w,
+            Err(e) => {
+                self.controller.phase = Phase::Ready;
+                self.updates.busy.store(false, Ordering::Release);
+                self.outputs.bubbles.feedback(
+                    self.ui_serial,
+                    Feedback::Error {
+                        title: "Audio storage unavailable".into(),
+                        advice: format!("Recording did not start. {e}"),
+                    },
+                );
+                return;
             }
         };
-        let (gate, pump, mic_pump) = capture::open_gate(mic, self.outputs.levels.clone());
-        let id = self.next_capture_id;
-        let joins_previous = id > self.delivery.next_commit_id;
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let job = DecodeJob {
-            id,
-            joins_previous,
-            engine: self.engine.clone(),
-            audio: gate.into_audio_stream(),
-            cancelled: cancelled.clone(),
+        let id = writer.record.id;
+        let cancel = CancellationToken::default();
+        self.outputs
+            .bubbles
+            .feedback(self.ui_serial, Feedback::Starting);
+        let capture = match capture::start_recorded(
+            writer,
+            self.vad_path.clone(),
+            self.outputs.levels.clone(),
+            cancel.clone(),
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = self.recordings.lock().unwrap().delete(id);
+                self.fail_start(id, e.to_string());
+                return;
+            }
         };
-        if let Err(err) = self.decoder.submit(job) {
-            cancelled.store(true, Ordering::Release);
-            pump.close();
-            dictation.cancel();
+        let mut active = Active {
+            id,
+            ui_id: self.ui_serial,
+            cancel: cancel.clone(),
+            commands: Some(capture.commands),
+            events: Some(capture.events),
+            capture_done: false,
+            cleanup_retry_at: None,
+            completion: None,
+            read_status: None,
+            record: None,
+            error: None,
+            started: None,
+            last_speech: None,
+            mode: Some(mode),
+            silence_shown: false,
+            limit_shown: false,
+            retry: false,
+            cancel_feedback: None,
+        };
+        if let Err(error) = self.decoder.submit(DecodeJob {
+            id,
+            engine,
+            audio: capture.audio,
+            cancelled: cancel,
+        }) {
+            active.cancel.cancel();
+            active.completion = Some(Completion {
+                id,
+                outcome: DecodeOutcome::Failed(error),
+            });
+            self.controller.phase = Phase::Cancelling;
+        }
+        self.active = Some(active);
+    }
+    fn fail_start(&mut self, _id: u64, error: String) {
+        self.controller.phase = Phase::Ready;
+        self.updates.busy.store(false, Ordering::Release);
+        self.outputs.bubbles.feedback(
+            self.ui_serial,
+            Feedback::Error {
+                title: "Dictation unavailable".into(),
+                advice: error,
+            },
+        );
+    }
+    fn start_retry(&mut self, id: u64) {
+        self.ui_serial += 1;
+        self.controller.phase = Phase::Transcribing;
+        self.updates.busy.store(true, Ordering::Release);
+        let engine = self.engine.snapshot();
+        let saved = self.recordings.lock().unwrap().begin_retry(id);
+        if let Err(error) = saved {
+            self.fail_start(id, error.to_string());
+            return;
+        }
+        let cancel = CancellationToken::default();
+        let path = self.recordings.lock().unwrap().replay_path(id);
+        let (audio, read_status) =
+            match plume_engine::audio_from_wav_with_control(&path, cancel.clone()) {
+                Ok(a) => a,
+                Err(e) => {
+                    self.fail_start(id, e.to_string());
+                    return;
+                }
+            };
+        let audio = plume_engine::gate_recording(
+            audio,
+            self.vad_path.clone(),
+            cancel.clone(),
+            read_status.clone(),
+        );
+        if let Err(e) = self.decoder.submit(DecodeJob {
+            id,
+            engine,
+            audio,
+            cancelled: cancel.clone(),
+        }) {
+            self.fail_start(id, e);
+            return;
+        }
+        self.active = Some(Active {
+            id,
+            ui_id: self.ui_serial,
+            cancel,
+            commands: None,
+            events: None,
+            capture_done: true,
+            cleanup_retry_at: None,
+            completion: None,
+            read_status: Some(read_status),
+            record: None,
+            error: None,
+            started: None,
+            last_speech: None,
+            mode: None,
+            silence_shown: false,
+            limit_shown: false,
+            retry: true,
+            cancel_feedback: None,
+        });
+        self.outputs
+            .bubbles
+            .feedback(self.ui_serial, Feedback::Transcribing);
+    }
+    fn capture_events(&mut self) {
+        let Some(active) = &mut self.active else {
+            return;
+        };
+        if let Some(events) = &active.events {
+            loop {
+                let event = match events.try_recv() {
+                    Ok(event) => event,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        if !active.capture_done {
+                            // Unwinding drops the microphone and writer before
+                            // this channel closes. Still wait for the decoder.
+                            active.capture_done = true;
+                            active.error = Some("recording worker disconnected".into());
+                            if self.controller.phase != Phase::Cancelling {
+                                self.controller.phase = Phase::Transcribing;
+                            }
+                        }
+                        break;
+                    }
+                };
+                match event {
+                    CaptureEvent::Ready(at) => {
+                        active.started = Some(at);
+                        active.last_speech = Some(at);
+                        if let Phase::Starting(mode) = self.controller.phase {
+                            self.controller.phase = Phase::Recording(mode);
+                            self.outputs.bubbles.feedback(
+                                active.ui_id,
+                                Feedback::RecordingNotice {
+                                    silence: false,
+                                    limit: false,
+                                },
+                            );
+                        }
+                    }
+                    CaptureEvent::Speech(at) => {
+                        active.last_speech = Some(at);
+                        if active.silence_shown {
+                            active.silence_shown = false;
+                            if matches!(self.controller.phase, Phase::Recording(_)) {
+                                self.outputs.bubbles.feedback(
+                                    active.ui_id,
+                                    Feedback::RecordingNotice {
+                                        silence: false,
+                                        limit: active.limit_shown,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    CaptureEvent::Ended { record, error } => {
+                        active.capture_done = true;
+                        active.record = record.map(|r| *r);
+                        active.error = error;
+                        if self.controller.phase != Phase::Cancelling {
+                            self.controller.phase = Phase::Transcribing;
+                            self.outputs
+                                .bubbles
+                                .feedback(active.ui_id, Feedback::Transcribing);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fn tick(&mut self) {
+        if !matches!(self.controller.phase, Phase::Recording(_)) {
+            return;
+        }
+        let Some(active) = &mut self.active else {
+            return;
+        };
+        let Some(started) = active.started else {
+            return;
+        };
+        let now = Instant::now();
+        let timing = crate::controller::timing(
+            active.mode.unwrap_or(Mode::Hold),
+            now.duration_since(started),
+            active
+                .last_speech
+                .map_or(Duration::ZERO, |at| now.duration_since(at)),
+        );
+        let silence = timing.silence;
+        let limit = timing.warning;
+        if silence != active.silence_shown || limit != active.limit_shown {
+            active.silence_shown = silence;
+            active.limit_shown = limit;
             self.outputs
                 .bubbles
-                .push_from(&dictation, self.next_capture_id);
-            self.hold = Some(hold);
-            return Outcome::Aborted(err);
+                .feedback(active.ui_id, Feedback::RecordingNotice { silence, limit });
         }
-        self.next_capture_id += 1;
-        std::thread::spawn(move || mic_pump.run());
-        self.outputs.bubbles.push_from(&dictation, id);
-        let outcome = Self::live_loop(
-            &mut hold,
-            id,
-            &self.outputs.bubbles,
-            &mut dictation,
-            pump,
-            guard,
-            cancelled,
-        );
-        if let Some(started) = started {
-            tracing::debug!(
-                capture = id,
-                ?outcome,
-                hold_ms = started.elapsed().as_millis(),
-                "Capture finished"
-            );
-        }
-        self.hold = Some(hold);
-        outcome
-    }
-
-    fn live_loop(
-        hold: &mut Chord,
-        id: u64,
-        bubbles: &BubbleSink,
-        dictation: &mut Dictation,
-        pump: AudioPump,
-        mut guard: CancelGuard,
-        cancelled: Arc<AtomicBool>,
-    ) -> Outcome {
-        let mut pump = Some(pump);
-        loop {
-            if guard.cancelled() {
-                dictation.cancel();
-                cancelled.store(true, Ordering::Release);
-                if let Some(pump) = pump.take() {
-                    pump.close();
-                }
-                bubbles.push_from(dictation, id);
-                return Outcome::Cancelled;
+        if timing.limit {
+            if let Some(tx) = &active.commands {
+                let _ = tx.send(CaptureCommand::Limit);
             }
-            if matches!(hold.next_event(), Some(HotkeyEvent::Released)) {
-                dictation.release();
-                if let Some(pump) = pump.take() {
-                    pump.finish();
-                }
-                bubbles.push_from(dictation, id);
-                return Outcome::Released;
-            }
-            std::thread::sleep(POLL_QUANTUM);
+            self.controller.phase = Phase::Transcribing;
+            self.outputs
+                .bubbles
+                .feedback(active.ui_id, Feedback::Transcribing);
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn latest_shortcut_update_wins() {
-        let (tx, rx) = mpsc::channel();
-        tx.send("Ctrl+Space".into()).unwrap();
-        tx.send("Ctrl+m".into()).unwrap();
-        assert_eq!(drain_latest(&rx).as_deref(), Some("Ctrl+m"));
-        assert_eq!(drain_latest(&rx), None);
+    fn commit_if_finished(&mut self) {
+        if !self.active.as_ref().is_some_and(|a| {
+            a.capture_done
+                && a.completion.is_some()
+                && a.cleanup_retry_at.is_none_or(|at| Instant::now() >= at)
+        }) {
+            return;
+        }
+        let mut active = self.active.take().unwrap();
+        if active.record.is_none() && !active.retry && !active.cancel.is_cancelled() {
+            match self.recordings.lock().unwrap().recover_partial(active.id) {
+                Ok(record) => active.record = record,
+                Err(e) => active.error = Some(format!("audio recovery: {e}")),
+            }
+        }
+        if active.cancel.is_cancelled() {
+            if let Err(e) = self.recordings.lock().unwrap().delete(active.id) {
+                // Do not advertise readiness while cancellation cleanup failed.
+                self.outputs.bubbles.feedback(
+                    active.ui_id,
+                    Feedback::Error {
+                        title: "Audio deletion failed".into(),
+                        advice: e.to_string(),
+                    },
+                );
+                active.cleanup_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                self.active = Some(active);
+                self.controller.phase = Phase::Cancelling;
+                return;
+            } else {
+                self.outputs.bubbles.feedback(
+                    active.ui_id,
+                    active.cancel_feedback.clone().unwrap_or(Feedback::Empty),
+                );
+            }
+        } else {
+            let mut result = match &active.completion.as_ref().unwrap().outcome {
+                DecodeOutcome::Final(t) => Ok(t.clone()),
+                DecodeOutcome::Failed(e) => Err(e.clone()),
+                DecodeOutcome::Cancelled => Err("cancelled".into()),
+            };
+            if let Some(error) = active
+                .read_status
+                .as_ref()
+                .and_then(|status| status.error())
+            {
+                result = Err(format!("audio recovery: {error}"));
+            }
+            if let Some(error) = active.error.clone() {
+                result = Err(error);
+            }
+            let has_speech = active.retry || active.record.as_ref().is_some_and(|r| r.has_speech);
+            if !has_speech && !active.retry {
+                let _ = self.recordings.lock().unwrap().delete(active.id);
+                if let Err(error) = result {
+                    self.outputs.bubbles.feedback(
+                        active.ui_id,
+                        Feedback::Error {
+                            title: "Recording unavailable".into(),
+                            advice: error,
+                        },
+                    );
+                } else {
+                    self.outputs
+                        .bubbles
+                        .feedback(active.ui_id, Feedback::NoSpeech);
+                }
+            } else if !has_speech && result.as_ref().is_ok_and(|t| t.trim().is_empty()) {
+                let _ = self.recordings.lock().unwrap().delete(active.id);
+                self.outputs
+                    .bubbles
+                    .feedback(active.ui_id, Feedback::NoSpeech);
+            } else {
+                let mut store = self.recordings.lock().unwrap();
+                let saved = if let Some(record) = active.record.clone().filter(|r| r.has_speech) {
+                    store.stage(record)
+                } else {
+                    Ok(())
+                };
+                let saved = saved.and_then(|_| store.finish_decode(active.id, &result));
+                drop(store);
+                if let Err(error) = saved {
+                    result = Err(format!("recording storage: {error}"));
+                }
+                if self.cancel_before_delivery(&mut active) {
+                    return;
+                }
+                match result {
+                    Ok(text) if !text.trim().is_empty() && !active.retry => {
+                        self.controller.phase = Phase::Inserting;
+                        self.outputs
+                            .bubbles
+                            .feedback(active.ui_id, Feedback::Inserting);
+                        self.hold.cancel_active(true);
+                        let cancel = active.cancel.clone();
+                        let id = active.id;
+                        let store = self.recordings.clone();
+                        let hold = &mut self.hold;
+                        let controller = &mut self.controller;
+                        let bubbles = &self.outputs.bubbles;
+                        let ui_id = active.ui_id;
+                        let mut dispatch_closed = false;
+                        let mut before_dispatch = || {
+                            if dispatch_closed {
+                                return true;
+                            }
+                            controller.phase = Phase::Transcribing;
+                            while let Some(event) = hold.next_event() {
+                                if controller.event(event) == Some(Action::Cancel) {
+                                    cancel.cancel();
+                                    bubbles.feedback(ui_id, Feedback::Cancelling);
+                                    if let Err(error) = store.lock().unwrap().mark_cancelled(id) {
+                                        tracing::warn!(record_id = id, "cancel marker: {error}");
+                                    }
+                                }
+                            }
+                            if cancel.is_cancelled() {
+                                false
+                            } else {
+                                controller.phase = Phase::Inserting;
+                                hold.cancel_active(false);
+                                dispatch_closed = true;
+                                true
+                            }
+                        };
+                        let mut feedback = self.delivery.deliver_checked(
+                            id,
+                            text,
+                            self.insertion,
+                            &cancel,
+                            &mut before_dispatch,
+                        );
+                        if cancel.is_cancelled() {
+                            active.cancel_feedback = Some(feedback);
+                            self.active = Some(active);
+                            self.controller.phase = Phase::Cancelling;
+                            return;
+                        }
+                        if let Some(mut report) = self.delivery.take_result() {
+                            if let Err(error) = self
+                                .recordings
+                                .lock()
+                                .unwrap()
+                                .finish_insertion(active.id, &report)
+                            {
+                                tracing::warn!(
+                                    record_id = active.id,
+                                    "insertion status persistence: {error}"
+                                );
+                            }
+                            if let Err(error) = self.recordings.lock().unwrap().promote_existing(id)
+                            {
+                                feedback = Feedback::Error {
+                                    title: "Audio recovery unavailable".into(),
+                                    advice: error.to_string(),
+                                };
+                            }
+                            report.audio_available = self.recordings.lock().unwrap().has_audio(id);
+                            self.delivery.publish(report);
+                        }
+                        self.outputs.bubbles.feedback(active.ui_id, feedback);
+                    }
+                    Ok(text) => {
+                        if let Err(error) =
+                            self.recordings.lock().unwrap().promote_existing(active.id)
+                        {
+                            tracing::warn!(record_id = active.id, "audio promotion: {error}");
+                        }
+                        self.delivery.recovered(active.id, text);
+                        self.outputs
+                            .bubbles
+                            .feedback(active.ui_id, Feedback::Success);
+                    }
+                    Err(error) => {
+                        if let Err(error) =
+                            self.recordings.lock().unwrap().promote_existing(active.id)
+                        {
+                            tracing::warn!(record_id = active.id, "audio promotion: {error}");
+                        }
+                        let audio_available = self.recordings.lock().unwrap().has_audio(active.id);
+                        self.delivery.failed(
+                            active.id,
+                            error.clone(),
+                            active.retry,
+                            audio_available,
+                        );
+                        self.outputs.bubbles.feedback(
+                            active.ui_id,
+                            Feedback::Error {
+                                title: "Transcription unavailable".into(),
+                                advice: if audio_available {
+                                    format!("Retry from History. {error}")
+                                } else {
+                                    format!("Audio could not be retained. {error}")
+                                },
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        // Drain presses accumulated during the native insertion before becoming Ready.
+        self.controller.phase = Phase::Inserting;
+        self.drain_keys();
+        self.controller.finish(true, true, true);
+        self.updates.busy.store(false, Ordering::Release);
+    }
+    fn cancel_before_delivery(&mut self, active: &mut Active) -> bool {
+        while let Some(event) = self.hold.next_event() {
+            if self.controller.event(event) == Some(Action::Cancel) {
+                active.cancel.cancel();
+                let _ = self.recordings.lock().unwrap().mark_cancelled(active.id);
+            }
+        }
+        if !active.cancel.is_cancelled() {
+            return false;
+        }
+        match self.recordings.lock().unwrap().delete(active.id) {
+            Ok(()) => {
+                self.outputs.bubbles.feedback(active.ui_id, Feedback::Empty);
+                self.controller.finish(true, true, true);
+                self.updates.busy.store(false, Ordering::Release);
+            }
+            Err(error) => {
+                self.outputs.bubbles.feedback(
+                    active.ui_id,
+                    Feedback::Error {
+                        title: "Audio deletion failed".into(),
+                        advice: error.to_string(),
+                    },
+                );
+                active.cleanup_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                // Ownership of the operation remains with the controller until cleanup succeeds.
+                self.active = Some(Active {
+                    id: active.id,
+                    ui_id: active.ui_id,
+                    cancel: active.cancel.clone(),
+                    commands: None,
+                    events: None,
+                    capture_done: true,
+                    cleanup_retry_at: active.cleanup_retry_at,
+                    completion: active.completion.take(),
+                    read_status: None,
+                    record: active.record.take(),
+                    error: None,
+                    started: None,
+                    last_speech: None,
+                    mode: active.mode,
+                    silence_shown: false,
+                    limit_shown: false,
+                    retry: active.retry,
+                    cancel_feedback: active.cancel_feedback.take(),
+                });
+                self.controller.phase = Phase::Cancelling;
+            }
+        }
+        true
+    }
+    fn update_settings(&mut self) {
+        while let Ok(engine) = self.updates.engine.try_recv() {
+            self.engine = engine;
+        }
+        while let Ok(insertion) = self.updates.insertion.try_recv() {
+            self.insertion = insertion;
+        }
+        let mut next = self.config.clone();
+        let mut changed = false;
+        while let Ok(hold) = self.updates.hold.try_recv() {
+            if let Ok(spec) = crate::chords::ChordSpec::parse(&hold) {
+                next.hold = spec;
+                changed = true;
+            }
+        }
+        while let Ok(toggle) = self.updates.toggle.try_recv() {
+            if let Ok(config) = next.clone().with_toggle(toggle.as_deref()) {
+                next = config;
+                changed = true;
+            }
+        }
+        if changed {
+            match self.hold.register(&next) {
+                Ok(()) => self.config = next,
+                Err(e) => tracing::warn!("shortcut update rejected: {e}"),
+            }
+        }
     }
 }

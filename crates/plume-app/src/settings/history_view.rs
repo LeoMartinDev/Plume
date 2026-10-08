@@ -13,7 +13,7 @@ pub(super) fn history_page(
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let item_count = view.history.entries().len() + 1;
+    let item_count = view.display_history().len() + 1;
     if view.history_list.item_count() != item_count {
         view.history_list.reset(item_count);
     }
@@ -29,7 +29,7 @@ pub(super) fn history_page(
                     .into_any_element()
             } else {
                 div()
-                    .when(index == view.history.entries().len(), |el| el.pb(px(24.)))
+                    .when(index == view.display_history().len(), |el| el.pb(px(24.)))
                     .child(history_entry(view, index - 1, &tokens, cx))
                     .into_any_element()
             };
@@ -45,7 +45,7 @@ fn history_header(
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let entries = view.history.entries();
+    let entries = view.display_history();
     let body = div()
         .flex()
         .flex_col()
@@ -105,9 +105,16 @@ fn history_entry(
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
-    let entry = &view.history.entries()[index];
+    let entries = view.display_history();
+    let entry = &entries[index];
     let copy_text = entry.text.clone();
     let id = entry.id;
+    let record_id = entry.record_id;
+    let audio_available = record_id.is_some_and(|id| {
+        view.recordings
+            .as_ref()
+            .is_some_and(|store| store.lock().unwrap().has_audio(id))
+    });
     let copied = view.copied_history_id == Some(id);
     div()
         .id(("history-entry", id))
@@ -117,7 +124,7 @@ fn history_entry(
         .border_x_1()
         .border_b_1()
         .when(index == 0, |el| el.border_t_1().rounded_t(px(6.)))
-        .when(index + 1 == view.history.entries().len(), |el| {
+        .when(index + 1 == view.display_history().len(), |el| {
             el.rounded_b(px(6.))
         })
         .w_full()
@@ -126,6 +133,41 @@ fn history_entry(
         .flex()
         .flex_col()
         .gap(px(7.))
+        .when(audio_available, |row| {
+            let record_id = record_id.unwrap();
+            row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.muted)
+                            .child("Audio available"),
+                    )
+                    .child(action_button(
+                        tokens,
+                        SharedString::from(format!("retry-{id}")),
+                        "Retranscribe",
+                        cx,
+                        move |this, cx| this.retry_recording(record_id, cx),
+                    ))
+                    .child(action_button(
+                        tokens,
+                        SharedString::from(format!("delete-audio-{id}")),
+                        "Delete audio",
+                        cx,
+                        move |this, cx| this.delete_audio(record_id, cx),
+                    )),
+            )
+        })
+        .children(
+            entry
+                .transcription_error
+                .clone()
+                .map(|error| error_text(tokens, error)),
+        )
         .child(
             div()
                 .flex()

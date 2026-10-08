@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use crate::chords::ChordSpec;
 
 /// Hold chord, cancel chord, and model pack directory from the environment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) hold: ChordSpec,
     pub(crate) cancel: ChordSpec,
+    pub(crate) toggle: Option<ChordSpec>,
     pub(crate) model_dir: PathBuf,
 }
 
@@ -18,6 +19,7 @@ pub enum ConfigError {
 
 impl Config {
     pub const DEFAULT_HOLD: &'static str = "Ctrl+Space";
+    pub const DEFAULT_TOGGLE: &'static str = "Ctrl+Shift+Space";
     pub const DEFAULT_CANCEL: &'static str = "Esc";
     /// Env boundary for the plume-session binary. Reads `PLUME_HOLD` (default
     /// `Ctrl+Space`), `PLUME_CANCEL` (default `Esc`), `PLUME_MODEL_DIR` (required).
@@ -28,11 +30,39 @@ impl Config {
         let model_dir = std::env::var_os("PLUME_MODEL_DIR")
             .map(PathBuf::from)
             .ok_or(ConfigError::MissingModelDir)?;
-        Ok(Config {
+        let config = Config {
             hold,
             cancel,
+            toggle: None,
             model_dir,
-        })
+        };
+        plume_hotkey::validate_bindings(&config.bindings()).map_err(|e| {
+            ConfigError::InvalidChord {
+                var: "shortcuts",
+                reason: e.to_string(),
+            }
+        })?;
+        let requested = std::env::var_os("PLUME_TOGGLE")
+            .map(|raw| {
+                raw.into_string().map_err(|_| ConfigError::InvalidChord {
+                    var: "PLUME_TOGGLE",
+                    reason: "value is not valid unicode".into(),
+                })
+            })
+            .transpose()?;
+        if let Some(raw) = requested {
+            config.with_toggle(if raw.is_empty() { None } else { Some(&raw) })
+        } else {
+            match config.clone().with_toggle(Some(Self::DEFAULT_TOGGLE)) {
+                Ok(config) => Ok(config),
+                Err(_) => {
+                    tracing::warn!(
+                        "hands-free shortcut disabled: default overlaps an existing shortcut"
+                    );
+                    Ok(config)
+                }
+            }
+        }
     }
 
     /// Boundary used by plume-app after it reads prefs.toml.
@@ -47,13 +77,60 @@ impl Config {
             var: "cancel",
             reason,
         })?;
-        Ok(Config {
+        let config = Config {
             hold,
             cancel,
+            toggle: None,
             model_dir,
-        })
+        };
+        plume_hotkey::validate_bindings(&config.bindings()).map_err(|e| {
+            ConfigError::InvalidChord {
+                var: "shortcuts",
+                reason: e.to_string(),
+            }
+        })?;
+        Ok(config
+            .clone()
+            .with_toggle(Some(Self::DEFAULT_TOGGLE))
+            .unwrap_or(config))
     }
 
+    pub fn with_toggle(mut self, raw: Option<&str>) -> Result<Self, ConfigError> {
+        self.toggle =
+            raw.map(ChordSpec::parse)
+                .transpose()
+                .map_err(|reason| ConfigError::InvalidChord {
+                    var: "toggle",
+                    reason,
+                })?;
+        plume_hotkey::validate_bindings(&self.bindings()).map_err(|e| {
+            ConfigError::InvalidChord {
+                var: "shortcuts",
+                reason: e.to_string(),
+            }
+        })?;
+        Ok(self)
+    }
+    pub(crate) fn bindings(&self) -> Vec<plume_hotkey::HotkeyBinding> {
+        use plume_hotkey::{HotkeyAction, HotkeyBinding};
+        let mut bindings = vec![
+            HotkeyBinding {
+                action: HotkeyAction::Hold,
+                shortcut: self.hold.as_str().into(),
+            },
+            HotkeyBinding {
+                action: HotkeyAction::Cancel,
+                shortcut: self.cancel.as_str().into(),
+            },
+        ];
+        if let Some(toggle) = &self.toggle {
+            bindings.push(HotkeyBinding {
+                action: HotkeyAction::Toggle,
+                shortcut: toggle.as_str().into(),
+            });
+        }
+        bindings
+    }
     pub fn model_dir(&self) -> &Path {
         &self.model_dir
     }

@@ -250,3 +250,174 @@ mod tests {
 
 #[cfg(test)]
 mod loopback;
+
+struct ClipboardWatch {
+    conn: RustConnection,
+    window: Window,
+    selection: u32,
+    timestamp: u32,
+}
+impl ClipboardWatch {
+    fn new() -> Result<Self, BoxError> {
+        use x11rb::protocol::{
+            xfixes::{ConnectionExt as _, SelectionEventMask},
+            xproto::{CreateWindowAux, WindowClass},
+        };
+        let (conn, screen) = x11rb::connect(None)?;
+        conn.xfixes_query_version(5, 0)?.reply()?;
+        let window = conn.generate_id()?;
+        conn.create_window(
+            0,
+            window,
+            conn.setup().roots[screen].root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_ONLY,
+            0,
+            &CreateWindowAux::new(),
+        )?
+        .check()?;
+        let selection = conn.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
+        conn.xfixes_select_selection_input(
+            window,
+            selection,
+            SelectionEventMask::SET_SELECTION_OWNER
+                | SelectionEventMask::SELECTION_WINDOW_DESTROY
+                | SelectionEventMask::SELECTION_CLIENT_CLOSE,
+        )?
+        .check()?;
+        Ok(Self {
+            conn,
+            window,
+            selection,
+            timestamp: 0,
+        })
+    }
+    fn version(&mut self) -> Result<u64, BoxError> {
+        let owner = self
+            .conn
+            .get_selection_owner(self.selection)?
+            .reply()?
+            .owner;
+        while let Some(event) = self.conn.poll_for_event()? {
+            if let x11rb::protocol::Event::XfixesSelectionNotify(event) = event {
+                self.timestamp = event.selection_timestamp;
+            }
+        }
+        Ok((u64::from(owner) << 32) | u64::from(self.timestamp))
+    }
+}
+impl Drop for ClipboardWatch {
+    fn drop(&mut self) {
+        let _ = self.conn.destroy_window(self.window);
+        let _ = self.conn.flush();
+    }
+}
+thread_local! {static CLIPBOARD_WATCH:std::cell::RefCell<Option<ClipboardWatch>>=const{std::cell::RefCell::new(None)};}
+pub(crate) fn clipboard_version() -> Result<u64, BoxError> {
+    CLIPBOARD_WATCH.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(ClipboardWatch::new()?);
+        }
+        slot.as_mut().unwrap().version()
+    })
+}
+pub(crate) fn clipboard_empty() -> Result<bool, BoxError> {
+    Ok(clipboard_version()? >> 32 == 0)
+}
+
+pub(crate) fn clipboard_formats_preservable() -> Result<bool, BoxError> {
+    CLIPBOARD_WATCH.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(ClipboardWatch::new()?);
+        }
+        let watch = slot.as_mut().unwrap();
+        if watch
+            .conn
+            .get_selection_owner(watch.selection)?
+            .reply()?
+            .owner
+            == NONE
+        {
+            return Ok(true);
+        }
+        let targets = watch.conn.intern_atom(false, b"TARGETS")?.reply()?.atom;
+        let property = watch
+            .conn
+            .intern_atom(false, b"PLUME_CLIPBOARD_TARGETS")?
+            .reply()?
+            .atom;
+        watch
+            .conn
+            .convert_selection(
+                watch.window,
+                watch.selection,
+                targets,
+                property,
+                CURRENT_TIME,
+            )?
+            .check()?;
+        watch.conn.flush()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            while let Some(event) = watch.conn.poll_for_event()? {
+                match event {
+                    x11rb::protocol::Event::XfixesSelectionNotify(e) => {
+                        watch.timestamp = e.selection_timestamp
+                    }
+                    x11rb::protocol::Event::SelectionNotify(e)
+                        if e.requestor == watch.window && e.target == targets =>
+                    {
+                        if e.property == NONE {
+                            return Ok(false);
+                        }
+                        let reply = watch
+                            .conn
+                            .get_property(true, watch.window, property, AtomEnum::ATOM, 0, 1024)?
+                            .reply()?;
+                        let Some(atoms) = reply.value32() else {
+                            return Ok(false);
+                        };
+                        for atom in atoms {
+                            let name = watch.conn.get_atom_name(atom)?.reply()?.name;
+                            let name = std::str::from_utf8(&name)?;
+                            if !matches!(
+                                name,
+                                "TARGETS"
+                                    | "TIMESTAMP"
+                                    | "MULTIPLE"
+                                    | "SAVE_TARGETS"
+                                    | "INCR"
+                                    | "UTF8_STRING"
+                                    | "TEXT"
+                                    | "STRING"
+                                    | "COMPOUND_TEXT"
+                                    | "text/plain"
+                                    | "text/plain;charset=utf-8"
+                                    | "text/plain;charset=UTF-8"
+                                    | "text/html"
+                                    | "image/png"
+                                    | "image/bmp"
+                                    | "image/jpeg"
+                                    | "image/tiff"
+                            ) {
+                                return Ok(false);
+                            }
+                        }
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("clipboard owner did not supply supported formats".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    })
+}

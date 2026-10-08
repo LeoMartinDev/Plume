@@ -163,9 +163,49 @@ impl CaptureFilter {
     }
 }
 
+#[derive(Default)]
+struct BindingFilter {
+    filters: Vec<(crate::HotkeyAction, CaptureFilter)>,
+    cancel_active: bool,
+    passthrough: bool,
+}
+impl BindingFilter {
+    fn register(&mut self, bindings: &[crate::HotkeyBinding]) -> Result<(), plume_core::BoxError> {
+        let mut filters = Vec::new();
+        for b in bindings {
+            let mut f = CaptureFilter::default();
+            f.register(crate::shortcut::Shortcut::parse(&b.shortcut)?);
+            filters.push((b.action, f));
+        }
+        self.filters = filters;
+        Ok(())
+    }
+    fn push(&mut self, kind: u32, keycode: u16, flags: u64) -> (Vec<crate::BindingEvent>, bool) {
+        let mut result = Vec::new();
+        let mut swallow = false;
+        for (action, filter) in &mut self.filters {
+            let (event, owns) = filter.push(kind, keycode, flags);
+            if self.passthrough {
+                filter.swallowed = None;
+            }
+            let enabled = *action != crate::HotkeyAction::Cancel || self.cancel_active;
+            swallow |= owns && enabled;
+            if let Some(edge) = event {
+                if enabled {
+                    result.push(crate::BindingEvent {
+                        action: *action,
+                        edge,
+                    });
+                }
+            }
+        }
+        (result, swallow && !self.passthrough)
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod backend {
-    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+    use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
     use std::thread::{self, JoinHandle};
 
@@ -176,13 +216,12 @@ mod backend {
     };
     use plume_core::{BoxError, GlobalHotkey, HotkeyEvent};
 
-    use super::CaptureFilter;
-    use crate::shortcut::Shortcut;
+    use super::BindingFilter;
     use crate::HotkeyError;
 
     pub struct MacosHotkey {
-        events: Receiver<HotkeyEvent>,
-        filter: Arc<Mutex<CaptureFilter>>,
+        events: Receiver<crate::BindingEvent>,
+        filter: Arc<Mutex<BindingFilter>>,
         runloop: Option<CFRunLoop>,
         thread: Option<JoinHandle<()>>,
     }
@@ -191,7 +230,7 @@ mod backend {
         pub(crate) fn new() -> Result<Self, BoxError> {
             let (tx, rx) = mpsc::channel();
             let (ready_tx, ready_rx) = mpsc::channel();
-            let filter = Arc::new(Mutex::new(CaptureFilter::default()));
+            let filter = Arc::new(Mutex::new(BindingFilter::default()));
             let thread_filter = Arc::clone(&filter);
             let thread = thread::spawn(move || {
                 // A filtering session tap owns the configured shortcut, so
@@ -241,8 +280,8 @@ mod backend {
         location: CGEventTapLocation,
         options: CGEventTapOptions,
         mode: &'static str,
-        tx: Sender<HotkeyEvent>,
-        filter: Arc<Mutex<CaptureFilter>>,
+        tx: Sender<crate::BindingEvent>,
+        filter: Arc<Mutex<BindingFilter>>,
         ready_tx: &Sender<Result<CFRunLoop, HotkeyError>>,
     ) -> bool {
         CGEventTap::with_enabled(
@@ -261,6 +300,10 @@ mod backend {
                     CGEventType::FlagsChanged => super::KIND_FLAGS_CHANGED,
                     _ => return CallbackResult::Keep,
                 };
+                if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == 0x504c554d45
+                {
+                    return CallbackResult::Keep;
+                }
                 let keycode =
                     event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
                 let flags = event.get_flags().bits();
@@ -269,7 +312,7 @@ mod backend {
                 };
                 let (signal, swallow) = filter.push(kind, keycode, flags);
                 drop(filter);
-                if let Some(signal) = signal {
+                for signal in signal {
                     let _ = tx.send(signal);
                 }
                 if swallow {
@@ -287,21 +330,34 @@ mod backend {
         .is_ok()
     }
 
-    impl GlobalHotkey for MacosHotkey {
-        fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
-            self.filter
-                .lock()
-                .expect("macOS shortcut filter")
-                .register(Shortcut::parse(shortcut)?);
+    impl MacosHotkey {
+        pub fn register_bindings(
+            &mut self,
+            bindings: &[crate::HotkeyBinding],
+        ) -> Result<(), BoxError> {
+            self.filter.lock().unwrap().register(bindings)?;
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
-
+        pub fn next_binding_event(&mut self) -> Option<crate::BindingEvent> {
+            self.events.try_recv().ok()
+        }
+        pub fn set_cancel_active(&mut self, active: bool) {
+            self.filter.lock().unwrap().cancel_active = active;
+        }
+        pub fn set_passthrough(&mut self, active: bool) {
+            self.filter.lock().unwrap().passthrough = active;
+        }
+    }
+    impl GlobalHotkey for MacosHotkey {
+        fn register(&mut self, shortcut: &str) -> Result<(), BoxError> {
+            self.register_bindings(&[crate::HotkeyBinding {
+                action: crate::HotkeyAction::Hold,
+                shortcut: shortcut.into(),
+            }])
+        }
         fn next_event(&mut self) -> Option<HotkeyEvent> {
-            match self.events.try_recv() {
-                Ok(event) => Some(event),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
-            }
+            self.next_binding_event().map(|e| e.edge)
         }
     }
 
@@ -322,6 +378,69 @@ pub(crate) use backend::MacosHotkey;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shortcut_editor_receives_keys_and_resume_requires_a_new_press() {
+        use super::*;
+        use crate::{HotkeyAction, HotkeyBinding};
+        let mut filter = BindingFilter::default();
+        filter
+            .register(&[HotkeyBinding {
+                action: HotkeyAction::Hold,
+                shortcut: "Ctrl+Space".into(),
+            }])
+            .unwrap();
+        filter.passthrough = true;
+        assert!(!filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL).1);
+        filter.passthrough = false;
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL),
+            (Vec::new(), false)
+        );
+        assert!(!filter.push(KIND_KEY_UP, 0x31, FLAG_CONTROL).1);
+        assert!(filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL).1);
+    }
+    #[test]
+    fn shared_trigger_keeps_each_binding_released_after_modifier_changes() {
+        use super::*;
+        use crate::{BindingEvent, HotkeyAction, HotkeyBinding};
+        let mut filter = BindingFilter::default();
+        filter
+            .register(&[
+                HotkeyBinding {
+                    action: HotkeyAction::Hold,
+                    shortcut: "Ctrl+Space".into(),
+                },
+                HotkeyBinding {
+                    action: HotkeyAction::Toggle,
+                    shortcut: "Ctrl+Shift+Space".into(),
+                },
+            ])
+            .unwrap();
+        let event = |action, edge| BindingEvent { action, edge };
+        let combined = FLAG_CONTROL | FLAG_SHIFT;
+        assert!(filter
+            .push(KIND_FLAGS_CHANGED, 0x3b, FLAG_CONTROL)
+            .0
+            .is_empty());
+        assert!(filter.push(KIND_FLAGS_CHANGED, 0x38, combined).0.is_empty());
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x31, combined).0,
+            [event(HotkeyAction::Toggle, HotkeyEvent::Pressed)]
+        );
+        assert!(filter
+            .push(KIND_FLAGS_CHANGED, 0x38, FLAG_CONTROL)
+            .0
+            .is_empty());
+        assert!(filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL).0.is_empty());
+        assert_eq!(
+            filter.push(KIND_KEY_UP, 0x31, FLAG_CONTROL).0,
+            [event(HotkeyAction::Toggle, HotkeyEvent::Released)]
+        );
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL).0,
+            [event(HotkeyAction::Hold, HotkeyEvent::Pressed)]
+        );
+    }
     use super::*;
     use crate::chord::ChordTracker;
     use crate::shortcut::Shortcut;

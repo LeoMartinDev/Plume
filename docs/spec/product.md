@@ -2,7 +2,7 @@
 
 ## The product in one sentence
 
-Plume is a local desktop push-to-talk dictation app. Hold a global shortcut, speak, then release: the final transcript is inserted into the focused app. Native integrations cover macOS, Windows and Linux X11; Wayland remains planned.
+Plume is a local desktop dictation app with push-to-talk and hands-free modes. Hold a global shortcut or toggle recording, speak, then stop: the final transcript is inserted into the focused app. Native integrations cover macOS, Windows and Linux X11; Wayland remains planned.
 
 ## Target user
 
@@ -14,9 +14,9 @@ French (FR) and English (EN) are the minimum supported languages. Settings offer
 
 ## Current capabilities
 
-Hold-to-talk capture, Esc cancellation during capture, background transcription, final-text insertion, clipboard fallback, model selection, configurable history and appearance settings are implemented. Partial hypotheses are not inserted by the desktop runtime.
+Hold-to-talk and hands-free capture, Esc cancellation during capture/transcription, one active operation, final-text insertion with clipboard restoration, model selection, eight recoverable local audios, manual retranscription, configurable text history and appearance settings are implemented. Partial hypotheses are not inserted by the desktop runtime.
 
 
 ## Planned capabilities
 
-Toggle recording, live correction, local LLM cleanup and native Wayland integration remain planned. Their presence in historical plans or domain types does not mean they are available in Settings.
+Live correction, local LLM cleanup and native Wayland integration remain outside the current production flow. Their presence in historical plans or domain types does not mean they are available in Settings.

@@ -59,6 +59,7 @@ pub(crate) struct ChordTracker {
     wanted: Shortcut,
     down: Down,
     engaged: bool,
+    trigger_down: bool,
 }
 
 #[allow(dead_code)]
@@ -68,7 +69,15 @@ impl ChordTracker {
             wanted,
             down: Down::default(),
             engaged: false,
+            trigger_down: false,
         }
+    }
+
+    pub(crate) fn owns_trigger(&self, id: KeyId) -> bool {
+        key_is_trigger(id, self.wanted.trigger)
+    }
+    pub(crate) fn engaged(&self) -> bool {
+        self.engaged
     }
 
     pub(crate) fn push(&mut self, id: KeyId, edge: Edge) -> Option<HotkeyEvent> {
@@ -105,6 +114,11 @@ impl ChordTracker {
     /// while a chord is held); treating that as a release made a bubble flash
     /// on screen and stopped recording immediately.
     fn emit(&mut self, id: KeyId, edge: Edge) -> Option<HotkeyEvent> {
+        let is_trigger = key_is_trigger(id, self.wanted.trigger);
+        let fresh_trigger = is_trigger && edge == Edge::Down && !self.trigger_down;
+        if is_trigger {
+            self.trigger_down = edge == Edge::Down;
+        }
         if self.engaged {
             if matches!(edge, Edge::Up) && key_is_trigger(id, self.wanted.trigger) {
                 self.engaged = false;
@@ -112,7 +126,17 @@ impl ChordTracker {
             }
             return None;
         }
-        if matches_shortcut(self.wanted, self.down) {
+        let modifier_trigger = matches!(
+            self.wanted.trigger,
+            Trigger::Ctrl | Trigger::Alt | Trigger::Shift | Trigger::Super | Trigger::Fn
+        );
+        let modifier_edge = matches!(
+            id,
+            KeyId::Ctrl | KeyId::Alt | KeyId::Shift | KeyId::Super | KeyId::Fn
+        );
+        if (fresh_trigger || modifier_trigger && modifier_edge && edge == Edge::Down)
+            && matches_shortcut(self.wanted, self.down)
+        {
             self.engaged = true;
             Some(HotkeyEvent::Pressed)
         } else {
@@ -305,6 +329,33 @@ mod tests {
         assert_eq!(
             tracker.push_macos(mods, KeyId::Trigger(Trigger::Space), Edge::Up),
             Some(HotkeyEvent::Released)
+        );
+    }
+}
+
+#[cfg(test)]
+mod fresh_press_tests {
+    use super::*;
+    #[test]
+    fn ordinary_key_cannot_start_an_already_held_modifier_shortcut() {
+        let mut t = ChordTracker::new(Shortcut::parse("Alt").unwrap());
+        assert_eq!(t.push(KeyId::Ctrl, Edge::Down), None);
+        assert_eq!(t.push(KeyId::Alt, Edge::Down), None);
+        assert_eq!(t.push(KeyId::Ctrl, Edge::Up), None);
+        assert_eq!(t.push(KeyId::Trigger(Trigger::Char('a')), Edge::Down), None);
+        t.push(KeyId::Alt, Edge::Up);
+        assert_eq!(t.push(KeyId::Alt, Edge::Down), Some(HotkeyEvent::Pressed));
+    }
+    #[test]
+    fn completing_modifiers_on_a_held_trigger_does_not_start() {
+        let mut t = ChordTracker::new(Shortcut::parse("Ctrl+Space").unwrap());
+        assert_eq!(t.push(KeyId::Trigger(Trigger::Space), Edge::Down), None);
+        assert_eq!(t.push(KeyId::Ctrl, Edge::Down), None);
+        assert_eq!(t.push(KeyId::Trigger(Trigger::Space), Edge::Down), None);
+        t.push(KeyId::Trigger(Trigger::Space), Edge::Up);
+        assert_eq!(
+            t.push(KeyId::Trigger(Trigger::Space), Edge::Down),
+            Some(HotkeyEvent::Pressed)
         );
     }
 }
