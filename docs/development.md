@@ -124,6 +124,16 @@ Inno Setup 6, `dumpbin` and `VCToolsRedistDir`; Linux requires `patchelf` and
 `dpkg-deb`; macOS requires the Xcode command-line tools. Release jobs build and
 verify fresh installers on their native runners.
 
+On macOS, `PLUME_DMG_TEST=1 node --test scripts/macos-dmg.test.mjs` checks a
+real disk image with a small app fixture. `PLUME_DMG_TEST=1 cargo test --locked
+-p plume-updater` also exercises DMG updates, wrong-version rejection and bundle
+replacement. These checks use temporary folders and leave installed apps alone.
+
+The DMG's saved Finder layout is `crates/plume-app/packaging/dmg-layout.ds-store`.
+Release builds copy it directly and need no Finder automation. To change the
+window or icon positions, regenerate it with `python3 scripts/generate-dmg-layout.py`
+in a development environment with `ds_store==1.3.3` installed.
+
 ## Releases
 
 All workspace crates share a stable `MAJOR.MINOR.PATCH` version. From a clean
@@ -190,7 +200,9 @@ Workspace compilation/tests, Clippy and formatting must succeed before release
 packaging. Three native builds produce Plume and its update helper: Linux x64
 (Ubuntu 24.04/glibc), Windows x64 and macOS Apple Silicon (macOS 15).
 Windows ships an Inno Setup `.exe` with Start menu shortcuts and an uninstaller.
-macOS ships a `.pkg` installing Plume.app in Applications. Linux ships a `.deb`
+macOS ships a `.dmg` opening a compact Finder window with Plume.app and an
+Applications shortcut. Drag Plume to Applications, eject the image, then launch
+the installed app. Linux ships a `.deb`
 installing Plume in `/opt/plume` with a desktop entry and icon. Models are
 downloaded separately. Public releases contain no ZIP or tar archives.
 
@@ -202,8 +214,10 @@ Core OS libraries/frameworks and GPU drivers remain supplied by the OS.
 Every installer has a `.sha256` checksum. CI installs the Windows package in a
 temporary folder or extracts the macOS/Linux payload, audits runtime dependencies
 and runs `plume --version` and `plume-updater --help` with an OS-only PATH and no
-build-machine library environment variables. Linux/macOS runners also install
-the resulting package in its system location and check the registered app. This
+build-machine library environment variables. Linux runners also install the
+package in its system location; macOS runners mount the DMG, check the saved
+Finder layout and Applications shortcut, copy the bundle into Applications,
+and verify its signature and startup. This
 tests startup/linking; microphone, GUI, GPU and model inference still require
 manual testing on the intended machines.
 
@@ -248,10 +262,13 @@ See [the refactor verification record](readability-verification.md) for the chec
 
 Settings → Updates downloads the native installer and verifies its size and SHA-256
 before closing Plume. The helper waits for Plume to exit, then runs the Windows
-installer in the existing per-user directory, opens the macOS Installer, or asks
-PolicyKit to install the Linux package with dpkg. Models, preferences and history
-are outside the installation and remain intact. Linux and macOS system installs
-can request administrator authentication. No automatic folder replacement or
-application backup is used for native installer updates. The previous 0.1.0 updater
-expects archives; users of that version must install the first installer release
-manually from GitHub.
+installer in the existing per-user directory, mounts the macOS DMG, or asks
+PolicyKit to install the Linux package with dpkg. On macOS the helper copies the
+app beside the existing bundle, verifies its signature and version, then replaces
+the bundle in its current location and restarts Plume. It keeps the old bundle
+until replacement succeeds and restores it if replacement fails. If the app
+folder is not writable, install the DMG manually. Models, preferences and history
+are outside the installation and remain intact. Linux system installs can request
+administrator authentication. Earlier macOS updaters expect `.pkg` assets, so their
+users must install the first DMG release manually from GitHub. The previous 0.1.0
+updater expects archives and also requires a manual installation on all platforms.

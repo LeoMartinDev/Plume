@@ -48,7 +48,7 @@ export async function publish({ repository, token, tag, sha, directory, notes, r
     if (!current.draft || current.tag_name !== tag) throw new Error('Refusing to overwrite a published or changed release');
     return current;
   }
-  const body = notes + '\n\n---\nDownloads are native installers: Windows `.exe`, macOS Apple Silicon `.pkg`, and Ubuntu 24.04+ `.deb`. Speech models are downloaded separately.\n\nUsers of Plume 0.1.0 must install this release manually: its updater expects the previous archive format.\n\nThese installers are not publisher-signed or notarized. macOS uses local ad-hoc signatures only.\n';
+  const body = notes + '\n\n---\nDownloads are native installers: Windows `.exe`, macOS Apple Silicon `.dmg`, and Ubuntu 24.04+ `.deb`. Speech models are downloaded separately.\n\nUsers of earlier macOS releases must install this release manually: their updater expects the previous package format. Plume 0.1.0 users on all platforms must also install manually.\n\nThese installers are not publisher-signed or notarized. macOS uses local ad-hoc signatures only.\n';
   if (release) {
     await guard();
     release = await api(`/releases/${release.id}`, 'PATCH', { name: tag, body });

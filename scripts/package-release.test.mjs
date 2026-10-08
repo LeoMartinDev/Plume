@@ -36,7 +36,7 @@ test('native installer with real binaries, bundled runtimes and clean-environmen
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(result.stdout, /Installer verified/);
   const dist = path.join(root, 'dist');
-  const archive = fs.readdirSync(dist).find(n => /\.(exe|pkg|deb)$/.test(n));
+  const archive = fs.readdirSync(dist).find(n => /\.(exe|dmg|deb)$/.test(n));
   assert.ok(archive);
   const digest = createHash('sha256').update(fs.readFileSync(path.join(dist, archive))).digest('hex');
   assert.equal(fs.readFileSync(path.join(dist, archive + '.sha256'), 'utf8'), `${digest}  ${archive}\n`);

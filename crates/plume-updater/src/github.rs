@@ -112,7 +112,7 @@ fn installer_name(version: &str, target: &str) -> String {
     let extension = if target.contains("windows") {
         "exe"
     } else if target.contains("apple") {
-        "pkg"
+        "dmg"
     } else {
         "deb"
     };
@@ -140,6 +140,20 @@ mod tests {
             assert!(select(&json, "0.10.0", target).unwrap().is_none());
             assert!(select(&json, "0.11.0", target).unwrap().is_none());
         }
+    }
+    #[test]
+    fn macos_selects_dmg_assets_and_rejects_legacy_packages() {
+        let target = "aarch64-apple-darwin";
+        assert_eq!(
+            installer_name("0.2.0", target),
+            "Plume-v0.2.0-aarch64-apple-darwin.dmg"
+        );
+        assert!(select(
+            &fixture("0.2.0", target).replace(".dmg", ".pkg"),
+            "0.1.0",
+            target
+        )
+        .is_err());
     }
     #[test]
     fn rejects_previews_missing_assets_and_foreign_urls() {

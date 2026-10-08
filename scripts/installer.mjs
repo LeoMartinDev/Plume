@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export const targets = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin'];
 export function installerName(version, target) {
-  const extension = target.includes('windows') ? 'exe' : target.includes('apple') ? 'pkg' : 'deb';
+  const extension = target.includes('windows') ? 'exe' : target.includes('apple') ? 'dmg' : 'deb';
   if (!targets.includes(target)) throw new Error(`Unsupported installer target: ${target}`);
   return `Plume-v${version}-${target}.${extension}`;
 }
@@ -17,14 +17,12 @@ export function buildInstaller({ platform, version, target, stage, dist, run, ap
     const iscc = process.env.ISCC || 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe';
     run(iscc, [`/DAppVersion=${version}`, `/DSourceDir=${stage}`, `/DOutputDir=${dist}`, `/DOutputName=${path.basename(installer, '.exe')}`, ...(appId ? [`/DInstallerAppId=${appId}`, `/DAppGroupName=${appId}`] : []), path.join(packaging, 'windows.iss')]);
   } else if (platform === 'darwin') {
-    const root = path.join(dist, 'pkg-root');
-    fs.mkdirSync(path.join(root, 'Applications'), { recursive: true });
-    fs.cpSync(path.join(stage, 'Plume.app'), path.join(root, 'Applications/Plume.app'), { recursive: true });
-    const components = path.join(dist, 'components.plist');
-    run('pkgbuild', ['--analyze', '--root', root, components]);
-    run('/usr/libexec/PlistBuddy', ['-c', 'Set :0:BundleIsRelocatable false', components]);
-    run('/usr/libexec/PlistBuddy', ['-c', 'Set :0:BundleOverwriteAction upgrade', components]);
-    run('pkgbuild', ['--root', root, '--component-plist', components, '--identifier', 'dev.leomartin.plume', '--version', version, '--install-location', '/', installer]);
+    const root = path.join(dist, 'dmg-root');
+    fs.mkdirSync(root, { recursive: true });
+    fs.cpSync(path.join(stage, 'Plume.app'), path.join(root, 'Plume.app'), { recursive: true });
+    fs.symlinkSync('/Applications', path.join(root, 'Applications'));
+    fs.copyFileSync(path.join(packaging, 'dmg-layout.ds-store'), path.join(root, '.DS_Store'));
+    run('hdiutil', ['create', '-volname', 'Plume', '-srcfolder', root, '-format', 'UDZO', installer]);
   } else {
     const root = path.join(dist, 'deb-root');
     fs.mkdirSync(path.join(root, 'opt'), { recursive: true });
@@ -51,7 +49,17 @@ export function extractInstaller({ platform, installer, destination, run }) {
     run('dpkg-deb', ['--extract', installer, destination]);
     return path.join(destination, 'opt/plume');
   }
-  const expanded = path.join(destination, 'expanded');
-  run('pkgutil', ['--expand-full', installer, expanded]);
-  return path.join(expanded, 'Payload/Applications/Plume.app/Contents/MacOS');
+  const mount = path.join(destination, 'dmg-mount');
+  const app = path.join(destination, 'Plume.app');
+  fs.mkdirSync(mount, { recursive: true });
+  run('hdiutil', ['attach', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', mount, installer]);
+  try {
+    if (fs.readlinkSync(path.join(mount, 'Applications')) !== '/Applications') throw new Error('DMG is missing its Applications shortcut');
+    if (!fs.existsSync(path.join(mount, '.DS_Store'))) throw new Error('DMG is missing its Finder layout');
+    // Exercise the same bundle copy as dragging the app into Applications.
+    run('ditto', [path.join(mount, 'Plume.app'), app]);
+  } finally {
+    run('hdiutil', ['detach', mount]);
+  }
+  return path.join(app, 'Contents/MacOS');
 }

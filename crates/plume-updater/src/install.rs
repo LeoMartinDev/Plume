@@ -173,45 +173,124 @@ fn apply_with(
 }
 
 fn install_native(plan: &InstallPlan, installer: &Path) -> Result<()> {
-    #[cfg(windows)]
-    let status = io(Command::new(installer)
-        .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
-        .arg(format!("/DIR={}", plan.target.display()))
-        .status())?;
     #[cfg(target_os = "macos")]
-    let status = io(Command::new("/usr/bin/open")
-        .args(["-W", "-a", "Installer"])
-        .arg(installer)
-        .status())?;
-    #[cfg(target_os = "linux")]
-    let status = io(Command::new("/usr/bin/pkexec")
-        .args(["/usr/bin/dpkg", "--install"])
+    {
+        install_macos(plan, installer)?;
+        launch(plan, None)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        #[cfg(windows)]
+        let status = io(Command::new(installer)
+            .args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+            .arg(format!("/DIR={}", plan.target.display()))
+            .status())?;
+        #[cfg(target_os = "linux")]
+        let status = io(Command::new("/usr/bin/pkexec")
+            .args(["/usr/bin/dpkg", "--install"])
+            .arg(installer)
+            .status())?;
+        if !status.success() {
+            return Err(
+                "The installer did not complete. You can retry from GitHub Releases.".into(),
+            );
+        }
+        // Linux packages own a fixed system installation path.
+        // Windows installs in the current user's existing installation directory.
+        let mut installed = plan.clone();
+        if cfg!(target_os = "linux") {
+            installed.target = PathBuf::from("/opt/plume");
+            installed.executable = PathBuf::from("plume");
+        }
+        let output = io(Command::new(installed.target.join(&installed.executable))
+            .arg("--version")
+            .output())?;
+        if !output.status.success()
+            || String::from_utf8_lossy(&output.stdout).trim() != format!("Plume {}", plan.version)
+        {
+            return Err(
+                "Installation was cancelled or the installed version could not be verified.".into(),
+            );
+        }
+        launch(&installed, None)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos(plan: &InstallPlan, installer: &Path) -> Result<()> {
+    let mount = plan.work.join("mount");
+    io(fs::create_dir(&mount))?;
+    let status = io(Command::new("/usr/bin/hdiutil")
+        .args([
+            "attach",
+            "-readonly",
+            "-nobrowse",
+            "-noautoopen",
+            "-mountpoint",
+        ])
+        .arg(&mount)
         .arg(installer)
         .status())?;
     if !status.success() {
-        return Err("The installer did not complete. You can retry from GitHub Releases.".into());
+        return Err("Could not open the update disk image.".into());
     }
-    // Linux packages and macOS packages own a fixed system installation path.
-    // Windows installs in the current user's existing installation directory.
-    let mut installed = plan.clone();
-    if cfg!(target_os = "linux") {
-        installed.target = PathBuf::from("/opt/plume");
-        installed.executable = PathBuf::from("plume");
-    } else if cfg!(target_os = "macos") {
-        installed.target = PathBuf::from("/Applications/Plume.app");
-        installed.executable = PathBuf::from("Contents/MacOS/plume");
+    let result = (|| {
+        let parent = plan.target.parent().ok_or("Invalid app location")?;
+        let suffix = io_time()?;
+        let staged = parent.join(format!(".Plume-update-{suffix}.app"));
+        let backup = parent.join(format!(".Plume-backup-{suffix}.app"));
+        let result = (|| {
+            let status = io(Command::new("/usr/bin/ditto")
+                .arg(mount.join("Plume.app"))
+                .arg(&staged)
+                .status())?;
+            if !status.success() {
+                return Err(
+                    "Could not copy Plume. Install the DMG manually from GitHub Releases.".into(),
+                );
+            }
+            let signature = io(Command::new("/usr/bin/codesign")
+                .args(["--verify", "--deep", "--strict"])
+                .arg(&staged)
+                .status())?;
+            if !signature.success() {
+                return Err("The update app bundle is damaged.".into());
+            }
+            let output = io(Command::new(staged.join(&plan.executable))
+                .arg("--version")
+                .output())?;
+            if !output.status.success()
+                || String::from_utf8_lossy(&output.stdout).trim()
+                    != format!("Plume {}", plan.version)
+            {
+                return Err("The update version could not be verified.".into());
+            }
+            replace_macos_bundle(&plan.target, &staged, &backup)
+        })();
+        let _ = fs::remove_dir_all(&staged);
+        result
+    })();
+    // Detach even when copying or validation fails; preserve the original app.
+    let detached = io(Command::new("/usr/bin/hdiutil")
+        .arg("detach")
+        .arg(&mount)
+        .status());
+    result?;
+    if !detached?.success() {
+        return Err("Plume was updated, but its disk image could not be ejected.".into());
     }
-    let output = io(Command::new(installed.target.join(&installed.executable))
-        .arg("--version")
-        .output())?;
-    if !output.status.success()
-        || String::from_utf8_lossy(&output.stdout).trim() != format!("Plume {}", plan.version)
-    {
-        return Err(
-            "Installation was cancelled or the installed version could not be verified.".into(),
-        );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn replace_macos_bundle(target: &Path, staged: &Path, backup: &Path) -> Result<()> {
+    io(fs::rename(target, backup))?;
+    if let Err(error) = fs::rename(staged, target) {
+        io(fs::rename(backup, target))?;
+        return Err(error.to_string());
     }
-    launch(&installed, None)
+    let _ = fs::remove_dir_all(backup);
+    Ok(())
 }
 
 fn launch(plan: &InstallPlan, error: Option<&str>) -> Result<()> {
@@ -240,7 +319,7 @@ fn validate(plan: &InstallPlan) -> Result<()> {
     let extension = if cfg!(windows) {
         "exe"
     } else if cfg!(target_os = "macos") {
-        "pkg"
+        "dmg"
     } else {
         "deb"
     };
@@ -262,6 +341,13 @@ fn validate(plan: &InstallPlan) -> Result<()> {
             .any(|part| !matches!(part, std::path::Component::Normal(_)))
     {
         return Err("Invalid native installer plan.".into());
+    }
+    #[cfg(target_os = "macos")]
+    if plan.target.extension() != Some(std::ffi::OsStr::new("app"))
+        || !plan.target.join("Contents/Info.plist").is_file()
+        || plan.executable != Path::new("Contents/MacOS/plume")
+    {
+        return Err("Invalid Plume app bundle.".into());
     }
     Ok(())
 }
@@ -329,6 +415,89 @@ fn alive(pid: u32) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installs_real_dmg_and_rejects_wrong_version_before_replacing_app() {
+        if std::env::var_os("PLUME_DMG_TEST").is_none() {
+            return;
+        }
+        let mut plan = fixture();
+        let root = plan.target.parent().unwrap().to_path_buf();
+        let stage = plan.work.join("stage");
+        let app = stage.join("Plume.app");
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../plume-app/packaging/Info.plist"),
+            app.join("Contents/Info.plist"),
+        )
+        .unwrap();
+        let source = plan.work.join("fixture.c");
+        fs::write(
+            &source,
+            b"#include <stdio.h>\nint main(void) { puts(\"Plume 0.2.0\"); return 0; }\n",
+        )
+        .unwrap();
+        assert!(Command::new("/usr/bin/clang")
+            .arg(&source)
+            .arg("-o")
+            .arg(app.join("Contents/MacOS/plume"))
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&app)
+            .status()
+            .unwrap()
+            .success());
+        fs::remove_file(&plan.installer).unwrap();
+        assert!(Command::new("/usr/bin/hdiutil")
+            .args(["create", "-srcfolder"])
+            .arg(&stage)
+            .args(["-format", "UDZO"])
+            .arg(&plan.installer)
+            .status()
+            .unwrap()
+            .success());
+        fs::write(plan.target.join("old-version"), b"old").unwrap();
+        fs::write(root.join("history.json"), b"history").unwrap();
+        plan.version = "0.3.0".into();
+        assert!(install_macos(&plan, &plan.installer)
+            .unwrap_err()
+            .contains("version"));
+        assert!(plan.target.join("old-version").exists());
+        assert!(!plan.work.join("mount/Plume.app").exists());
+        fs::remove_dir(plan.work.join("mount")).unwrap();
+        plan.version = "0.2.0".into();
+        install_macos(&plan, &plan.installer).unwrap();
+        assert!(!plan.target.join("old-version").exists());
+        assert!(plan.target.join("Contents/MacOS/plume").is_file());
+        assert!(!plan.work.join("mount/Plume.app").exists());
+        assert_eq!(fs::read(root.join("history.json")).unwrap(), b"history");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn replaces_bundle_in_its_existing_location_and_rolls_back_failed_replacement() {
+        let plan = fixture();
+        let root = plan.target.parent().unwrap();
+        let staged = root.join("new.app");
+        let backup = root.join("backup.app");
+        fs::create_dir(&staged).unwrap();
+        fs::write(staged.join("new-version"), b"new").unwrap();
+        fs::write(root.join("history.json"), b"history").unwrap();
+        replace_macos_bundle(&plan.target, &root.join("missing.app"), &backup).unwrap_err();
+        assert!(plan.target.join("Contents/Info.plist").is_file());
+        assert!(!backup.exists());
+        replace_macos_bundle(&plan.target, &staged, &backup).unwrap();
+        assert!(plan.target.join("new-version").is_file());
+        assert!(!staged.exists());
+        assert!(!backup.exists());
+        assert_eq!(fs::read(root.join("history.json")).unwrap(), b"history");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn fixture() -> InstallPlan {
         let root = std::env::temp_dir().join(format!(
             "plume-update-test-{}-{}",
@@ -336,13 +505,21 @@ mod tests {
             io_time().unwrap()
         ));
         let work = root.join(".plume-update-test");
-        let target = root.join("Plume");
+        let target = root.join(if cfg!(target_os = "macos") {
+            "Plume.app"
+        } else {
+            "Plume"
+        });
         fs::create_dir_all(&work).unwrap();
         fs::create_dir(&target).unwrap();
+        if cfg!(target_os = "macos") {
+            fs::create_dir(target.join("Contents")).unwrap();
+            fs::write(target.join("Contents/Info.plist"), b"plist").unwrap();
+        }
         let extension = if cfg!(windows) {
             "exe"
         } else if cfg!(target_os = "macos") {
-            "pkg"
+            "dmg"
         } else {
             "deb"
         };
@@ -352,7 +529,12 @@ mod tests {
             installer,
             version: "0.2.0".into(),
             target,
-            executable: "plume".into(),
+            executable: if cfg!(target_os = "macos") {
+                "Contents/MacOS/plume"
+            } else {
+                "plume"
+            }
+            .into(),
             parent_pid: 1,
             work,
         }

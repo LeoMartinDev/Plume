@@ -170,6 +170,13 @@ jobs:
       - run: cargo build --locked --release -p plume-app -p plume-updater
       - name: Bundle runtimes, build installers, verify installation and checksum
         run: node scripts/package-release.mjs
+      - if: runner.os == 'macOS'
+        name: Verify disk image and app replacement with native fixtures
+        env:
+          PLUME_DMG_TEST: '1'
+        run: |
+          node --test scripts/macos-dmg.test.mjs
+          cargo test --locked -p plume-updater
       - if: runner.os == 'Linux'
         name: Install Debian package and verify registered application
         run: |
@@ -177,16 +184,23 @@ jobs:
           /usr/bin/plume --version
           sudo apt-get remove -y plume
       - if: runner.os == 'macOS'
-        name: Install macOS package and verify application in Applications
+        name: Copy macOS app from disk image and verify application in Applications
         run: |
-          sudo installer -pkg dist/Plume-*.pkg -target /
+          mount="$RUNNER_TEMP/plume-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mount" dist/Plume-*.dmg
+          trap 'hdiutil detach "$mount"' EXIT
+          test "$(readlink "$mount/Applications")" = /Applications
+          test -f "$mount/.DS_Store"
+          ditto "$mount/Plume.app" /Applications/Plume.app
+          codesign --verify --deep --strict /Applications/Plume.app
           /Applications/Plume.app/Contents/MacOS/plume --version
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
           path: |
             dist/*.exe
-            dist/*.pkg
+            dist/*.dmg
             dist/*.deb
             dist/*.sha256
           if-no-files-found: error
