@@ -19,7 +19,8 @@ function git(cwd, ...args) {
 }
 function fixture(t, inherited = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plume-release-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Git/filesystem background work can briefly keep fixture directories busy.
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-b', 'main');
