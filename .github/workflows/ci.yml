@@ -174,8 +174,15 @@ jobs:
         name: Verify disk image and app replacement with native fixtures
         env:
           PLUME_DMG_TEST: '1'
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
-          node --test scripts/macos-dmg.test.mjs
+          # Manual rebuilds may fix CI fixtures without changing the release tag.
+          # Load only the test from the immutable workflow revision; its imports
+          # and the already-built product still come from the release checkout.
+          git fetch --no-tags --depth=1 origin "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/macos-dmg.test.mjs" > scripts/.macos-dmg-ci.test.mjs
+          node --test scripts/.macos-dmg-ci.test.mjs
+          rm scripts/.macos-dmg-ci.test.mjs
           cargo test --locked -p plume-updater
       - if: runner.os == 'Linux'
         name: Install Debian package and verify registered application

@@ -17,14 +17,18 @@ test('real macOS DMG preserves the Finder layout, Applications shortcut and copi
   fs.mkdirSync(path.join(app, 'Contents/MacOS'), { recursive: true });
   fs.mkdirSync(path.join(app, 'Contents/Resources'));
   fs.mkdirSync(dist);
-  fs.copyFileSync('/usr/bin/true', path.join(app, 'Contents/MacOS/plume'));
   fs.copyFileSync('crates/plume-app/packaging/Info.plist', path.join(app, 'Contents/Info.plist'));
   fs.copyFileSync('crates/plume-app/assets/brand/plume.icns', path.join(app, 'Contents/Resources/plume.icns'));
   const run = (cmd, args) => {
     const result = spawnSync(cmd, args, { encoding: 'utf8' });
-    assert.equal(result.status, 0, `${cmd}: ${result.error?.message || result.stderr || result.stdout}`);
+    assert.equal(result.status, 0, `${cmd}: ${result.error?.message || result.stderr || result.stdout || result.signal}`);
     return result.stdout;
   };
+  // Re-signing a copied Apple binary can be killed by macOS's signature cache.
+  // Build our own executable so the fixture tests the same signing path as Plume.
+  const source = path.join(root, 'fixture.c');
+  fs.writeFileSync(source, 'int main(void) { return 0; }\n');
+  run('clang', [source, '-o', path.join(app, 'Contents/MacOS/plume')]);
   run('codesign', ['--force', '--sign', '-', app]);
   const installer = buildInstaller({ platform: 'darwin', version: '1.2.3', target: targets[2], stage, dist, run });
   run('hdiutil', ['verify', installer]);

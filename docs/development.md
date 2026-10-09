@@ -231,7 +231,9 @@ notes and all six assets. To rebuild an existing unpublished tag with the latest
 workflow fixes, run the CI workflow manually from main with `release_tag` set to
 that tag. Installer tooling must already be present in the tag; historical archive
 releases cannot be converted by rebuilding their immutable tags. It checks out the original tagged code and restores
-the annotated tag before validation; the tag is not moved. Rerunning refreshes that draft and its
+the annotated tag before validation; the tag is not moved. The native DMG fixture
+comes from the workflow revision, while its installer imports and application
+binaries remain those of the tag. Rerunning refreshes that draft and its
 assets; a published release is refused. Review the draft before publishing it
 manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
 secrets are required.
