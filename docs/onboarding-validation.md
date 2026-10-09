@@ -17,6 +17,15 @@ Use a development app bundle with an isolated config/data root or a disposable u
 9. Close/reopen setup through the tray while incomplete. Progress survives. After completion the tray opens ordinary settings, with all four models. Without a usable tray, completion reveals settings rather than leaving an inaccessible background app.
 10. After completion, make the chosen model unavailable in the disposable environment. Settings must expose the unavailable state and a model repair action, including on the Dictation page.
 
+### Microphone prompt focus (macOS)
+
+With microphone permission not yet requested in a disposable account, click Allow
+and answer the native prompt. Verify Plume returns to the foreground after both
+Allow and Don't Allow, and the permission row updates accordingly. While the
+prompt is open, Plume must not steal focus from it. If setup is deliberately closed
+through its close button before completion, the callback must not reopen it.
+Opening Privacy & Security through Settings must leave System Settings in front.
+
 ## Visual preview
 
 `cargo run -p plume-app --example onboarding_preview -- [shortcuts|permissions]` opens a visual-only app with temporary preferences. Ctrl+1/2/3 changes screens; Ctrl+4 verifies the native window handoff to settings. Use it to inspect spacing and keyboard shortcut capture without invoking native permissions, models or microphone capture. Append `--dark` to inspect the dark scheme.

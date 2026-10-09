@@ -1,4 +1,6 @@
 //! Native permission checks are separate from microphone/device readiness.
+use std::sync::mpsc::{self, Receiver};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Permission {
     Granted,
@@ -62,7 +64,7 @@ mod macos {
         }
     }
 
-    pub fn request_microphone() {
+    pub fn request_microphone(completed: std::sync::mpsc::Sender<()>) {
         // SAFETY: AVFoundation retains the copied completion block until the
         // asynchronous native prompt finishes. No UI state is touched by it.
         unsafe {
@@ -70,7 +72,10 @@ mod macos {
             if audio == nil {
                 return;
             }
-            let completion = block::ConcreteBlock::new(|_granted: cocoa::base::BOOL| {}).copy();
+            let completion = block::ConcreteBlock::new(move |_granted: cocoa::base::BOOL| {
+                let _ = completed.send(());
+            })
+            .copy();
             let _: () = Class::get("AVCaptureDevice")
                 .expect("AVFoundation loaded")
                 .send_message(
@@ -99,9 +104,15 @@ pub fn snapshot() -> Permissions {
     }
 }
 
-pub fn request_microphone() {
+/// Signals when the native prompt finishes, including when access is denied.
+/// The receiver lets the UI handle completion on its own thread.
+pub fn request_microphone() -> Receiver<()> {
+    let (completed, completion) = mpsc::channel();
     #[cfg(target_os = "macos")]
-    macos::request_microphone();
+    macos::request_microphone(completed);
+    #[cfg(not(target_os = "macos"))]
+    let _ = completed.send(());
+    completion
 }
 
 pub fn microphone_settings_url() -> &'static str {

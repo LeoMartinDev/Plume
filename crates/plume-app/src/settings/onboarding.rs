@@ -5,6 +5,7 @@ use plume_engine::Engine;
 use plume_overlay::Feedback;
 use plume_session::{PreviewEvent, SessionMode};
 use plume_ui::Tokens;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use super::SettingsView;
@@ -23,6 +24,7 @@ pub(super) struct OnboardingState {
     pub engine: Option<Engine>,
     pub model_ready: bool,
     permissions: Permissions,
+    microphone_prompt: Option<Receiver<()>>,
     microphone_ready: bool,
     microphone_checking: bool,
     pub session_starting: bool,
@@ -39,6 +41,7 @@ impl OnboardingState {
             engine: None,
             model_ready: false,
             permissions: permissions::snapshot(),
+            microphone_prompt: None,
             microphone_ready: false,
             microphone_checking: false,
             session_starting: false,
@@ -285,6 +288,29 @@ impl SettingsView {
         };
         if setup.finished {
             return false;
+        }
+        if let Some(completion) = &setup.microphone_prompt {
+            match completion.try_recv() {
+                Ok(()) => {
+                    setup.microphone_prompt = None;
+                    // AVFoundation's callback runs off the UI thread. Restore
+                    // focus once the prompt has closed, after this view update.
+                    let view = cx.weak_entity();
+                    cx.defer(move |cx| {
+                        let visible = view.upgrade().is_some_and(|view| {
+                            view.read(cx)
+                                .onboarding
+                                .as_ref()
+                                .is_some_and(|setup| setup.visible && !setup.finished)
+                        });
+                        if visible {
+                            super::window::show_settings(cx);
+                        }
+                    });
+                }
+                Err(TryRecvError::Disconnected) => setup.microphone_prompt = None,
+                Err(TryRecvError::Empty) => {}
+            }
         }
         setup.permissions = permissions::snapshot();
         if !setup.permissions.granted() {
@@ -1028,13 +1054,16 @@ fn permissions_screen(
             tokens,
             "onboarding-microphone",
             microphone_label,
-            !setup.microphone_checking && !view.is_busy() && !view.settings_preview,
+            !setup.microphone_checking
+                && setup.microphone_prompt.is_none()
+                && !view.is_busy()
+                && !view.settings_preview,
             false,
             cx,
             |view, _, cx| {
                 let setup = view.onboarding.as_mut().unwrap();
                 if setup.permissions.microphone == Permission::NotRequested {
-                    permissions::request_microphone();
+                    setup.microphone_prompt = Some(permissions::request_microphone());
                 } else if setup.permissions.microphone == Permission::Denied {
                     cx.open_url(permissions::microphone_settings_url());
                 }
@@ -1102,6 +1131,14 @@ fn permissions_screen(
                     ))
             }),
     );
+    if cfg!(target_os = "macos") && setup.permissions.accessibility != Permission::Granted {
+        body = body.child(
+            div()
+                .text_xs()
+                .text_color(tokens.muted)
+                .child("If Plume is already enabled in Accessibility, the entry may belong to an older build. Quit Plume, remove that entry, add the current Plume app again, then relaunch."),
+        );
+    }
     if let Some(error) = &setup.session_error {
         body = body
             .child(super::view::error_text(tokens, error.clone()))

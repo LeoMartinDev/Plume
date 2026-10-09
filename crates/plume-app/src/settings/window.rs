@@ -83,10 +83,14 @@ fn open_settings_window(
     onboarding_preview: bool,
 ) {
     let mut arguments = std::env::args();
+    let show_about = std::env::args().any(|argument| argument == "--about");
     let update_error = arguments
         .find(|argument| argument == "--update-error")
         .and_then(|_| arguments.next())
         .map(|error| error.chars().take(4096).collect::<String>());
+    let preview_update = settings_preview
+        .then(super::updates::preview_state)
+        .flatten();
     let onboarding = onboarding_preview || (!settings_preview && phase.prefs().needs_onboarding());
     if onboarding
         && !onboarding_preview
@@ -164,8 +168,9 @@ fn open_settings_window(
                         active_model: None,
                         prefs_path,
                         settings_preview,
-                        section: if update_error.is_some() {
-                            SettingsSection::Updates
+                        section: if show_about || update_error.is_some() || preview_update.is_some()
+                        {
+                            SettingsSection::About
                         } else if settings_preview {
                             SettingsSection::History
                         } else {
@@ -201,6 +206,7 @@ fn open_settings_window(
                         copy_feedback_serial: 0,
                         update: update_error
                             .map(super::updates::UpdateState::Error)
+                            .or(preview_update)
                             .unwrap_or(super::updates::UpdateState::Idle),
                         _appearance,
                     };
@@ -237,6 +243,12 @@ pub fn show_settings(cx: &mut App) {
             // without GPUI reapplying the initial window placement.
             #[cfg(not(windows))]
             window.activate_window();
+            window.on_next_frame(|window, _| {
+                tracing::debug!(
+                    active = window.is_window_active(),
+                    "plume-app: settings revealed"
+                );
+            });
         });
     }
 }

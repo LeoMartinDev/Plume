@@ -159,17 +159,16 @@ impl Render for SettingsView {
             SettingsSection::Model => model_page(self, &tokens, &prefs, cx),
             SettingsSection::Appearance => appearance_page(&tokens, prefs.appearance(), cx),
             SettingsSection::History => history_page(self, &tokens, cx),
-            SettingsSection::Updates => super::updates::updates_page(self, &tokens, cx),
+            SettingsSection::About => super::updates::about_page(self, &tokens, cx),
         };
 
-        let notice = super::updates::update_notice(self, &tokens, cx);
         let body = div()
             .flex()
             .flex_row()
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .child(sidebar(self.section, &tokens, cx))
+            .child(sidebar(self.section, &self.update, &tokens, cx))
             .child(
                 div()
                     .flex_1()
@@ -204,7 +203,7 @@ impl Render for SettingsView {
             .text_color(tokens.text);
         #[cfg(target_os = "macos")]
         let shell = shell.child(macos_titlebar(&tokens));
-        shell.children(notice).child(body).into_any_element()
+        shell.child(body).into_any_element()
     }
 }
 
@@ -349,6 +348,7 @@ fn scrollbar(
 
 fn sidebar(
     selected: SettingsSection,
+    update: &super::updates::UpdateState,
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
@@ -385,20 +385,28 @@ fn sidebar(
                     SettingsSection::Model,
                     SettingsSection::Appearance,
                     SettingsSection::History,
-                    SettingsSection::Updates,
                 ]
                 .into_iter()
                 .map(|section| nav_item(section, selected, tokens, cx)),
             ),
         )
         .child(
-            div()
-                .mt_auto()
-                .px(px(10.))
-                .pt(px(12.))
-                .text_xs()
-                .text_color(tokens.muted)
-                .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+            div().mt_auto().child(
+                div()
+                    .relative()
+                    .child(nav_item(SettingsSection::About, selected, tokens, cx))
+                    .when(update.needs_attention(), |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .right(px(10.))
+                                .top(px(14.))
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(tokens.accent),
+                        )
+                    }),
+            ),
         )
 }
 
@@ -442,16 +450,18 @@ fn nav_item(
                     cx.notify();
                 }))
         })
-        .child(
-            svg()
-                .path(section.icon())
-                .size(px(16.))
-                .text_color(if is_selected {
-                    tokens.text
-                } else {
-                    tokens.muted
-                }),
-        )
+        .when(section != SettingsSection::About, |el| {
+            el.child(
+                svg()
+                    .path(section.icon())
+                    .size(px(16.))
+                    .text_color(if is_selected {
+                        tokens.text
+                    } else {
+                        tokens.muted
+                    }),
+            )
+        })
         .child(section.title())
 }
 

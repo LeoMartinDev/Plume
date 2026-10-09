@@ -24,6 +24,7 @@ plume-ui = { path = "../plume-ui" }
 toml = "0.8"
 ureq = "3"
 raw-window-handle = "0.6.2"
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

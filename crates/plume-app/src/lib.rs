@@ -71,7 +71,9 @@ pub fn product_main() {
             downloads,
         );
         tray::install(cx);
-        cx.activate(true);
+        // Installing the macOS tray changes the activation policy. Reveal the
+        // actual window afterward, rather than only activating the application.
+        cx.defer(settings::show_settings);
         drain_download(cx, startup_events);
     });
 }

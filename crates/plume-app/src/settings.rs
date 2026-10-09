@@ -3,6 +3,7 @@ mod dictation;
 mod history_view;
 mod model;
 mod onboarding;
+mod release_notes;
 mod updates;
 mod view;
 mod window;
@@ -35,7 +36,7 @@ enum SettingsSection {
     Model,
     Appearance,
     History,
-    Updates,
+    About,
 }
 
 impl SettingsSection {
@@ -45,7 +46,7 @@ impl SettingsSection {
             Self::Model => "Model",
             Self::Appearance => "Appearance",
             Self::History => "History",
-            Self::Updates => "Updates",
+            Self::About => "About",
         }
     }
 
@@ -55,7 +56,7 @@ impl SettingsSection {
             Self::Model => "fluent/cube.svg",
             Self::Appearance => "fluent/theme.svg",
             Self::History => "fluent/history.svg",
-            Self::Updates => "fluent/cube.svg",
+            Self::About => "brand/plume.svg",
         }
     }
 }
