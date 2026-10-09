@@ -372,7 +372,7 @@ pub(super) fn render(
 ) -> AnyElement {
     let setup = view.onboarding.as_ref().unwrap();
     let step = view.phase.prefs().onboarding_step;
-    let mut shell = div()
+    let shell = div()
         .id("onboarding-shell")
         .tab_group()
         .size_full()
@@ -420,9 +420,7 @@ pub(super) fn render(
             }))
         });
     #[cfg(target_os = "macos")]
-    {
-        shell = shell.child(super::view::macos_titlebar(tokens));
-    }
+    let shell = shell.child(super::view::macos_titlebar(tokens));
     let mut content = div()
         .id("onboarding-panel")
         .size_full()
