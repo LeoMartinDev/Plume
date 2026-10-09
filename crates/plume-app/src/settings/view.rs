@@ -101,7 +101,7 @@ fn drag_macos_titlebar(window: &Window) {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
+pub(super) fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
     use gpui::MouseButton;
 
     div()
@@ -138,6 +138,12 @@ impl Render for SettingsView {
         };
         sync_native_titlebar(window, palette);
         let tokens = Tokens::new(palette);
+        if self.onboarding.is_some() {
+            if window.focused(cx).is_none() && !self.capture.is_listening() {
+                window.focus(&self.hold_focus);
+            }
+            return super::onboarding::render(self, &tokens, cx).into_any_element();
+        }
         let is_history = self.section == SettingsSection::History;
         if is_history && self.history_list_width != Some(window.viewport_size().width) {
             super::history_view::invalidate_list(&self.history_list, self.history.entries().len());
@@ -198,7 +204,7 @@ impl Render for SettingsView {
             .text_color(tokens.text);
         #[cfg(target_os = "macos")]
         let shell = shell.child(macos_titlebar(&tokens));
-        shell.children(notice).child(body)
+        shell.children(notice).child(body).into_any_element()
     }
 }
 

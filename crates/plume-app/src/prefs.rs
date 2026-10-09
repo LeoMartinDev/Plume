@@ -73,6 +73,17 @@ impl AppearancePref {
 
 pub const DEFAULT_HOLD: &str = plume_session::Config::DEFAULT_HOLD;
 
+pub const ONBOARDING_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OnboardingStep {
+    #[default]
+    Model,
+    Shortcuts,
+    Permissions,
+}
+
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
@@ -85,6 +96,8 @@ pub struct Prefs {
     insertion_mode: InsertionMode,
     copy_on_failure: bool,
     history: HistoryPolicy,
+    pub onboarding_version: u32,
+    pub onboarding_step: OnboardingStep,
 }
 
 impl Prefs {
@@ -99,11 +112,17 @@ impl Prefs {
             insertion_mode: InsertionMode::Auto,
             copy_on_failure: true,
             history: HistoryPolicy::default(),
+            onboarding_version: 0,
+            onboarding_step: OnboardingStep::Model,
         }
     }
 
     pub fn history(&self) -> HistoryPolicy {
         self.history
+    }
+
+    pub fn needs_onboarding(&self) -> bool {
+        self.onboarding_version < ONBOARDING_VERSION
     }
 
     pub fn set_history(&mut self, policy: HistoryPolicy) {
@@ -214,6 +233,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("prefs.toml")
+    }
+
+    #[test]
+    fn old_preferences_require_onboarding_without_changing_model_or_shortcuts() {
+        let path = temp_prefs("setup-migration");
+        std::fs::write(
+            &path,
+            "hold='Alt+Space'\ncancel='Esc'\nmodel='whisper-small'\n",
+        )
+        .unwrap();
+        let PrefsLoad::Loaded(prefs) = load_at(&path) else {
+            panic!("valid legacy preferences");
+        };
+        assert!(prefs.needs_onboarding());
+        assert_eq!(prefs.onboarding_step, OnboardingStep::Model);
+        assert_eq!(prefs.model, ModelId::WhisperSmall);
+        assert_eq!(prefs.hold(), "Alt+Space");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn onboarding_resumes_each_step_and_completion_survives_later_preference_changes() {
+        let path = temp_prefs("setup-resume");
+        let mut prefs = Prefs::default_fresh();
+        for step in [
+            OnboardingStep::Model,
+            OnboardingStep::Shortcuts,
+            OnboardingStep::Permissions,
+        ] {
+            prefs.onboarding_step = step;
+            save_at(&path, &prefs).unwrap();
+            let PrefsLoad::Loaded(restored) = load_at(&path) else {
+                panic!("saved preferences");
+            };
+            assert_eq!(restored.onboarding_step, step);
+            assert!(restored.needs_onboarding());
+        }
+        prefs.onboarding_version = ONBOARDING_VERSION;
+        prefs.try_set_hold("Alt+Space").unwrap();
+        save_at(&path, &prefs).unwrap();
+        let PrefsLoad::Loaded(restored) = load_at(&path) else {
+            panic!("saved preferences");
+        };
+        assert!(!restored.needs_onboarding());
+        assert_eq!(restored.hold(), "Alt+Space");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

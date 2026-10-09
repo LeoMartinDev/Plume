@@ -28,8 +28,8 @@ Linux downloads are built on Ubuntu 24.04 and need an X11 session and a system t
 
 ## Start dictating
 
-1. Open Plume and choose a model in **Settings → Model**. Download it once.
-2. Allow microphone access. On macOS, also enable the Accessibility and Input Monitoring permissions requested by the app.
+1. Open Plume and follow **Model → Shortcuts → Permissions & test**. Choose and download a model, then keep or customize your shortcuts.
+2. Allow microphone access. On macOS, also enable the Accessibility and Input Monitoring permissions requested by the app. You can try your shortcut inside the setup window or finish without a test. Plume then stays in your menu bar or system tray.
 3. Click into a text field in your editor, browser, chat or document.
 4. Hold **Ctrl + Space**, speak, then release. Plume inserts the finished transcription.
 
@@ -38,6 +38,8 @@ Press **Ctrl + Shift + Space** to start hands-free dictation, then press it agai
 Plume handles one take at a time. Wait while the bubble shows starting, transcription, insertion or cancellation. A shortcut pressed while busy is ignored; release it and press again. Recordings stop at ten minutes, with a warning at nine minutes. In hands-free mode, a visual reminder appears after thirty seconds without speech. Silence produces no insertion or saved audio.
 
 Plume stays in your menu bar or system tray. Click its icon to reopen settings; right-click it for the menu. Closing settings keeps dictation available in the background.
+
+Setup runs once, including for existing installations, and preserves your model and shortcuts. If interrupted, it resumes where you left off. All four models remain available afterward in **Settings → Model**.
 
 ## What you can do
 

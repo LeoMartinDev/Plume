@@ -3,7 +3,7 @@ use crate::chords::Chord;
 use crate::controller::{Action, Controller, Mode, Phase};
 use crate::decoder::{Completion, DecodeJob, DecodeOutcome, Decoder};
 use crate::delivery::TranscriptDelivery;
-use crate::startup::{InsertionConfig, SessionCommand};
+use crate::startup::{InsertionConfig, PreviewEvent, SessionCommand, SessionMode};
 use crate::{Recording, SharedRecordings};
 use plume_core::{AsrEngine, CancellationToken, TextInjector};
 use plume_overlay::{Bubble, Feedback};
@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 const POLL: Duration = Duration::from_millis(5);
 pub(crate) struct RuntimeConfig<E> {
+    pub output_mode: Arc<std::sync::atomic::AtomicU8>,
     pub session: crate::Config,
     pub hold: Chord,
     pub engine: E,
@@ -34,13 +35,23 @@ pub(crate) struct SessionOutputs {
 }
 pub(crate) struct BubbleSink {
     tx: mpsc::Sender<Bubble>,
+    preview: mpsc::Sender<PreviewEvent>,
+    mode: Arc<std::sync::atomic::AtomicU8>,
 }
 impl BubbleSink {
-    pub fn new(tx: mpsc::Sender<Bubble>) -> Self {
-        Self { tx }
+    pub fn with_preview(
+        tx: mpsc::Sender<Bubble>,
+        preview: mpsc::Sender<PreviewEvent>,
+        mode: Arc<std::sync::atomic::AtomicU8>,
+    ) -> Self {
+        Self { tx, preview, mode }
     }
     fn feedback(&self, id: u64, feedback: Feedback) {
-        let _ = self.tx.send(Bubble::feedback(id, feedback));
+        if self.mode.load(Ordering::Acquire) == SessionMode::Preview as u8 {
+            let _ = self.preview.send(PreviewEvent::Feedback(feedback));
+        } else {
+            let _ = self.tx.send(Bubble::feedback(id, feedback));
+        }
     }
 }
 struct Active {
@@ -64,6 +75,7 @@ struct Active {
     cancel_feedback: Option<Feedback>,
 }
 pub(crate) struct SessionRuntime<E: AsrEngine, I: TextInjector> {
+    output_mode: Arc<std::sync::atomic::AtomicU8>,
     config: crate::Config,
     hold: Chord,
     engine: E,
@@ -87,6 +99,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
         delivery: TranscriptDelivery<I>,
     ) -> Self {
         Self {
+            output_mode: config.output_mode,
             config: config.session,
             hold: config.hold,
             engine: config.engine,
@@ -133,9 +146,43 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                 self.update_settings();
                 if let Ok(command) = self.updates.commands.try_recv() {
                     match command {
+                        SessionCommand::ConfigureShortcuts(config, reply) => {
+                            let result = self
+                                .hold
+                                .register(&config)
+                                .map_err(|error| error.to_string());
+                            let accepted = result.is_ok();
+                            if reply.send(result).is_ok() && accepted {
+                                self.config = config;
+                                self.controller = Controller::new();
+                            } else {
+                                let _ = self.hold.register(&self.config);
+                            }
+                        }
+                        SessionCommand::SetMode(mode, reply) => {
+                            let result = self
+                                .hold
+                                .passthrough(mode == SessionMode::Suspended)
+                                .map_err(|e| e.to_string());
+                            let accepted = result.is_ok();
+                            if reply.send(result).is_ok() && accepted {
+                                self.output_mode.store(mode as u8, Ordering::Release);
+                                self.controller = Controller::new();
+                            } else {
+                                let _ = self.hold.passthrough(
+                                    self.output_mode.load(Ordering::Acquire)
+                                        == SessionMode::Suspended as u8,
+                                );
+                            }
+                        }
                         SessionCommand::Retry(id) => self.start_retry(id),
                         SessionCommand::EditShortcuts(active, reply) => {
-                            let result = self.hold.passthrough(active).map_err(|e| e.to_string());
+                            let suspended = self.output_mode.load(Ordering::Acquire)
+                                == SessionMode::Suspended as u8;
+                            let result = self
+                                .hold
+                                .passthrough(active || suspended)
+                                .map_err(|e| e.to_string());
                             if !active {
                                 self.controller = Controller::new();
                             }
@@ -165,6 +212,9 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
     }
     fn drain_keys(&mut self) {
         while let Some(event) = self.hold.next_event() {
+            if self.output_mode.load(Ordering::Acquire) == SessionMode::Suspended as u8 {
+                continue;
+            }
             tracing::debug!(action = ?event.action, edge = ?event.edge, state = ?self.controller.phase, "dictation shortcut received");
             match self.controller.event(event) {
                 Some(Action::Start(mode)) => self.start_capture(mode),
@@ -208,7 +258,16 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
             return;
         }
         let engine = self.engine.snapshot();
-        let writer = match self.recordings.lock().unwrap().begin() {
+        let preview = self.output_mode.load(Ordering::Acquire) == SessionMode::Preview as u8;
+        let writer_result = {
+            let mut store = self.recordings.lock().unwrap();
+            if preview {
+                store.begin_preview()
+            } else {
+                store.begin()
+            }
+        };
+        let writer = match writer_result {
             Ok(w) => w,
             Err(e) => {
                 self.controller.phase = Phase::Ready;
@@ -502,6 +561,39 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                 result = Err(error);
             }
             let has_speech = active.retry || active.record.as_ref().is_some_and(|r| r.has_speech);
+            if self.output_mode.load(Ordering::Acquire) == SessionMode::Preview as u8 {
+                if self.cancel_before_delivery(&mut active) {
+                    return;
+                }
+                match crate::preview::finish(
+                    &self.recordings,
+                    active.id,
+                    has_speech,
+                    result,
+                    &self.outputs.bubbles.preview,
+                ) {
+                    Ok(feedback) => self.outputs.bubbles.feedback(active.ui_id, feedback),
+                    Err(error) => {
+                        self.outputs.bubbles.feedback(
+                            active.ui_id,
+                            Feedback::Error {
+                                title: "Audio deletion failed".into(),
+                                advice: error,
+                            },
+                        );
+                        active.cancel.cancel();
+                        active.cleanup_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                        self.active = Some(active);
+                        self.controller.phase = Phase::Cancelling;
+                        return;
+                    }
+                }
+                self.controller.phase = Phase::Inserting;
+                self.drain_keys();
+                self.controller.finish(true, true, true);
+                self.updates.busy.store(false, Ordering::Release);
+                return;
+            }
             if !has_speech && !active.retry {
                 let _ = self.recordings.lock().unwrap().delete(active.id);
                 if let Err(error) = result {

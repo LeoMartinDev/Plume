@@ -8,7 +8,9 @@ A local desktop dictation app written in Rust and GPUI. Hold `Ctrl+Space`, speak
 cargo run -p plume-app --bin plume
 ```
 
-Choose and download a model in Settings → Model. Settings also contains the shortcut, language, insertion mode, appearance and transcription history. On macOS, global shortcuts and insertion require the appropriate Accessibility/Input Monitoring permissions, and capture requires microphone permission.
+First launch opens the dedicated onboarding window: Model → Shortcuts → Permissions & test. The model must load before shortcut configuration; permissions and device/session readiness must pass before finishing. The optional test routes its transcript into onboarding and deletes its temporary audio, including after a crash. Existing preferences enter onboarding once without losing their model or shortcuts. Settings afterward contains the full model catalogue, shortcut, language, insertion mode, appearance and transcription history. On macOS, global shortcuts and insertion require the appropriate Accessibility/Input Monitoring permissions, and capture requires microphone permission.
+
+For an isolated visual preview, run `cargo run -p plume-app --example onboarding_preview`, optionally with `-- shortcuts` or `-- permissions`. Ctrl+1/2/3 switches preview screens. This preview uses temporary preferences and never downloads models, requests permissions, or starts native dictation. See [onboarding validation](onboarding-validation.md) for device checks.
 
 The app lives in the macOS menu bar under **Plume** (without a Dock icon), the Windows notification area, or the Linux system tray. Closing Settings hides the window while dictation shortcuts, model downloads and transcription history continue running. Left-click the tray icon to reveal and focus the same Settings window. Right-click (or Ctrl-click on macOS) opens the menu with **Settings…** and **Quit Plume**. Some Linux tray hosts expose only the menu; use **Settings…** there. The isolated settings preview still quits when closed.
 

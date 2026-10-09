@@ -499,10 +499,13 @@ mod tests {
     }
 
     fn fixture() -> InstallPlan {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "plume-update-test-{}-{}",
+            "plume-update-test-{}-{}-{}",
             std::process::id(),
-            io_time().unwrap()
+            io_time().unwrap(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         let work = root.join(".plume-update-test");
         let target = root.join(if cfg!(target_os = "macos") {

@@ -2,6 +2,7 @@ mod actions;
 mod dictation;
 mod history_view;
 mod model;
+mod onboarding;
 mod updates;
 mod view;
 mod window;
@@ -15,12 +16,14 @@ use plume_engine::LanguageTarget;
 use plume_session::{EngineTarget, HoldTarget, InsertionTarget};
 
 pub use window::{
-    open_settings, open_settings_preview, settings_window_accepts_download,
-    settings_window_engine_target, settings_window_prefs, settings_window_record_result,
-    settings_window_register_download, settings_window_set_phase,
+    open_onboarding_preview, open_settings, open_settings_preview,
+    settings_window_accepts_download, settings_window_engine_target, settings_window_prefs,
+    settings_window_record_result, settings_window_register_download, settings_window_set_phase,
     settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
     settings_window_show_refused, settings_window_show_swapped, show_settings,
 };
+
+pub(crate) use window::{onboarding_model_loaded, onboarding_preview_event};
 
 pub const SETTINGS_TITLE: &str = "Plume";
 #[cfg(target_os = "macos")]
@@ -64,6 +67,7 @@ enum HistoryLimitMenu {
 }
 
 pub struct SettingsView {
+    onboarding: Option<onboarding::OnboardingState>,
     phase: AppPhase,
     active_model: Option<crate::catalog::ModelId>,
     prefs_path: std::path::PathBuf,

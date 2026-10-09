@@ -19,6 +19,7 @@ serde_json = "1"
 plume-engine = { path = "../plume-engine" }
 plume-overlay = { path = "../plume-overlay" }
 plume-session = { path = "../plume-session" }
+plume-audio = { path = "../plume-audio" }
 plume-ui = { path = "../plume-ui" }
 toml = "0.8"
 ureq = "3"
@@ -27,6 +28,7 @@ raw-window-handle = "0.6.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
+block = "0.1.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }

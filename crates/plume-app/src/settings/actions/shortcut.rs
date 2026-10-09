@@ -98,6 +98,7 @@ impl SettingsView {
             DEFAULT_HOLD
         };
         self.apply_shortcut(shortcut, window, cx);
+        self.shortcut_edit.take();
     }
     pub(in crate::settings) fn commit_hold(
         &mut self,

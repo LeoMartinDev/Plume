@@ -9,6 +9,32 @@ fn main() {
     let (bubbles, rx) = mpsc::channel();
     let (levels, level_rx) = mpsc::channel();
     std::thread::spawn(move || {
+        if mode == "no-speech" || mode == "success" {
+            // Repeat short terminal animations so they can be inspected easily.
+            loop {
+                let mut dictation = Dictation::new();
+                dictation.hold();
+                bubbles.send(Bubble::from_dictation(&dictation)).unwrap();
+                std::thread::sleep(Duration::from_secs(2));
+                if mode == "success" {
+                    bubbles
+                        .send(Bubble::feedback(0, Feedback::Inserting))
+                        .unwrap();
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                bubbles
+                    .send(Bubble::feedback(
+                        0,
+                        if mode == "no-speech" {
+                            Feedback::NoSpeech
+                        } else {
+                            Feedback::Success
+                        },
+                    ))
+                    .unwrap();
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
         if mode == "failure" || mode == "copied" {
             bubbles
                 .send(Bubble::feedback(

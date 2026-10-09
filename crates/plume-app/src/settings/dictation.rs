@@ -34,6 +34,14 @@ pub(super) fn dictation_page(
             .flex()
             .flex_col()
             .gap(px(16.))
+            .when(view.session_control.is_none() && !view.settings_preview, |el| {
+                el.child(div().text_sm().child("Dictation is unavailable. Download or repair a model in Models before trying your shortcut."))
+                    .child(div().id("dictation-open-models").text_sm().text_color(tokens.accent)
+                        .cursor_pointer().on_click(cx.listener(|view, _, _, cx| {
+                            view.section = super::SettingsSection::Model;
+                            cx.notify();
+                        })).child("Open Models"))
+            })
             .child(settings_section(
                 tokens,
                 "Shortcuts",
@@ -62,7 +70,7 @@ pub(super) fn dictation_page(
             .children(error.map(|text| error_text(tokens, text))),
     )
 }
-fn shortcut_row(
+pub(super) fn shortcut_row(
     view: &SettingsView,
     tokens: &Tokens,
     prefs: &Prefs,

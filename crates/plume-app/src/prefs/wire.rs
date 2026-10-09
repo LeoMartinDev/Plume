@@ -52,6 +52,10 @@ impl<'de> Deserialize<'de> for AppearanceWire {
 #[derive(Deserialize)]
 struct WireIn {
     #[serde(default)]
+    onboarding_version: u32,
+    #[serde(default)]
+    onboarding_step: super::OnboardingStep,
+    #[serde(default)]
     toggle: Option<String>,
     #[serde(default)]
     history: Option<toml::Value>,
@@ -71,6 +75,8 @@ struct WireIn {
 
 #[derive(Serialize)]
 struct WireOut {
+    onboarding_version: u32,
+    onboarding_step: super::OnboardingStep,
     toggle: String,
     history: HistoryWireOut,
     hold: String,
@@ -123,6 +129,8 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
     };
     Ok((
         Prefs {
+            onboarding_version: wire.onboarding_version,
+            onboarding_step: wire.onboarding_step,
             hold: wire.hold,
             cancel: wire.cancel,
             toggle,
@@ -164,6 +172,8 @@ struct HistoryWireOut {
 
 pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
     let wire = WireOut {
+        onboarding_version: prefs.onboarding_version,
+        onboarding_step: prefs.onboarding_step,
         toggle: prefs.toggle.clone().unwrap_or_default(),
         hold: prefs.hold.clone(),
         cancel: prefs.cancel.clone(),

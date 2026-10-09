@@ -3,12 +3,15 @@ use plume_core::SessionState;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(400);
+pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(320);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Hidden,
     Starting,
     Cancelling,
-    Notice,
+    NoSpeech,
     Recording,
     Transcribing,
     Inserting,
@@ -66,7 +69,7 @@ impl FeedbackState {
 
     pub fn tick(&mut self, now: Instant) {
         if self.bubble.feedback == Feedback::NoSpeech
-            && now.duration_since(self.since) >= Duration::from_secs(2)
+            && now.duration_since(self.since) >= NO_SPEECH_DURATION
         {
             self.bubble.feedback = Feedback::Empty;
         }
@@ -75,7 +78,7 @@ impl FeedbackState {
             self.since = now;
         }
         if self.bubble.feedback == Feedback::Success
-            && now.duration_since(self.since) >= Duration::from_millis(650)
+            && now.duration_since(self.since) >= SUCCESS_DURATION
         {
             self.bubble.feedback = Feedback::Empty;
         }
@@ -86,7 +89,7 @@ impl FeedbackState {
             Feedback::Starting => Phase::Starting,
             Feedback::Transcribing => Phase::Transcribing,
             Feedback::Cancelling => Phase::Cancelling,
-            Feedback::NoSpeech => Phase::Notice,
+            Feedback::NoSpeech => Phase::NoSpeech,
             Feedback::RecordingNotice { .. } => Phase::Recording,
             Feedback::Session => match self.bubble.state() {
                 SessionState::Recording | SessionState::Streaming => Phase::Recording,
@@ -143,7 +146,7 @@ mod tests {
         assert_eq!(state.phase(), Phase::Inserting);
         state.tick(now + Duration::from_millis(150));
         assert_eq!(state.phase(), Phase::Success);
-        state.tick(now + Duration::from_millis(800));
+        state.tick(now + Duration::from_millis(150) + SUCCESS_DURATION);
         assert_eq!(state.phase(), Phase::Hidden);
     }
 

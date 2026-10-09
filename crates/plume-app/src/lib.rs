@@ -7,6 +7,7 @@ mod file_store;
 pub mod history;
 pub mod history_policy;
 pub mod lock;
+mod permissions;
 pub mod phase;
 pub mod prefs;
 pub mod settings;
@@ -213,12 +214,25 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
         settings_window_show_fetch_failed(cx, err);
         return;
     }
+    if settings::onboarding_model_loaded(cx, engine.clone()) {
+        return;
+    }
     if let Some(engine_target) = settings_window_engine_target(cx) {
         engine_target.set(engine);
         settings_window_show_swapped(cx, language_target);
         log_line("plume-app: engine swapped");
         return;
     }
+    start_session(cx, prefs, engine, plume_session::SessionMode::System);
+}
+
+pub(crate) fn start_session(
+    cx: &mut App,
+    prefs: Prefs,
+    engine: Engine,
+    mode: plume_session::SessionMode,
+) {
+    let language_target = engine.language_target();
     let config = match plume_session::Config::from_prefs(
         prefs.hold(),
         prefs.cancel(),
@@ -239,7 +253,9 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
         },
     );
     let dirs = crate::dirs::AppDirs::resolve();
-    let ready = ready.with_recordings(dirs.recordings_path(), dirs.vad_path());
+    let ready = ready
+        .with_recordings(dirs.recordings_path(), dirs.vad_path())
+        .with_mode(mode);
     match plume_session::start(ready) {
         Ok(live) => {
             log_line("plume-app: compositor started");
@@ -254,12 +270,36 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
                 live.recordings,
             );
             drain_results(cx, live.results);
+            drain_preview(cx, live.preview);
         }
         Err(err) => {
             tracing::error!("plume-app: compositor refused: {err}");
             settings_window_show_refused(cx, err.to_string());
         }
     }
+}
+
+fn drain_preview(cx: &mut App, rx: mpsc::Receiver<plume_session::PreviewEvent>) {
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(plume_ui::UI_REFRESH_INTERVAL)
+            .await;
+        loop {
+            match rx.try_recv() {
+                Ok(event) => {
+                    if cx
+                        .update(|cx| settings::onboarding_preview_event(cx, event))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+    })
+    .detach();
 }
 
 fn drain_results(cx: &mut App, rx: mpsc::Receiver<plume_session::DictationResult>) {

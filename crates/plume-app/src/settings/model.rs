@@ -192,7 +192,7 @@ fn catalog_model_row(
 
 /// 5 uniform rounded bars, neutral theme colors (no accent blue).
 /// `value` is 1..=5, more filled bars = faster / more accurate.
-fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoElement {
+pub(super) fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoElement {
     let value = value.clamp(1, 5);
     div()
         .flex()
@@ -363,7 +363,7 @@ fn model_error(phase: &AppPhase) -> Option<String> {
     }
 }
 
-fn download_status(progress: &Progress) -> Option<String> {
+pub(super) fn download_status(progress: &Progress) -> Option<String> {
     let mut parts = Vec::with_capacity(2);
     if let Some(total) = progress.total.filter(|total| *total > 0) {
         let percent = (progress.bytes.saturating_mul(100) / total).min(100);

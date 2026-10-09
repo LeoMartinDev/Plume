@@ -9,7 +9,7 @@ use gpui::{
 use plume_core::Dictation;
 use plume_ui::BubbleFrame;
 
-use crate::feedback::{FeedbackState, Phase};
+use crate::feedback::{FeedbackState, Phase, NO_SPEECH_DURATION, SUCCESS_DURATION};
 use crate::frame::hide_server_frame;
 use crate::{Bubble, Feedback};
 
@@ -41,6 +41,7 @@ struct BubbleView {
 impl Render for BubbleView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let phase = self.feedback.phase();
+        let motion = terminal_motion(phase, self.feedback.since.elapsed(), self.reduced_motion);
         let bars = if phase == Phase::Recording {
             self.bars
         } else {
@@ -149,12 +150,8 @@ impl Render for BubbleView {
                         .child("×"),
                 )
                 .into_any_element()
-        } else if phase == Phase::Notice {
-            div()
-                .text_color(rgb(0xf5f5f7))
-                .text_size(px(10.))
-                .child("No speech")
-                .into_any_element()
+        } else if matches!(phase, Phase::NoSpeech | Phase::Success) {
+            BubbleFrame::new(0.0).into_any_element()
         } else if phase == Phase::Recording
             && matches!(
                 self.feedback.bubble.feedback,
@@ -200,11 +197,6 @@ impl Render for BubbleView {
                     } else {
                         "Cancelling…"
                     });
-            } else if phase == Phase::Success {
-                indicator = indicator
-                    .text_color(rgb(0x91d5ae))
-                    .text_size(px(20.))
-                    .child("✓");
             } else if phase == Phase::Inserting {
                 indicator = indicator.child(
                     div()
@@ -247,13 +239,15 @@ impl Render for BubbleView {
             .size_full()
             .child(
                 div()
-                    .w(px(notice_width(&self.feedback.bubble.feedback)
-                        + (CARD_WIDTH
-                            - notice_width(&self.feedback.bubble.feedback))
-                            * self.expansion))
-                    .h(px(
-                        BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * self.expansion
-                    ))
+                    .relative()
+                    .left(px(motion.offset_x))
+                    .opacity(motion.opacity)
+                    .w(px(BUBBLE_WIDTH
+                        + (CARD_WIDTH - BUBBLE_WIDTH) * self.expansion
+                        - motion.contraction))
+                    .h(px(BUBBLE_HEIGHT
+                        + (CARD_HEIGHT - BUBBLE_HEIGHT) * self.expansion
+                        - motion.contraction * 0.5))
                     .rounded(px(if phase == Phase::Attention { 18. } else { 24. }))
                     .shadow(vec![
                         BoxShadow {
@@ -272,6 +266,41 @@ impl Render for BubbleView {
                     .child(content),
             )
     }
+}
+
+struct TerminalMotion {
+    offset_x: f32,
+    contraction: f32,
+    opacity: f32,
+}
+
+fn terminal_motion(phase: Phase, elapsed: Duration, reduced_motion: bool) -> TerminalMotion {
+    let mut motion = TerminalMotion {
+        offset_x: 0.,
+        contraction: 0.,
+        opacity: 1.,
+    };
+    if reduced_motion {
+        return motion;
+    }
+    let duration = match phase {
+        Phase::NoSpeech => NO_SPEECH_DURATION,
+        Phase::Success => SUCCESS_DURATION,
+        _ => return motion,
+    };
+    let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.);
+    if phase == Phase::NoSpeech {
+        // Two small oscillations, settling before the bubble fades away.
+        let shake = (elapsed.as_secs_f32() / 0.22).clamp(0., 1.);
+        motion.offset_x = (shake * std::f32::consts::TAU * 2.).sin() * 3. * (1. - shake).powi(2);
+    } else {
+        // A small, smooth release of the pill replaces the completion glyph.
+        let ease = progress * progress * (3. - 2. * progress);
+        motion.contraction = 4. * ease;
+    }
+    let fade = ((progress - 0.55) / 0.45).clamp(0., 1.);
+    motion.opacity = 1. - fade * fade * (3. - 2. * fade);
+    motion
 }
 
 /// Exponential smoothing towards the audio target. Slightly different lags
@@ -424,17 +453,16 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                 };
                 changed |= view.expansion != previous;
                 if changed || phase != view.placed_phase {
-                    place_bubble(
-                        window,
-                        phase != Phase::Hidden,
-                        view.expansion,
-                        notice_width(&view.feedback.bubble.feedback),
-                        cx,
-                    );
+                    place_bubble(window, phase != Phase::Hidden, view.expansion, cx);
                     changed = true;
                     view.placed_phase = phase;
                 }
-                if !view.reduced_motion && matches!(phase, Phase::Transcribing | Phase::Inserting) {
+                if !view.reduced_motion
+                    && matches!(
+                        phase,
+                        Phase::Transcribing | Phase::Inserting | Phase::NoSpeech | Phase::Success
+                    )
+                {
                     changed = true;
                 }
                 if let Some(level) = level {
@@ -528,15 +556,14 @@ fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>, preview_visible
             window,
             preview_visible || view.feedback.phase() != Phase::Hidden,
             view.expansion,
-            notice_width(&view.feedback.bubble.feedback),
             cx,
         );
     });
 }
 
-fn place_bubble(window: &mut Window, visible: bool, expansion: f32, width: f32, cx: &App) {
+fn place_bubble(window: &mut Window, visible: bool, expansion: f32, cx: &App) {
     let dimensions = size(
-        px(width + (CARD_WIDTH - width) * expansion + SHADOW_MARGIN * 2.),
+        px(BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * expansion + SHADOW_MARGIN * 2.),
         px(BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * expansion + SHADOW_MARGIN * 2.),
     );
     if window.bounds().size != dimensions {
@@ -943,14 +970,6 @@ mod linux {
         if let Err(error) = result {
             tracing::warn!("plume-overlay: visibility: {error}");
         }
-    }
-}
-
-fn notice_width(feedback: &Feedback) -> f32 {
-    if *feedback == Feedback::NoSpeech {
-        196.
-    } else {
-        BUBBLE_WIDTH
     }
 }
 

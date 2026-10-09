@@ -7,6 +7,7 @@ mod config;
 mod decoder;
 mod delivery;
 mod destination;
+mod preview;
 mod runtime;
 mod startup;
 
@@ -17,7 +18,7 @@ pub use config::{Config, ConfigError};
 pub use plume_core::{InjectionReport, InsertionMethod, InsertionMode, TargetAssessment};
 pub use startup::{
     start, DictationResult, EngineTarget, HoldTarget, InsertionConfig, InsertionTarget,
-    LiveSession, PreparedSession, SessionControl, ShortcutEditGuard,
+    LiveSession, PreparedSession, PreviewEvent, SessionControl, SessionMode, ShortcutEditGuard,
 };
 
 /// Startup failure with its process exit code: 4 for a missing or invalid

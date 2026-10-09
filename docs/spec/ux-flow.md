@@ -11,8 +11,8 @@ Closing Settings hides the window while the global dictation shortcut, downloads
 1. Focus the target application and place the cursor where the text should go.
 2. Hold the global shortcut, `Ctrl+Space` by default. Change it in Settings → Dictation; `Fn` is rejected.
 3. Speak. The bubble appears and reacts to microphone levels. Partial hypotheses are not inserted into the target application.
-4. Release the shortcut. Capture ends; the bubble switches to three dots while transcription finishes, then a small progress indicator during insertion. A brief checkmark confirms completion. Normal dictation never displays transcript text in the bubble.
-5. One operation occupies Plume until insertion finishes. Presses during starting, transcription, insertion or cancellation are ignored; release and press again when ready. A checkmark indicates dispatch, rather than an acknowledgment from every target application.
+4. Release the shortcut. Capture ends; the bubble switches to three dots while transcription finishes, then a small progress indicator during insertion. On completion, the black bubble gently contracts and fades away in 320 ms. Normal dictation never displays transcript text in the bubble.
+5. One operation occupies Plume until insertion finishes. Presses during starting, transcription, insertion or cancellation are ignored; release and press again when ready. Completion indicates dispatch, rather than an acknowledgment from every target application.
 
 ## Cancel a session
 
@@ -28,7 +28,7 @@ Changing a history limit saves it and immediately prunes older or excess transcr
 
 Press the toggle shortcut, `Ctrl+Shift+Space`, once to start, then press it again to stop. Releasing this shortcut does not stop recording; hold-to-talk gestures cannot control its take. Change either shortcut in Settings → Dictation. The editor temporarily receives configured shortcuts without starting a dictation, and rejects normalized collisions. Older preferences that conflict with the new default keep their shortcuts and disable hands-free with a warning.
 
-Timers begin when the microphone delivers audio. After thirty seconds without speech, hands-free recording displays a reminder that clears on speech. Every take warns at nine minutes and stops for transcription at ten minutes. Speech detection is shared between local engines; silence alone shows “Aucune parole détectée” briefly and saves no audio.
+Timers begin when the microphone delivers audio. After thirty seconds without speech, hands-free recording displays a reminder that clears on speech. Every take warns at nine minutes and stops for transcription at ten minutes. Speech detection is shared between local engines; releasing a silent take keeps the black bubble at its recording size, gives it a small 220 ms shake, then fades it away within 400 ms and saves no audio. Reduced-motion preferences keep the bubble still until it disappears.
 
 ## Audio recovery
 

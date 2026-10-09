@@ -12,6 +12,8 @@ pub type SharedRecordings = Arc<Mutex<RecordingStore>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Recording {
+    #[serde(default)]
+    pub ephemeral: bool,
     pub version: u32,
     pub id: RecordId,
     pub created_at: u64,
@@ -89,7 +91,8 @@ impl RecordingStore {
             }
             store.next_id = store.next_id.max(record.id);
             let temp = store.partial_path(record.id);
-            if store.cancel_path(record.id).exists()
+            if record.ephemeral
+                || store.cancel_path(record.id).exists()
                 || record.status == "Cancelled"
                 || !record.has_speech
             {
@@ -164,6 +167,7 @@ impl RecordingStore {
                 continue;
             }
             let record = Recording {
+                ephemeral: false,
                 version: 1,
                 id,
                 created_at: fs::metadata(&path)?
@@ -236,6 +240,7 @@ impl RecordingStore {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
         self.next_id = (now.as_nanos() as u64).max(self.next_id.saturating_add(1));
         let record = Recording {
+            ephemeral: false,
             version: 1,
             id: self.next_id,
             created_at: now.as_secs(),
@@ -271,6 +276,13 @@ impl RecordingStore {
             last_flush: 0,
         })
     }
+    pub(crate) fn begin_preview(&mut self) -> Result<RecordingWriter, BoxError> {
+        let mut writer = self.begin()?;
+        writer.record.ephemeral = true;
+        self.save(&writer.record)?;
+        Ok(writer)
+    }
+
     fn save(&self, record: &Recording) -> Result<(), BoxError> {
         save_record(&self.root, record)
     }
@@ -589,16 +601,21 @@ impl RecordingWriter {
     }
 }
 #[cfg(test)]
+fn test_root(prefix: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn root() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "plume-recordings-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        test_root("plume-recordings")
     }
     #[test]
     fn eight_audios_evicted_but_metadata_preserves_text_and_restart() {
@@ -647,13 +664,7 @@ mod tests {
 mod recovery_tests {
     use super::*;
     fn root() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "plume-recovery-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        test_root("plume-recovery")
     }
     #[test]
     fn cancellation_after_stt_persistence_does_not_evict_a_previous_audio() {

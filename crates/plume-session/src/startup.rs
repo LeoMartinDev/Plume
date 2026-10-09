@@ -13,6 +13,21 @@ use crate::StartupError;
 
 const VOICE_LEVEL_QUEUE_CAPACITY: usize = 8;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SessionMode {
+    #[default]
+    System = 0,
+    Preview = 1,
+    Suspended = 2,
+}
+
+#[derive(Clone, Debug)]
+pub enum PreviewEvent {
+    Feedback(plume_overlay::Feedback),
+    Transcript(String),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InsertionConfig {
     pub mode: plume_core::InsertionMode,
@@ -47,6 +62,7 @@ pub struct PreparedSession {
     insertion: InsertionConfig,
     recordings_path: Option<std::path::PathBuf>,
     vad_path: Option<std::path::PathBuf>,
+    mode: SessionMode,
 }
 
 impl PreparedSession {
@@ -57,12 +73,17 @@ impl PreparedSession {
             insertion: InsertionConfig::default(),
             recordings_path: None,
             vad_path: None,
+            mode: SessionMode::System,
         }
     }
 
     pub fn with_recordings(mut self, path: std::path::PathBuf, vad: std::path::PathBuf) -> Self {
         self.recordings_path = Some(path);
         self.vad_path = Some(vad);
+        self
+    }
+    pub fn with_mode(mut self, mode: SessionMode) -> Self {
+        self.mode = mode;
         self
     }
     pub fn with_insertion(mut self, insertion: InsertionConfig) -> Self {
@@ -87,6 +108,7 @@ impl HoldTarget {
 /// Detached compositor plus the overlay's incoming snapshots.
 /// Dropping this does not stop SessionRuntime. The process drop does, as today.
 pub struct LiveSession {
+    pub preview: mpsc::Receiver<PreviewEvent>,
     pub bubbles: mpsc::Receiver<Bubble>,
     pub levels: mpsc::Receiver<f32>,
     pub hold: HoldTarget,
@@ -120,11 +142,14 @@ impl EngineTarget {
 }
 
 pub(crate) enum SessionCommand {
+    ConfigureShortcuts(Config, mpsc::Sender<Result<(), String>>),
+    SetMode(SessionMode, mpsc::Sender<Result<(), String>>),
     Retry(u64),
     EditShortcuts(bool, Option<mpsc::Sender<Result<(), String>>>),
 }
 #[derive(Clone)]
 pub struct SessionControl {
+    output_mode: std::sync::Arc<std::sync::atomic::AtomicU8>,
     tx: mpsc::SyncSender<SessionCommand>,
     busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     toggle: mpsc::Sender<Option<String>>,
@@ -154,6 +179,48 @@ impl Drop for HistoryEditGuard {
     }
 }
 impl SessionControl {
+    pub fn configure_shortcuts(&self, config: Config) -> Result<(), String> {
+        let _reservation = self
+            .reserve_history_edit()
+            .map_err(|_| "Wait until dictation finishes.".to_string())?;
+        let (tx, rx) = mpsc::channel();
+        self.tx
+            .try_send(SessionCommand::ConfigureShortcuts(config, tx))
+            .map_err(|_| "Shortcut service unavailable".to_string())?;
+        rx.recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|_| "Shortcut service did not respond".to_string())?
+    }
+
+    /// Reserve readiness until the compositor acknowledges the new destination.
+    pub fn set_mode(&self, mode: SessionMode) -> Result<(), String> {
+        self.set_mode_after(mode, || Ok(()))
+    }
+
+    pub fn mode(&self) -> SessionMode {
+        match self.output_mode.load(std::sync::atomic::Ordering::Acquire) {
+            1 => SessionMode::Preview,
+            2 => SessionMode::Suspended,
+            _ => SessionMode::System,
+        }
+    }
+
+    /// Persist a destination change while preventing a new capture from starting.
+    pub fn set_mode_after(
+        &self,
+        mode: SessionMode,
+        persist: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let _reservation = self
+            .reserve_history_edit()
+            .map_err(|_| "Wait until dictation finishes.".to_string())?;
+        persist()?;
+        let (tx, rx) = mpsc::channel();
+        self.tx
+            .try_send(SessionCommand::SetMode(mode, tx))
+            .map_err(|_| "Dictation service unavailable".to_string())?;
+        rx.recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|_| "Dictation service did not respond".to_string())?
+    }
     pub fn reserve_shortcut_edit(&self) -> Result<ShortcutEditGuard, String> {
         let reservation = self
             .reserve_history_edit()
@@ -214,17 +281,23 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
         insertion,
         recordings_path,
         vad_path,
+        mode,
     } = ready;
     let injector = NativeInjector::connect().map_err(StartupError::backend)?;
-    let hold = Chord::bind(&config).map_err(|err| {
+    let mut hold = Chord::bind(&config).map_err(|err| {
         StartupError::backend(format!("hold chord {}: {err}", config.hold.as_str()).into())
     })?;
+    if mode == SessionMode::Suspended {
+        hold.passthrough(true).map_err(StartupError::backend)?;
+    }
     let (bubble_tx, bubble_rx) = mpsc::channel();
     let (level_tx, level_rx) = mpsc::sync_channel(VOICE_LEVEL_QUEUE_CAPACITY);
     let (hold_tx, hold_rx) = mpsc::channel();
     let (engine_tx, engine_rx) = mpsc::channel();
     let (insertion_tx, insertion_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
+    let (preview_tx, preview_rx) = mpsc::channel();
+    let output_mode = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(mode as u8));
     let recordings = crate::RecordingStore::open(
         recordings_path.unwrap_or_else(|| config.model_dir().join("recordings")),
     )
@@ -235,6 +308,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
     let (toggle_tx, toggle) = mpsc::channel();
     let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let control = SessionControl {
+        output_mode: output_mode.clone(),
         tx: command_tx,
         busy: busy.clone(),
         toggle: toggle_tx,
@@ -243,6 +317,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
     let delivery = TranscriptDelivery::new(injector, result_tx);
     let worker = SessionRuntime::new(
         RuntimeConfig {
+            output_mode: output_mode.clone(),
             session: config,
             hold,
             engine,
@@ -259,7 +334,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
             busy,
         },
         SessionOutputs {
-            bubbles: BubbleSink::new(bubble_tx),
+            bubbles: BubbleSink::with_preview(bubble_tx, preview_tx, output_mode),
             levels: level_tx,
         },
         decoder,
@@ -270,6 +345,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
         .spawn(|| worker.run())
         .map_err(|err| StartupError::backend(err.into()))?;
     Ok(LiveSession {
+        preview: preview_rx,
         bubbles: bubble_rx,
         levels: level_rx,
         hold: HoldTarget { tx: hold_tx },
@@ -290,6 +366,7 @@ mod control_tests {
         let (toggle, _) = mpsc::channel();
         (
             SessionControl {
+                output_mode: Arc::new(std::sync::atomic::AtomicU8::new(SessionMode::System as u8)),
                 tx,
                 toggle,
                 busy: Arc::new(AtomicBool::new(false)),
@@ -297,6 +374,67 @@ mod control_tests {
             rx,
         )
     }
+    #[test]
+    fn mode_change_reserves_capture_until_persistence_and_native_acknowledgement() {
+        let (control, commands) = control();
+        let observed = control.clone();
+        let worker = std::thread::spawn(move || {
+            let SessionCommand::SetMode(mode, reply) = commands.recv().unwrap() else {
+                panic!("unexpected command");
+            };
+            assert_eq!(mode, SessionMode::System);
+            assert!(observed.is_busy());
+            assert!(observed.retry(42).is_err());
+            reply.send(Ok(())).unwrap();
+        });
+        control
+            .set_mode_after(SessionMode::System, || {
+                assert!(control.is_busy());
+                assert!(control.reserve_shortcut_edit().is_err());
+                Ok(())
+            })
+            .unwrap();
+        worker.join().unwrap();
+        assert!(!control.is_busy());
+    }
+
+    #[test]
+    fn shortcut_configuration_reserves_capture_until_native_acknowledgement() {
+        let (control, commands) = control();
+        let config = Config::from_prefs("Alt+Space", "Esc", "models".into()).unwrap();
+        let observed = control.clone();
+        let worker = std::thread::spawn(move || {
+            let SessionCommand::ConfigureShortcuts(_, reply) = commands.recv().unwrap() else {
+                panic!("unexpected command");
+            };
+            assert!(observed.is_busy());
+            assert!(observed.retry(42).is_err());
+            reply.send(Ok(())).unwrap();
+        });
+        control.configure_shortcuts(config.clone()).unwrap();
+        worker.join().unwrap();
+        assert!(!control.is_busy());
+        let _busy = control.reserve_history_edit().unwrap();
+        assert!(control.configure_shortcuts(config).is_err());
+    }
+
+    #[test]
+    fn failed_persistence_or_busy_capture_never_sends_a_destination_change() {
+        let (control, commands) = control();
+        assert!(control
+            .set_mode_after(SessionMode::System, || Err("disk full".into()))
+            .is_err());
+        assert!(commands.try_recv().is_err());
+        assert!(!control.is_busy());
+        let _busy = control.reserve_history_edit().unwrap();
+        assert!(control
+            .set_mode_after(SessionMode::System, || panic!(
+                "must not persist while busy"
+            ))
+            .is_err());
+        assert!(commands.try_recv().is_err());
+    }
+
     #[test]
     fn editing_reserves_the_session_until_native_shortcuts_are_restored() {
         let (control, commands) = control();
