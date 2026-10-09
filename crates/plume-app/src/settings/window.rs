@@ -233,6 +233,9 @@ pub fn show_settings(cx: &mut App) {
         let _ = handle.update(cx, |view, window, cx| {
             view.onboarding_visibility(true, cx);
             crate::tray::show_window(window, cx);
+            // Windows tray activation restores visibility and focus natively,
+            // without GPUI reapplying the initial window placement.
+            #[cfg(not(windows))]
             window.activate_window();
         });
     }

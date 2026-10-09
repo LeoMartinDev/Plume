@@ -6,7 +6,10 @@ use tray_icon::{
 };
 use windows_sys::Win32::{
     Foundation::HWND,
-    UI::WindowsAndMessaging::{IsIconic, IsWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW},
+    UI::WindowsAndMessaging::{
+        IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE,
+        SW_SHOW,
+    },
 };
 
 use super::{Ordering, ACTIONS, QUIT, SHOW};
@@ -85,14 +88,18 @@ unsafe fn set_native_visible(hwnd: HWND, visible: bool) {
     if IsWindow(hwnd) == 0 {
         return;
     }
-    let command = if !visible {
-        SW_HIDE
-    } else if IsIconic(hwnd) != 0 {
-        SW_RESTORE
-    } else {
-        SW_SHOW
-    };
-    ShowWindow(hwnd, command);
+    if !visible {
+        ShowWindow(hwnd, SW_HIDE);
+        return;
+    }
+    if IsIconic(hwnd) != 0 {
+        ShowWindow(hwnd, SW_RESTORE);
+    } else if IsWindowVisible(hwnd) == 0 {
+        ShowWindow(hwnd, SW_SHOW);
+    }
+    // A tray click only raises an already visible window. In particular, do
+    // not reapply GPUI's initial placement or change its maximized state.
+    SetForegroundWindow(hwnd);
 }
 
 pub(crate) fn hide_window(window: &Window, cx: &App) {
@@ -109,7 +116,7 @@ mod tests {
     #[test]
     fn settings_can_be_revealed_after_hiding_or_minimizing() {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, IsWindowVisible, SW_MINIMIZE, WS_OVERLAPPEDWINDOW,
+            CreateWindowExW, DestroyWindow, IsZoomed, SW_MAXIMIZE, SW_MINIMIZE, WS_OVERLAPPEDWINDOW,
         };
 
         struct TestWindow(HWND);
@@ -151,6 +158,12 @@ mod tests {
             set_native_visible(window.0, true);
             assert_ne!(IsWindowVisible(window.0), 0);
             assert_eq!(IsIconic(window.0), 0);
+            ShowWindow(window.0, SW_MAXIMIZE);
+            for _ in 0..2 {
+                set_native_visible(window.0, true);
+                assert_ne!(IsWindowVisible(window.0), 0);
+                assert_ne!(IsZoomed(window.0), 0);
+            }
         }
     }
 

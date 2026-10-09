@@ -11,6 +11,7 @@ const sharp = createRequire(import.meta.url)('sharp');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const native = path.join(root, 'crates/plume-app/assets/brand');
 const dark = fs.readFileSync(path.join(native, 'plume-app.svg'), 'utf8');
+const menubar = fs.readFileSync(path.join(native, 'plume-menubar.svg'), 'utf8');
 const render = (svg, size) => sharp(Buffer.from(svg), { density: 144 }).resize(size, size);
 const png = (svg, size) => render(svg, size).png().toBuffer();
 
@@ -32,6 +33,7 @@ function ico(images) {
 }
 
 fs.writeFileSync(path.join(native, 'plume.png'), await png(dark, 1024));
+fs.writeFileSync(path.join(native, 'plume-menubar.png'), await png(menubar, 64));
 fs.writeFileSync(path.join(native, 'plume-linux.png'), await png(dark, 512));
 fs.writeFileSync(path.join(native, 'plume-window.rgba'), await render(dark, 128).ensureAlpha().raw().toBuffer());
 const representations = async sizes => Promise.all(sizes.map(async size => ({ size, data: await png(dark, size) })));
