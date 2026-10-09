@@ -1,11 +1,11 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use gpui::{div, prelude::*, px, AnyElement, Context, ElementId};
+use gpui::{div, prelude::*, px, AnyElement, Context, ElementId, FontWeight};
 use plume_ui::Tokens;
 use plume_updater::{InstallPlan, Release};
 
-use super::view::{page, settings_group};
+use super::view::{page, settings_group, settings_section};
 use super::{SettingsSection, SettingsView};
 
 pub(super) enum UpdateState {
@@ -182,7 +182,7 @@ pub(super) fn updates_page(
         UpdateState::Checking | UpdateState::Downloading(..)
     );
     let message = match &view.update {
-        UpdateState::Idle => "Check for the latest version of Plume.".into(),
+        UpdateState::Idle => String::new(),
         UpdateState::Checking => "Checking for updates…".into(),
         UpdateState::Current => "You're using the latest available version.".into(),
         UpdateState::Available(release) => format!("Plume {} is available.", release.version),
@@ -206,21 +206,80 @@ pub(super) fn updates_page(
         UpdateState::Available(release) | UpdateState::Ready { release, .. } => Some(release),
         _ => None,
     };
-    let body = div().flex().flex_col().gap(px(12.))
-        .child(settings_group(tokens).p(px(14.)).flex().flex_col().gap(px(10.))
-            .child(format!("Plume {}", env!("CARGO_PKG_VERSION")))
-            .child(div().text_sm().text_color(tokens.muted).child(message))
-            .child(div().flex().gap(px(8.))
-                .when(!busy && !matches!(view.update, UpdateState::Ready { .. }), |row| row.child(button(tokens, "update-check", "Check for updates", cx, |view, cx| view.check_updates(cx))))
-                .when(matches!(view.update, UpdateState::Available(_)) && !view.settings_preview, |row| row.child(button(tokens, "update-download", "Download update", cx, |view, cx| view.download_update(cx))))
-                .when(matches!(view.update, UpdateState::Ready { .. }), |row| row.child(button(tokens, "update-install", "Restart and install", cx, |view, cx| view.install_update(cx))))
-                .child(button(tokens, "update-releases", "GitHub Releases", cx, |_, cx| cx.open_url(plume_updater::RELEASES_URL)))))
-        .child(div().text_xs().text_color(tokens.muted).child("Plume checks stable GitHub releases at startup. Updates are installed only when you choose to restart. Your models, settings and history are kept."))
-        .children(release.map(|release| {
-            let url = release.url.clone();
-            div().flex().flex_col().gap(px(8.))
-                .child(button(tokens, "update-notes", "Open release notes", cx, move |_, cx| cx.open_url(&url)))
-        }));
+    let body = settings_section(
+        tokens,
+        "Application",
+        settings_group(tokens).flex().flex_col().child(
+            div()
+                .p(px(14.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(format!("Plume {}", env!("CARGO_PKG_VERSION"))),
+                )
+                .when(!matches!(view.update, UpdateState::Idle), |card| {
+                    card.child(div().text_xs().text_color(tokens.muted).child(message))
+                })
+                .child(
+                    div()
+                        .pt(px(4.))
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .when(
+                            !busy && !matches!(view.update, UpdateState::Ready { .. }),
+                            |row| {
+                                row.child(button(
+                                    tokens,
+                                    "update-check",
+                                    "Check for updates",
+                                    cx,
+                                    |view, cx| view.check_updates(cx),
+                                ))
+                            },
+                        )
+                        .when(
+                            matches!(view.update, UpdateState::Available(_))
+                                && !view.settings_preview,
+                            |row| {
+                                row.child(button(
+                                    tokens,
+                                    "update-download",
+                                    "Download update",
+                                    cx,
+                                    |view, cx| view.download_update(cx),
+                                ))
+                            },
+                        )
+                        .when(matches!(view.update, UpdateState::Ready { .. }), |row| {
+                            row.child(button(
+                                tokens,
+                                "update-install",
+                                "Restart and install",
+                                cx,
+                                |view, cx| view.install_update(cx),
+                            ))
+                        })
+                        .child(button(
+                            tokens,
+                            "update-releases",
+                            "GitHub Releases",
+                            cx,
+                            |_, cx| cx.open_url(plume_updater::RELEASES_URL),
+                        ))
+                        .children(release.map(|release| {
+                            let url = release.url.clone();
+                            button(tokens, "update-notes", "Release notes", cx, move |_, cx| {
+                                cx.open_url(&url)
+                            })
+                        })),
+                ),
+        ),
+    );
     page("Updates", body)
 }
 
@@ -240,6 +299,8 @@ fn button(
         .border_1()
         .border_color(tokens.hairline)
         .text_xs()
+        .whitespace_nowrap()
+        .flex_shrink_0()
         .cursor_pointer()
         .hover(|style| style.bg(tokens.fill_hover))
         .on_click(cx.listener(move |view, _, _, cx| action(view, cx)))

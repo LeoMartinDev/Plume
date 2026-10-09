@@ -165,6 +165,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
     }
     fn drain_keys(&mut self) {
         while let Some(event) = self.hold.next_event() {
+            tracing::debug!(action = ?event.action, edge = ?event.edge, state = ?self.controller.phase, "dictation shortcut received");
             match self.controller.event(event) {
                 Some(Action::Start(mode)) => self.start_capture(mode),
                 Some(Action::Stop) => {

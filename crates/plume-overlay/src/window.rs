@@ -509,7 +509,7 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
         .expect("open overlay window");
     hide_server_frame(WINDOW_TITLE);
     #[cfg(target_os = "macos")]
-    let _ = handle.update(cx, |_view, window, _cx| macos::configure(window));
+    let _ = handle.update(cx, |_view, window, cx| macos::configure(window, cx));
     place_overlay(cx, handle, initially_visible);
     cx.spawn(async move |cx: &mut AsyncApp| {
         for delay in FRAME_RECHECK_DELAYS {
@@ -599,7 +599,7 @@ mod macos {
         base::{id, nil, NO},
     };
     use gpui::Window;
-    use objc::{runtime::Sel, Message};
+    use objc::{rc::StrongPtr, runtime::Sel, Message};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     fn native_window(window: &Window) -> Option<id> {
@@ -612,10 +612,20 @@ mod macos {
         (!native.is_null()).then_some(native)
     }
 
-    pub(crate) fn configure(window: &Window) {
+    pub(crate) fn configure(window: &Window, cx: &gpui::App) {
         let Some(native) = native_window(window) else {
             return;
         };
+        // Changing the style synchronously resizes the NSView and calls back
+        // into GPUI. Schedule it after the App/window update releases its
+        // borrow, and retain the panel until the foreground task completes.
+        let native = unsafe { StrongPtr::retain(native) };
+        cx.foreground_executor()
+            .spawn(async move { unsafe { configure_native(*native) } })
+            .detach();
+    }
+
+    unsafe fn configure_native(native: id) {
         // GPUI's titlebar=None still creates a titled NSPanel. Keep its
         // non-activating bit while removing the title and window chrome.
         unsafe {

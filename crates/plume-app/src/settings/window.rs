@@ -116,6 +116,7 @@ fn open_settings_window(
                     });
                     let mut view = SettingsView {
                         phase,
+                        active_model: None,
                         prefs_path,
                         settings_preview,
                         section: if update_error.is_some() {

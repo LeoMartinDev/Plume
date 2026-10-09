@@ -4462,6 +4462,7 @@ dependencies = [
  "arboard",
  "cocoa 0.26.0",
  "gpui",
+ "log",
  "objc",
  "plume-core",
  "plume-ui",

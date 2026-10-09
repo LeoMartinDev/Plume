@@ -4,7 +4,10 @@ use gpui::{
 };
 use plume_ui::Tokens;
 
-use super::view::{error_text, page, settings_group};
+use super::view::{
+    error_text, page, section_title, settings_divider, settings_group, settings_row,
+    settings_section,
+};
 use super::{HistoryLimitMenu, SettingsView};
 use crate::history_policy::HistoryPolicy;
 
@@ -49,25 +52,27 @@ fn history_header(
     let body = div()
         .flex()
         .flex_col()
-        .gap(px(10.))
-        .child(history_limit_row(
-            view,
+        .gap(px(20.))
+        .child(settings_section(
             tokens,
-            HistoryLimitMenu::Retention,
-            cx,
+            "Storage",
+            settings_group(tokens)
+                .flex()
+                .flex_col()
+                .child(history_limit_row(
+                    view,
+                    tokens,
+                    HistoryLimitMenu::Retention,
+                    cx,
+                ))
+                .child(settings_divider(tokens))
+                .child(history_limit_row(
+                    view,
+                    tokens,
+                    HistoryLimitMenu::Entries,
+                    cx,
+                )),
         ))
-        .child(history_limit_row(
-            view,
-            tokens,
-            HistoryLimitMenu::Entries,
-            cx,
-        ))
-        .child(
-            div()
-                .text_xs()
-                .text_color(tokens.muted)
-                .child("Reducing a limit immediately deletes older or excess transcriptions."),
-        )
         .children(
             view.history_error
                 .clone()
@@ -75,25 +80,33 @@ fn history_header(
                 .map(|error| error_text(tokens, error)),
         )
         .when(!entries.is_empty(), |list| {
-            list.child(div().w_full().flex().justify_end().child(action_button(
-                tokens,
-                "history-clear",
-                "Clear all",
-                cx,
-                |this, cx| {
-                    this.clear_history(cx);
-                },
-            )))
+            list.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(section_title(tokens, "Transcriptions"))
+                    .child(action_button(
+                        tokens,
+                        "history-clear",
+                        "Clear all",
+                        cx,
+                        |this, cx| this.clear_history(cx),
+                    )),
+            )
         })
         .when(entries.is_empty(), |list| {
-            list.child(
+            list.child(settings_section(
+                tokens,
+                "Transcriptions",
                 settings_group(tokens)
                     .px(px(14.))
                     .py(px(18.))
                     .text_sm()
                     .text_color(tokens.muted)
                     .child("No transcriptions yet."),
-            )
+            ))
         });
 
     page("History", body)
@@ -123,9 +136,9 @@ fn history_entry(
         .border_color(tokens.hairline)
         .border_x_1()
         .border_b_1()
-        .when(index == 0, |el| el.border_t_1().rounded_t(px(6.)))
+        .when(index == 0, |el| el.border_t_1().rounded_t(px(10.)))
         .when(index + 1 == view.display_history().len(), |el| {
-            el.rounded_b(px(6.))
+            el.rounded_b(px(10.))
         })
         .w_full()
         .px(px(14.))
@@ -311,19 +324,14 @@ fn history_limit_row(
     };
     let open = view.history_menu == Some(menu);
     let menu_height = 46. + 30. * options.len() as f32;
-    settings_group(tokens)
+    settings_row()
         .relative()
-        .min_h(px(58.))
-        .px(px(14.))
-        .py(px(11.))
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(div().text_sm().child(title))
+        .child(div().flex_1().min_w_0().text_sm().child(title))
         .child(
             div()
                 .id(id)
                 .w(px(156.))
+                .flex_shrink_0()
                 .h(px(32.))
                 .px(px(10.))
                 .flex()

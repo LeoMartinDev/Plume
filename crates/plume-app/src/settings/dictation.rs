@@ -5,7 +5,9 @@ use plume_ui::{Segment, Segmented, Tokens};
 use crate::prefs::Prefs;
 use crate::shortcut_capture::pill_label;
 
-use super::view::{error_text, page, settings_group};
+use super::view::{
+    error_text, page, settings_divider, settings_group, settings_row, settings_section,
+};
 use super::SettingsView;
 
 const HOLD_CAPTURE_ID: &str = "hold-capture";
@@ -26,13 +28,39 @@ pub(super) fn dictation_page(
         .reject()
         .map(str::to_string)
         .or_else(|| view.save_error.clone());
-    page("Dictation", div().flex().flex_col().gap(px(10.))
-        .child(shortcut_row(view,tokens,prefs,false,cx))
-        .child(shortcut_row(view,tokens,prefs,true,cx))
-        .child(div().text_xs().text_color(tokens.muted).child("Esc cancels recording or transcription. One recording at a time, up to 10 minutes."))
-        .child(insertion_mode_row(tokens,prefs.insertion_mode(),view.insertion_open,cx))
-        .child(copy_on_failure_row(tokens,prefs.copy_on_failure(),cx))
-        .children(error.map(|text|error_text(tokens,text))))
+    page(
+        "Dictation",
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(settings_section(
+                tokens,
+                "Shortcuts",
+                settings_group(tokens)
+                    .flex()
+                    .flex_col()
+                    .child(shortcut_row(view, tokens, prefs, false, cx))
+                    .child(settings_divider(tokens))
+                    .child(shortcut_row(view, tokens, prefs, true, cx)),
+            ))
+            .child(settings_section(
+                tokens,
+                "Text output",
+                settings_group(tokens)
+                    .flex()
+                    .flex_col()
+                    .child(insertion_mode_row(
+                        tokens,
+                        prefs.insertion_mode(),
+                        view.insertion_open,
+                        cx,
+                    ))
+                    .child(settings_divider(tokens))
+                    .child(copy_on_failure_row(tokens, prefs.copy_on_failure(), cx)),
+            ))
+            .children(error.map(|text| error_text(tokens, text))),
+    )
 }
 fn shortcut_row(
     view: &SettingsView,
@@ -55,7 +83,7 @@ fn shortcut_row(
     } else {
         pretty_hold(shortcut)
     };
-    settings_group(tokens)
+    settings_row()
         .id(if toggle {
             "toggle-capture"
         } else {
@@ -67,16 +95,10 @@ fn shortcut_row(
                 .on_key_up(cx.listener(SettingsView::on_hold_key_up))
                 .on_modifiers_changed(cx.listener(SettingsView::on_hold_modifiers))
         })
-        .min_h(px(58.))
-        .px(px(14.))
-        .py(px(11.))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(16.))
         .child(
             div()
                 .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .gap(px(2.))
@@ -85,22 +107,19 @@ fn shortcut_row(
                         .text_sm()
                         .child(if toggle { "Hands free" } else { "Push to talk" }),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child(if listening {
-                            "Press a shortcut, then release to apply"
-                        } else if toggle {
-                            "Press to start, press again to stop"
-                        } else {
-                            "Hold while speaking"
-                        }),
-                ),
+                .when(listening, |row| {
+                    row.child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.muted)
+                            .child("Press a shortcut, then release to apply"),
+                    )
+                }),
         )
         .child(
             div()
                 .flex()
+                .flex_shrink_0()
                 .gap(px(6.))
                 .child(
                     div()
@@ -116,6 +135,7 @@ fn shortcut_row(
                         .rounded(px(6.))
                         .bg(tokens.fill)
                         .text_sm()
+                        .whitespace_nowrap()
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _event, window, cx| {
                             if this.capture.is_listening() && this.capture_toggle != toggle {
@@ -151,31 +171,9 @@ fn insertion_mode_row(
     open: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    settings_group(tokens)
+    settings_row()
         .relative()
-        .min_h(px(64.))
-        .px(px(14.))
-        .py(px(10.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(14.))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(div().text_sm().child("Text insertion"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child("Paste temporarily uses the clipboard, then restores it"),
-                ),
-        )
+        .child(div().flex_1().min_w_0().text_sm().child("Text insertion"))
         .child(
             div()
                 .id("insertion-select")
@@ -211,7 +209,7 @@ fn insertion_mode_row(
                 div()
                     .id("insertion-menu-boundary")
                     .absolute()
-                    .top(px(10.))
+                    .bottom(px(10.))
                     .right(px(14.))
                     .w(px(156.))
                     .h(px(136.))
@@ -224,7 +222,8 @@ fn insertion_mode_row(
                 deferred(
                     div()
                         .absolute()
-                        .top(px(46.))
+                        // This group sits near the bottom of the settings window.
+                        .bottom(px(46.))
                         .right(px(14.))
                         .w(px(156.))
                         .p(px(4.))
@@ -279,29 +278,13 @@ fn copy_on_failure_row(
     enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    settings_group(tokens)
-        .min_h(px(58.))
-        .px(px(14.))
-        .py(px(10.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(14.))
+    settings_row()
         .child(
             div()
                 .flex_1()
                 .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(div().text_sm().child("Copy after an insertion failure"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child("Keeps the final transcript available for manual paste"),
-                ),
+                .text_sm()
+                .child("Copy on insertion failure"),
         )
         .child(Segmented::new(
             *tokens,

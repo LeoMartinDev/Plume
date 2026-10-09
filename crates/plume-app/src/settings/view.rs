@@ -475,6 +475,48 @@ pub(super) fn settings_group(tokens: &Tokens) -> Div {
         .bg(tokens.group)
 }
 
+pub(super) fn settings_section(
+    tokens: &Tokens,
+    title: &'static str,
+    body: impl IntoElement,
+) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(section_title(tokens, title))
+        .child(body)
+}
+
+pub(super) fn section_title(tokens: &Tokens, title: &'static str) -> Div {
+    div()
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(tokens.muted)
+        .child(title)
+}
+
+pub(super) fn settings_row() -> Div {
+    div()
+        .w_full()
+        .min_h(px(58.))
+        .px(px(14.))
+        .py(px(8.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(14.))
+}
+
+pub(super) fn settings_divider(tokens: &Tokens) -> Div {
+    div()
+        .h(px(1.))
+        .flex_shrink_0()
+        .mx(px(14.))
+        .bg(tokens.hairline)
+}
+
 fn appearance_page(
     tokens: &Tokens,
     selected: AppearancePref,
@@ -482,31 +524,39 @@ fn appearance_page(
 ) -> AnyElement {
     page(
         "Appearance",
-        settings_group(tokens)
-            .min_h(px(56.))
-            .px(px(14.))
-            .py(px(10.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .child(div().flex_1().min_w_0().text_sm().child("Theme"))
-            .child(Segmented::new(
-                *tokens,
-                selected,
-                THEMES.into_iter().map(|(pref, label)| {
-                    Segment::new(pref, pref.element_id(), label).on_click(
-                        cx,
-                        move |this: &mut SettingsView, cx| {
-                            this.commit_appearance(pref, cx);
-                        },
-                    )
-                }),
-            )),
+        settings_section(
+            tokens,
+            "Interface",
+            settings_group(tokens).child(
+                settings_row()
+                    .child(div().flex_1().min_w_0().text_sm().child("Theme"))
+                    .child(Segmented::new(
+                        *tokens,
+                        selected,
+                        THEMES.into_iter().map(|(pref, label)| {
+                            Segment::new(pref, pref.element_id(), label).on_click(
+                                cx,
+                                move |this: &mut SettingsView, cx| {
+                                    this.commit_appearance(pref, cx);
+                                },
+                            )
+                        }),
+                    )),
+            ),
+        ),
     )
 }
 
 pub(super) fn error_text(tokens: &Tokens, text: String) -> impl IntoElement {
-    div().text_xs().text_color(tokens.muted).child(text)
+    div()
+        .w_full()
+        .px(px(14.))
+        .py(px(10.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(tokens.hairline)
+        .bg(tokens.accent_soft)
+        .text_xs()
+        .text_color(tokens.text)
+        .child(text)
 }

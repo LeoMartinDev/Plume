@@ -40,6 +40,8 @@ The CI installs platform prerequisites: ALSA/XCB/XKB development libraries on Li
 
 `plume-session::controller` owns one operation through Ready → Starting → Recording(Hold/Toggle) → Transcribing → Inserting → Ready. Cancellation waits for the microphone, decoder and audio deletion before readiness. Native bindings share one hook/service and report action and press/release edges. Busy presses are consumed; no STT queue, capture joining or timing-based separators remain. The model/language snapshot is fixed at launch. Only the final transcript is delivered.
 
+Settings highlights the model connected to the session, not the saved preference. A model being activated shows `Loading…` until startup completes; while another model downloads or loads, the previous session model remains marked `In use`. A default preference without an installed model is not marked as active.
+
 The CPAL callback copies native samples into a bounded queue; conversion, stateful mono/16 kHz normalization, Silero CPU VAD and progressive WAV writes run outside it. Silero receives 512-sample windows, threshold 0.5, no minimum speech duration and a fresh recurrent state. STT starts with 250 ms of pre-roll on the first voiced window and keeps subsequent pauses. Release retains 120 ms of tail; cancellation has no tail. Monotonic timers begin after microphone readiness: 30-second hands-free silence reminder, nine-minute warning and ten-minute capture limit.
 
 `RecordingStore` retains eight voiced audios plus an active partial WAV. Flushes refresh its header each second; versioned JSON metadata is atomically replaced (ReplaceFileW on Windows). Interrupted voiced takes are recovered manually at startup. Text is persisted before insertion. Retry reads buffers through the same decoder and VAD, updates an existing take, preserves its insertion status and never injects. Audio-only deletion and explicit history clearing remove associated files; automatic text retention remains independent. Acknowledged evicted metadata is removed, and expired stored text is cleared independently of retained audio.
@@ -111,7 +113,7 @@ cargo run --release -p plume-app
 
 Logs go to stderr unless `PLUME_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
 
-Session logs contain identifiers, state transitions, durations and errors. They never include audio, transcripts, adjacent-field text or clipboard snapshots. Whisper/GGML log bodies are suppressed because native debug builds can include decoded tokens; the session reports typed engine errors. The version probe remains ordinary output.
+Session logs contain identifiers, registered dictation shortcuts, recognized shortcut press/release actions, state transitions, durations and errors. Unrelated keystrokes are never logged. They never include audio, transcripts, adjacent-field text or clipboard snapshots. Whisper/GGML log bodies are suppressed because native debug builds can include decoded tokens; the session reports typed engine errors. The version probe remains ordinary output.
 
 ## Verification
 
@@ -255,7 +257,7 @@ cargo fmt --check
 
 CI runs builds and tests on macOS, Windows and Linux. Real model fixture tests require `PLUME_MODEL_DIR`; model-opening tests marked ignored require their corresponding model environment variables. Unit tests use simulated engines and injectors to exercise the production decoder and delivery components without native permissions or model downloads.
 
-On a macOS desktop, `cargo run -p plume-overlay --example macos_visibility` checks that the bubble appears while the app is inactive without taking focus, stays visible during transcription after release, hides on cancellation, and can appear again. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
+On a macOS desktop, `cargo run -p plume-overlay --example macos_visibility` attaches the overlay asynchronously after another window, as production does after loading a model. It checks that the bubble appears while the app is inactive without taking focus, stays visible during transcription after release, hides on cancellation, can appear again, and expands into an error card. It also rejects logged GPUI borrow errors and checks that GPUI's viewport tracks native size changes. It needs no microphone permission or model. If the Xcode Metal compiler is unavailable, append `--features gpui/runtime_shaders` to compile shaders at runtime for this check.
 
 To preview the new feedback without a microphone, model or actual insertion, run `cargo run -p plume-overlay --example feedback_preview`. It shows recording, transcription, insertion, success, then an insertion failure card. Use `-- failure` to show the Copy action immediately, or `-- copied` for the automatic clipboard fallback message. These examples use synthetic text and do not write dictation history.
 

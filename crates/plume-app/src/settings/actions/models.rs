@@ -79,9 +79,14 @@ impl SettingsView {
         self.engine_target = Some(engine_target);
         self.language_target = Some(language_target);
         self.insertion_target = Some(insertion_target);
+        self.active_model = Some(self.phase.prefs().model);
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),
         };
+        tracing::debug!(
+            model = self.phase.prefs().model.as_str(),
+            "dictation model active"
+        );
         cx.notify();
     }
 
@@ -96,9 +101,14 @@ impl SettingsView {
     ) {
         self.language_target = Some(language_target);
         self.downloads.clear();
+        self.active_model = Some(self.phase.prefs().model);
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),
         };
+        tracing::debug!(
+            model = self.phase.prefs().model.as_str(),
+            "dictation model active"
+        );
         cx.notify();
     }
 

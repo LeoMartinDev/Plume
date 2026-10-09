@@ -65,6 +65,7 @@ enum HistoryLimitMenu {
 
 pub struct SettingsView {
     phase: AppPhase,
+    active_model: Option<crate::catalog::ModelId>,
     prefs_path: std::path::PathBuf,
     settings_preview: bool,
     section: SettingsSection,

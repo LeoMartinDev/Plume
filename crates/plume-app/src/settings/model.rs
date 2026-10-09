@@ -8,7 +8,7 @@ use crate::catalog::{self, ModelEntry, ModelId};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::{LanguagePref, Prefs};
 
-use super::view::{error_text, page, settings_group};
+use super::view::{error_text, page, settings_divider, settings_group, settings_section};
 use super::SettingsView;
 
 const LANGUAGES: [LanguagePref; 3] = [
@@ -28,14 +28,22 @@ pub(super) fn model_page(
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .child(settings_group(tokens).child(language_row(
+            .gap(px(20.))
+            .child(settings_section(
                 tokens,
-                prefs.language(),
-                view.language_open,
-                cx,
-            )))
-            .child(model_catalog(view, tokens, prefs, cx))
+                "Recognition",
+                settings_group(tokens).child(language_row(
+                    tokens,
+                    prefs.language(),
+                    view.language_open,
+                    cx,
+                )),
+            ))
+            .child(settings_section(
+                tokens,
+                "Available models",
+                model_catalog(view, tokens, prefs, cx),
+            ))
             .children(model_error(&view.phase).map(|text| error_text(tokens, text)))
             .children(view.save_error.clone().map(|text| error_text(tokens, text))),
     )
@@ -64,13 +72,7 @@ fn model_catalog(
                 )
                 .into_any_element()];
                 if index + 1 < catalog::entries().len() {
-                    rows.push(
-                        div()
-                            .h(px(1.))
-                            .mx(px(14.))
-                            .bg(tokens.hairline)
-                            .into_any_element(),
-                    );
+                    rows.push(settings_divider(tokens).into_any_element());
                 }
                 rows
             }),
@@ -98,16 +100,16 @@ fn catalog_model_row(
     let downloading: Option<SharedString> =
         progress.and_then(download_status).map(SharedString::from);
     let supported = entry.id.supports(prefs.language());
-    let (label, enabled) = catalog_model_action(phase, entry.id);
+    let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
+    let (label, enabled) = catalog_model_action(phase, view.active_model, entry.id, installed);
     // A pack that does not cover the pinned language cannot be selected.
     let (label, enabled) = if supported {
         (label, enabled && !view.settings_preview)
     } else {
         ("Unsupported".into(), false)
     };
-    let installed = catalog::is_complete(entry.id, &entry.id.data_dir());
     let can_delete = installed && !view.downloads.is_active_for(entry.id) && !view.settings_preview;
-    let is_current = phase.prefs().model == entry.id;
+    let is_current = view.active_model == Some(entry.id);
     let detail = entry.size;
     div()
         .id(SharedString::from(format!("model-{}", entry.id.as_str())))
@@ -121,11 +123,8 @@ fn catalog_model_row(
         .items_center()
         .justify_between()
         .gap(px(16.))
-        // Sélection instantanée : le fond suit prefs.model dès le clic,
-        // sans attendre la fin du chargement moteur ("In use").
-        // Les coins arrondis sont portés par la ligne elle-même selon sa
-        // position, pour épouser la carte sans clip qui casserait bordures
-        // et angles.
+        // Highlight only the model connected to the running session. A saved
+        // preference or pending download does not mean a model is in use.
         .when(is_current && supported, |el| {
             let el = el.bg(tokens.accent_soft);
             if is_first && is_last {
@@ -168,6 +167,7 @@ fn catalog_model_row(
                             div()
                                 .flex()
                                 .flex_row()
+                                .flex_wrap()
                                 .items_center()
                                 .gap(px(14.))
                                 .child(spec_meter("Speed", entry.speed, tokens))
@@ -197,13 +197,15 @@ fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoEleme
     div()
         .flex()
         .flex_row()
+        .flex_shrink_0()
         .items_center()
         .gap(px(6.))
         .child(
             div()
-                .w(px(48.))
+                .min_w(px(56.))
                 .flex_shrink_0()
                 .text_xs()
+                .whitespace_nowrap()
                 .text_color(tokens.muted)
                 .child(label),
         )
@@ -223,16 +225,21 @@ fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoEleme
         )
 }
 
-fn catalog_model_action(phase: &AppPhase, id: ModelId) -> (SharedString, bool) {
-    let installed = catalog::is_complete(id, &id.data_dir());
+fn catalog_model_action(
+    phase: &AppPhase,
+    active_model: Option<ModelId>,
+    id: ModelId,
+    installed: bool,
+) -> (SharedString, bool) {
+    if active_model == Some(id) {
+        return (if installed { "In use" } else { "In memory" }.into(), false);
+    }
     if phase.prefs().model == id {
         return match phase {
-            AppPhase::Live { .. } => (if installed { "In use" } else { "In memory" }.into(), false),
+            AppPhase::Live { .. } => (if installed { "Use" } else { "Download" }.into(), true),
             AppPhase::Onboarding { status, .. } => match status {
-                OnboardStatus::Idle => ("Download".into(), true),
-                // Modèle installé en cours d'activation : affiché "In use"
-                // dès le clic, comme le fond bleu (le moteur suit en ~2s).
-                OnboardStatus::Activating => ("In use".into(), false),
+                OnboardStatus::Idle => (if installed { "Use" } else { "Download" }.into(), true),
+                OnboardStatus::Activating => ("Loading…".into(), false),
                 OnboardStatus::Fetching { .. } => ("Downloading".into(), false),
                 OnboardStatus::Failed { .. } => ("Retry".into(), true),
             },
@@ -501,8 +508,83 @@ fn language_row(
 
 #[cfg(test)]
 mod tests {
-    use super::{download_status, format_bytes};
-    use crate::phase::Progress;
+    use super::{catalog_model_action, download_status, format_bytes};
+    use crate::catalog::ModelId;
+    use crate::phase::{AppPhase, OnboardStatus, Progress};
+    use crate::prefs::Prefs;
+
+    fn onboarding(model: ModelId, status: OnboardStatus) -> AppPhase {
+        let mut prefs = Prefs::default_fresh();
+        prefs.model = model;
+        AppPhase::Onboarding {
+            prefs,
+            status,
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn default_preference_is_not_an_active_model() {
+        let phase = onboarding(ModelId::Nemotron35Compact, OnboardStatus::Idle);
+        let (label, enabled) =
+            catalog_model_action(&phase, None, ModelId::Nemotron35Compact, false);
+        assert_eq!(label.as_ref(), "Download");
+        assert!(enabled);
+        let (label, enabled) =
+            catalog_model_action(&phase, None, ModelId::WhisperLargeV3Turbo, true);
+        assert_eq!(label.as_ref(), "Use");
+        assert!(enabled);
+    }
+
+    #[test]
+    fn installed_model_is_loading_until_the_session_is_connected() {
+        let phase = onboarding(ModelId::WhisperLargeV3Turbo, OnboardStatus::Activating);
+        let (label, enabled) =
+            catalog_model_action(&phase, None, ModelId::WhisperLargeV3Turbo, true);
+        assert_eq!(label.as_ref(), "Loading…");
+        assert!(!enabled);
+        let (label, enabled) =
+            catalog_model_action(&phase, None, ModelId::Nemotron35Compact, false);
+        assert_eq!(label.as_ref(), "Download");
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn switching_models_keeps_the_running_model_in_use() {
+        let phase = onboarding(
+            ModelId::Nemotron35Compact,
+            OnboardStatus::Fetching {
+                last: Progress {
+                    file: "encoder.onnx".into(),
+                    bytes: 0,
+                    total: None,
+                    bytes_per_second: None,
+                },
+            },
+        );
+        let active = Some(ModelId::WhisperLargeV3Turbo);
+        let (label, enabled) =
+            catalog_model_action(&phase, active, ModelId::WhisperLargeV3Turbo, true);
+        assert_eq!(label.as_ref(), "In use");
+        assert!(!enabled);
+        let (label, enabled) =
+            catalog_model_action(&phase, active, ModelId::Nemotron35Compact, false);
+        assert_eq!(label.as_ref(), "Downloading");
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn deleting_a_loaded_pack_does_not_unload_the_running_engine() {
+        let phase = onboarding(ModelId::WhisperLargeV3Turbo, OnboardStatus::Idle);
+        let (label, enabled) = catalog_model_action(
+            &phase,
+            Some(ModelId::WhisperLargeV3Turbo),
+            ModelId::WhisperLargeV3Turbo,
+            false,
+        );
+        assert_eq!(label.as_ref(), "In memory");
+        assert!(!enabled);
+    }
 
     #[test]
     fn progress_is_compact_and_bounded() {
