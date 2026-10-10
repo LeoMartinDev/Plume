@@ -95,20 +95,20 @@ const links = [
     pointer-events: auto;
     border: 1px solid transparent;
     border-radius: 999px;
-    /* Lets the width animate to fit-content where supported; elsewhere it snaps */
-    interpolate-size: allow-keywords;
-    transition:
-      width 0.45s cubic-bezier(0.32, 0.72, 0, 1),
-      height 0.45s cubic-bezier(0.32, 0.72, 0, 1),
-      padding 0.45s cubic-bezier(0.32, 0.72, 0, 1),
-      transform 0.45s cubic-bezier(0.32, 0.72, 0, 1),
-      background-color 0.3s ease,
-      border-color 0.3s ease,
-      box-shadow 0.3s ease;
+    backdrop-filter: blur(0) saturate(1);
+    -webkit-backdrop-filter: blur(0) saturate(1);
+    /* One spring for the whole morph: it starts gently, settles with a slight overshoot,
+       and reverses from wherever it is when the scroll direction changes */
+    transition-property: width, height, padding, transform, background-color, border-color, box-shadow,
+      backdrop-filter, -webkit-backdrop-filter;
+    transition-duration: 0.7s;
+    transition-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+    transition-timing-function: linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1);
   }
   .header.is-scrolled .nav,
   .header.is-open .nav {
-    width: fit-content;
+    /* Measured by the script so the width animates in every browser */
+    width: var(--nav-compact, fit-content);
     max-width: calc(100% - 24px);
     height: 52px;
     padding-inline: 8px 6px;
@@ -128,9 +128,6 @@ const links = [
     font-size: 17px;
     letter-spacing: -0.02em;
     white-space: nowrap;
-  }
-  .header.is-scrolled .brand {
-    padding-right: 8px;
   }
 
   /* Links, with a highlight that slides to the section on screen */
@@ -222,7 +219,11 @@ const links = [
     overflow: hidden;
     max-width: 180px;
     padding-left: 4px;
-    transition: max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s ease, padding 0.4s ease;
+    transition:
+      max-width 0.7s cubic-bezier(0.45, 0, 0.2, 1),
+      padding 0.7s cubic-bezier(0.45, 0, 0.2, 1),
+      opacity 0.3s ease;
+    transition-timing-function: linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1), linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1), ease;
   }
   .header.cta-hidden .cta {
     max-width: 0;
@@ -335,6 +336,23 @@ const links = [
       .filter((el): el is HTMLElement => el !== null);
     let active: HTMLAnchorElement | null = null;
 
+    // Width of the island: its content plus the padding, border and gaps of the scrolled state.
+    // A length (unlike fit-content) can be animated by every browser.
+    const nav = header.querySelector<HTMLElement>('.nav')!;
+    const brand = header.querySelector<HTMLElement>('.brand')!;
+    const actions = header.querySelector<HTMLElement>('.actions')!;
+    const cta = header.querySelector<HTMLElement>('.cta')!;
+    const ctaButton = header.querySelector<HTMLElement>('.cta-btn')!;
+    const measure = () => {
+      // The button plus its 4px lead-in, or nothing while it is folded away
+      const ctaWidth = header.classList.contains('cta-hidden') ? 0 : ctaButton.offsetWidth + 4;
+      const content = brand.offsetWidth + links.offsetWidth + actions.offsetWidth - cta.offsetWidth + ctaWidth;
+      const gaps = 2 * parseFloat(getComputedStyle(nav).columnGap);
+      nav.style.setProperty('--nav-compact', `${content + gaps + 8 + 6 + 2}px`);
+    };
+    measure();
+    document.fonts?.ready.then(measure);
+
     // Slide the highlight under the active link (or fade it out between sections)
     const place = (next: HTMLAnchorElement | null) => {
       if (next === active) return;
@@ -367,7 +385,10 @@ const links = [
       }
     };
     window.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
+    window.addEventListener('resize', () => {
+      measure();
+      schedule();
+    });
     update();
 
     // Hide the navbar's download button while the floating pill shows its own
@@ -376,6 +397,7 @@ const links = [
       new IntersectionObserver(([entry]) => {
         const pastHero = !entry.isIntersecting && entry.boundingClientRect.top < 0;
         header.classList.toggle('cta-hidden', pastHero);
+        measure();
       }).observe(heroCta);
     }
   }
