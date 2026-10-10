@@ -1,3 +1,4 @@
+use crate::settings::i18n::tr;
 use gpui::{
     deferred, div, list, prelude::*, px, svg, AnyElement, Context, ElementId, FontWeight,
     SharedString,
@@ -24,6 +25,8 @@ pub(super) fn history_page(
     let tokens = *tokens;
     list(view.history_list.clone(), move |index, _, cx| {
         entity.update(cx, |view, cx| {
+            let _language =
+                super::i18n::LanguageScope::new(view.phase.prefs().interface_language());
             let item = if index == 0 {
                 div()
                     .pt(px(24.))
@@ -55,7 +58,7 @@ fn history_header(
         .gap(px(20.))
         .child(settings_section(
             tokens,
-            "Storage",
+            tr("ui.storage"),
             settings_group(tokens)
                 .flex()
                 .flex_col()
@@ -86,11 +89,11 @@ fn history_header(
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(section_title(tokens, "Transcriptions"))
+                    .child(section_title(tokens, tr("ui.transcriptions")))
                     .child(action_button(
                         tokens,
                         "history-clear",
-                        "Clear all",
+                        tr("ui.clear_all"),
                         cx,
                         |this, cx| this.clear_history(cx),
                     )),
@@ -99,17 +102,17 @@ fn history_header(
         .when(entries.is_empty(), |list| {
             list.child(settings_section(
                 tokens,
-                "Transcriptions",
+                tr("ui.transcriptions"),
                 settings_group(tokens)
                     .px(px(14.))
                     .py(px(18.))
                     .text_sm()
                     .text_color(tokens.muted)
-                    .child("No transcriptions yet."),
+                    .child(tr("ui.no_transcriptions_yet")),
             ))
         });
 
-    page("History", body)
+    page(tr("ui.history"), body)
 }
 
 fn history_entry(
@@ -157,19 +160,19 @@ fn history_entry(
                         div()
                             .text_xs()
                             .text_color(tokens.muted)
-                            .child("Audio available"),
+                            .child(tr("ui.audio_available")),
                     )
                     .child(action_button(
                         tokens,
                         SharedString::from(format!("retry-{id}")),
-                        "Retranscribe",
+                        tr("ui.retranscribe"),
                         cx,
                         move |this, cx| this.retry_recording(record_id, cx),
                     ))
                     .child(action_button(
                         tokens,
                         SharedString::from(format!("delete-audio-{id}")),
-                        "Delete audio",
+                        tr("ui.delete_audio"),
                         cx,
                         move |this, cx| this.delete_audio(record_id, cx),
                     )),
@@ -202,7 +205,7 @@ fn history_entry(
                                 entry
                                     .application
                                     .clone()
-                                    .unwrap_or_else(|| "Unknown app".into()),
+                                    .unwrap_or_else(|| tr("ui.unknown_app").into()),
                             ),
                         ),
                 )
@@ -216,9 +219,9 @@ fn history_entry(
                                 .text_xs()
                                 .text_color(if copied { tokens.accent } else { tokens.muted })
                                 .child(if copied {
-                                    "Copied".to_string()
+                                    tr("ui.copied").to_string()
                                 } else {
-                                    crate::history::age_label(entry.created_at)
+                                    super::i18n::age_label(entry.created_at)
                                 }),
                         )
                         .child(icon_button(
@@ -306,21 +309,25 @@ fn history_limit_row(
     let (id, title, selected, options) = match menu {
         HistoryLimitMenu::Retention => (
             "history-retention",
-            "Keep transcriptions for",
+            tr("ui.keep_transcriptions_for"),
             policy.retention_days().map(|days| days as usize),
             vec![Some(7), Some(30), Some(90), None],
         ),
         HistoryLimitMenu::Entries => (
             "history-entries",
-            "Maximum transcriptions",
+            tr("ui.maximum_transcriptions"),
             policy.max_entries(),
             vec![Some(100), Some(500), Some(5_000), None],
         ),
     };
     let label = move |value: Option<usize>| match (menu, value) {
-        (_, None) => "Unlimited".to_string(),
-        (HistoryLimitMenu::Retention, Some(days)) => format!("{days} days"),
-        (HistoryLimitMenu::Entries, Some(entries)) => format!("{entries} entries"),
+        (_, None) => tr("ui.unlimited").to_string(),
+        (HistoryLimitMenu::Retention, Some(days)) => {
+            tr("history.retention_days").replace("{count}", &days.to_string())
+        }
+        (HistoryLimitMenu::Entries, Some(entries)) => {
+            tr("history.max_entries").replace("{count}", &entries.to_string())
+        }
     };
     let open = view.history_menu == Some(menu);
     let menu_height = 46. + 30. * options.len() as f32;

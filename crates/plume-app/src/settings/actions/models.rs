@@ -102,6 +102,19 @@ impl SettingsView {
         self.language_target = Some(language_target);
         self.downloads.clear();
         self.active_model = Some(self.phase.prefs().model);
+        if self.onboarding.is_none()
+            && self
+                .phase
+                .prefs()
+                .model
+                .supports(self.phase.prefs().language())
+        {
+            if let Some(control) = &self.session_control {
+                if let Err(error) = control.set_mode(plume_session::SessionMode::System) {
+                    self.save_error = Some(error);
+                }
+            }
+        }
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),
         };
@@ -116,6 +129,20 @@ impl SettingsView {
         self.reset_for_phase();
         self.section = SettingsSection::Model;
         self.downloads.clear();
+        if self.onboarding.is_some()
+            && !self
+                .phase
+                .prefs()
+                .model
+                .supports(self.phase.prefs().language())
+        {
+            self.phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Model;
+            if let Some(setup) = &mut self.onboarding {
+                setup.model_ready = false;
+                setup.engine = None;
+            }
+            self.save_prefs();
+        }
         self.phase = AppPhase::Refused {
             prefs: self.phase.prefs().clone(),
             reason,

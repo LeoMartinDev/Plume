@@ -1,3 +1,4 @@
+use crate::settings::i18n::tr;
 use std::ops::Range;
 
 use gpui::{
@@ -48,9 +49,9 @@ impl NotesContent {
 
     fn title(&self) -> String {
         if self.update {
-            format!("Available update — {}", self.version)
+            tr("updates.notes_available").replace("{version}", &self.version)
         } else {
-            format!("Installed version — {}", self.version)
+            tr("updates.notes_installed").replace("{version}", &self.version)
         }
     }
 }
@@ -80,7 +81,7 @@ pub(super) fn inline_notes(content: &NotesContent, tokens: &Tokens) -> gpui::Any
                 div()
                     .text_xs()
                     .text_color(tokens.muted)
-                    .child("No release notes were provided for this version."),
+                    .child(tr("ui.no_release_notes_were_provided_for_this_version")),
             )
         })
         .children(

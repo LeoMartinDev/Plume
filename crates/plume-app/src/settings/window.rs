@@ -120,6 +120,7 @@ fn open_settings_window(
     let onboarding = onboarding_preview || (!settings_preview && phase.prefs().needs_onboarding());
     if onboarding
         && !onboarding_preview
+        && phase.prefs().onboarding_step != crate::prefs::OnboardingStep::Languages
         && !crate::catalog::is_complete(phase.prefs().model, &phase.prefs().model.data_dir())
     {
         phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Model;
@@ -204,7 +205,13 @@ fn open_settings_window(
                         } else {
                             SettingsSection::Model
                         },
-                        language_open: false,
+                        language_menu: None,
+                        language_menu_index: 0,
+                        language_focus: [
+                            cx.focus_handle().tab_stop(true),
+                            cx.focus_handle().tab_stop(true),
+                        ],
+                        language_scroll: ScrollHandle::new(),
                         insertion_open: false,
                         save_error: None,
                         capture: ShortcutCapture::idle(),

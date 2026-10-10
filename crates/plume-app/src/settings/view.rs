@@ -1,3 +1,4 @@
+use crate::settings::i18n::tr;
 use gpui::{
     bounds, canvas, div, fill, point, prelude::*, px, size, svg, AnyElement, Context, Div,
     FontWeight, ScrollHandle, SharedString, Window,
@@ -14,9 +15,9 @@ use super::{SettingsSection, SettingsView};
 use super::{MACOS_TITLEBAR_HEIGHT, SETTINGS_TITLE};
 
 const THEMES: [(AppearancePref, &str); 3] = [
-    (AppearancePref::Auto, "System"),
-    (AppearancePref::Fixed(Scheme::Light), "Light"),
-    (AppearancePref::Fixed(Scheme::Dark), "Dark"),
+    (AppearancePref::Auto, "ui.system"),
+    (AppearancePref::Fixed(Scheme::Light), "ui.light"),
+    (AppearancePref::Fixed(Scheme::Dark), "ui.dark"),
 ];
 
 #[cfg(windows)]
@@ -127,6 +128,7 @@ pub(super) fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _language = super::i18n::LanguageScope::new(self.phase.prefs().interface_language());
         if !self.capture.is_listening() {
             self.shortcut_edit.take();
         }
@@ -157,7 +159,7 @@ impl Render for SettingsView {
         let content = match self.section {
             SettingsSection::Dictation => dictation_page(self, &tokens, &prefs, cx),
             SettingsSection::Model => model_page(self, &tokens, &prefs, cx),
-            SettingsSection::Appearance => appearance_page(&tokens, prefs.appearance(), cx),
+            SettingsSection::Appearance => appearance_page(self, &tokens, prefs.appearance(), cx),
             SettingsSection::History => history_page(self, &tokens, cx),
             SettingsSection::About => super::updates::about_page(self, &tokens, cx),
         };
@@ -460,7 +462,7 @@ fn nav_item(
                 .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.capture.cancel();
-                    this.language_open = false;
+                    this.language_menu = None;
                     this.insertion_open = false;
                     this.history_menu = None;
                     this.scrollbar_drag.set(None);
@@ -554,31 +556,41 @@ pub(super) fn settings_divider(tokens: &Tokens) -> Div {
 }
 
 fn appearance_page(
+    view: &SettingsView,
     tokens: &Tokens,
     selected: AppearancePref,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     page(
-        "Appearance",
+        tr("interface.title"),
         settings_section(
             tokens,
-            "Interface",
-            settings_group(tokens).child(
-                settings_row()
-                    .child(div().flex_1().min_w_0().text_sm().child("Theme"))
-                    .child(Segmented::new(
-                        *tokens,
-                        selected,
-                        THEMES.into_iter().map(|(pref, label)| {
-                            Segment::new(pref, pref.element_id(), label).on_click(
-                                cx,
-                                move |this: &mut SettingsView, cx| {
-                                    this.commit_appearance(pref, cx);
-                                },
-                            )
-                        }),
-                    )),
-            ),
+            tr("interface.title"),
+            settings_group(tokens)
+                .child(super::languages::interface_language_row(view, tokens, cx))
+                .child(settings_divider(tokens))
+                .child(
+                    settings_row()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(tr("interface.theme")),
+                        )
+                        .child(Segmented::new(
+                            *tokens,
+                            selected,
+                            THEMES.into_iter().map(|(pref, label)| {
+                                Segment::new(pref, pref.element_id(), tr(label)).on_click(
+                                    cx,
+                                    move |this: &mut SettingsView, cx| {
+                                        this.commit_appearance(pref, cx);
+                                    },
+                                )
+                            }),
+                        )),
+                ),
         ),
     )
 }
@@ -594,5 +606,5 @@ pub(super) fn error_text(tokens: &Tokens, text: String) -> impl IntoElement {
         .bg(tokens.accent_soft)
         .text_xs()
         .text_color(tokens.text)
-        .child(text)
+        .child(tr(&text).to_owned())
 }

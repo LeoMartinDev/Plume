@@ -1,3 +1,4 @@
+use crate::settings::i18n::tr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -167,25 +168,30 @@ impl SettingsView {
 impl UpdateState {
     fn status(&self) -> String {
         match self {
-            UpdateState::Idle => "Check for a new version".into(),
+            UpdateState::Idle => tr("ui.check_for_a_new_version").into(),
             UpdateState::Checking(previous) => previous.status(),
-            UpdateState::Current => "Plume is up to date".into(),
-            UpdateState::Available(release) => format!("Version {} available", release.version),
+            UpdateState::Current => tr("ui.plume_is_up_to_date").into(),
+            UpdateState::Available(release) => {
+                tr("updates.version_available").replace("{version}", &release.version.to_string())
+            }
             UpdateState::Downloading {
                 received, total, ..
             } => {
                 if *total > 0 && received >= total {
-                    "Preparing update…".into()
+                    tr("ui.preparing_update_progress").into()
                 } else if *total == 0 {
-                    "Downloading…".into()
+                    tr("ui.downloading_progress").into()
                 } else {
-                    format!("Downloading… {}%", download_percent(*received, *total))
+                    tr("updates.download_percent").replace(
+                        "{percent}",
+                        &download_percent(*received, *total).to_string(),
+                    )
                 }
             }
             UpdateState::Ready { release, .. } => {
-                format!("Version {} ready to install", release.version)
+                tr("updates.version_ready").replace("{version}", &release.version.to_string())
             }
-            UpdateState::Error(_) => "Update failed".into(),
+            UpdateState::Error(_) => tr("ui.update_failed").into(),
         }
     }
 
@@ -313,7 +319,7 @@ pub(super) fn about_page(
                         .child(button(
                             tokens,
                             "update-check",
-                            "Check for updates",
+                            "ui.check_for_updates",
                             !busy && !ready,
                             cx,
                             |view, cx| view.check_updates(cx),
@@ -322,7 +328,7 @@ pub(super) fn about_page(
                             row.child(button(
                                 tokens,
                                 "update-download",
-                                "Download update",
+                                "ui.download_update",
                                 available && !view.settings_preview,
                                 cx,
                                 |view, cx| view.download_update(cx),
@@ -332,7 +338,7 @@ pub(super) fn about_page(
                             row.child(button(
                                 tokens,
                                 "update-install",
-                                "Restart Plume",
+                                "ui.restart_plume",
                                 !view.settings_preview,
                                 cx,
                                 |view, cx| view.install_update(cx),
@@ -391,14 +397,11 @@ pub(super) fn about_page(
                     div()
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child("About"),
+                        .child(tr("ui.about")),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
-                ),
+                .child(div().text_xs().text_color(tokens.muted).child(
+                    tr("updates.installed_version").replace("{version}", env!("CARGO_PKG_VERSION")),
+                )),
         )
         .child(software_update)
         .child(super::release_notes::inline_notes(
@@ -441,7 +444,7 @@ fn button(
                 .hover(|style| style.bg(tokens.fill_hover))
                 .on_click(cx.listener(move |view, _, _, cx| action(view, cx)))
         })
-        .child(label)
+        .child(tr(label))
 }
 
 #[cfg(test)]

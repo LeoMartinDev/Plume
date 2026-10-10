@@ -1,5 +1,5 @@
 use super::super::SettingsView;
-use crate::prefs::{AppearancePref, LanguagePref, Prefs};
+use crate::prefs::{AppearancePref, InterfaceLanguage, LanguagePref, Prefs};
 use gpui::Context;
 use plume_engine::Language;
 use plume_session::{InsertionConfig, InsertionMode};
@@ -16,16 +16,98 @@ impl SettingsView {
         next: LanguagePref,
         cx: &mut Context<Self>,
     ) {
-        self.language_open = false;
+        self.language_menu = None;
+        if self
+            .session_control
+            .as_ref()
+            .is_some_and(|control| control.is_busy())
+            || matches!(
+                self.phase,
+                crate::phase::AppPhase::Onboarding {
+                    status: crate::phase::OnboardStatus::Fetching { .. }
+                        | crate::phase::OnboardStatus::Activating,
+                    ..
+                }
+            )
+        {
+            cx.notify();
+            return;
+        }
         if self.phase.prefs().language() == next {
             cx.notify();
             return;
         }
+        let previous = self.phase.prefs().language();
+        let previous_step = self.phase.prefs().onboarding_step;
+        let previous_mode = self.session_control.as_ref().map(|control| control.mode());
+        let compatible = self
+            .active_model
+            .unwrap_or(self.phase.prefs().model)
+            .supports(next);
+        if let Some(control) = &self.session_control {
+            if let Err(error) = control.set_mode(plume_session::SessionMode::Suspended) {
+                self.save_error = Some(error);
+                cx.notify();
+                return;
+            }
+        }
         self.phase.prefs_mut().set_language(next);
+        if !compatible && self.onboarding.is_some() {
+            self.phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Model;
+        }
         self.save_prefs();
+        if self.save_error.is_some() {
+            self.phase.prefs_mut().set_language(previous);
+            self.phase.prefs_mut().onboarding_step = previous_step;
+            if let (Some(control), Some(mode)) = (&self.session_control, previous_mode) {
+                if let Err(error) = control.set_mode(mode) {
+                    self.save_error = Some(error);
+                }
+            }
+            cx.notify();
+            return;
+        }
+        if !compatible {
+            self.section = super::super::SettingsSection::Model;
+            cx.notify();
+            return;
+        }
         if let Some(target) = &self.language_target {
             target.set(engine_language(next));
         }
+        if let Some(engine) = self
+            .onboarding
+            .as_ref()
+            .and_then(|setup| setup.engine.as_ref())
+        {
+            engine.set_language(engine_language(next));
+        }
+        if self.onboarding.is_none() {
+            if let Some(control) = &self.session_control {
+                if let Err(error) = control.set_mode(plume_session::SessionMode::System) {
+                    self.save_error = Some(error);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub(in crate::settings) fn commit_interface_language(
+        &mut self,
+        next: InterfaceLanguage,
+        cx: &mut Context<Self>,
+    ) {
+        self.language_menu = None;
+        let previous = self.phase.prefs().interface_language();
+        self.phase.prefs_mut().set_interface_language(next);
+        self.save_prefs();
+        if self.save_error.is_some() {
+            self.phase.prefs_mut().set_interface_language(previous);
+        }
+        super::super::history_view::invalidate_list(
+            &self.history_list,
+            self.history.entries().len(),
+        );
         cx.notify();
     }
 

@@ -28,6 +28,58 @@ pub enum LanguagePref {
     English,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterfaceLanguage(&'static str);
+
+impl InterfaceLanguage {
+    pub const FRENCH: Self = Self("fr");
+    pub const ENGLISH: Self = Self("en");
+
+    pub fn code(self) -> &'static str {
+        self.0
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        crate::localization::locales()
+            .iter()
+            .find(|locale| locale.code == code)
+            .map(|locale| Self(locale.code))
+    }
+
+    pub fn available() -> impl Iterator<Item = Self> {
+        crate::localization::locales()
+            .iter()
+            .map(|locale| Self(locale.code))
+    }
+
+    pub fn label(self) -> &'static str {
+        crate::localization::locales()
+            .iter()
+            .find(|locale| locale.code == self.0)
+            .map(|locale| locale.name.as_str())
+            .unwrap_or(self.0)
+    }
+}
+
+impl Default for InterfaceLanguage {
+    fn default() -> Self {
+        Self::ENGLISH
+    }
+}
+
+impl serde::Serialize for InterfaceLanguage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for InterfaceLanguage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self::from_code(&code).unwrap_or_default())
+    }
+}
+
 impl LanguagePref {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -79,6 +131,7 @@ pub const ONBOARDING_VERSION: u32 = 1;
 #[serde(rename_all = "kebab-case")]
 pub enum OnboardingStep {
     #[default]
+    Languages,
     Model,
     Shortcuts,
     Permissions,
@@ -93,6 +146,7 @@ pub struct Prefs {
     pub model: ModelId,
     appearance: AppearancePref,
     language: LanguagePref,
+    interface_language: InterfaceLanguage,
     insertion_mode: InsertionMode,
     copy_on_failure: bool,
     history: HistoryPolicy,
@@ -109,11 +163,12 @@ impl Prefs {
             model: ModelId::default(),
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
+            interface_language: InterfaceLanguage::ENGLISH,
             insertion_mode: InsertionMode::Auto,
             copy_on_failure: true,
             history: HistoryPolicy::default(),
             onboarding_version: 0,
-            onboarding_step: OnboardingStep::Model,
+            onboarding_step: OnboardingStep::Languages,
         }
     }
 
@@ -164,6 +219,14 @@ impl Prefs {
 
     pub fn set_language(&mut self, language: LanguagePref) {
         self.language = language;
+    }
+
+    pub fn interface_language(&self) -> InterfaceLanguage {
+        self.interface_language
+    }
+
+    pub fn set_interface_language(&mut self, language: InterfaceLanguage) {
+        self.interface_language = language;
     }
 
     pub fn insertion_mode(&self) -> InsertionMode {
@@ -247,7 +310,7 @@ mod tests {
             panic!("valid legacy preferences");
         };
         assert!(prefs.needs_onboarding());
-        assert_eq!(prefs.onboarding_step, OnboardingStep::Model);
+        assert_eq!(prefs.onboarding_step, OnboardingStep::Languages);
         assert_eq!(prefs.model, ModelId::WhisperSmall);
         assert_eq!(prefs.hold(), "Alt+Space");
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
@@ -258,6 +321,7 @@ mod tests {
         let path = temp_prefs("setup-resume");
         let mut prefs = Prefs::default_fresh();
         for step in [
+            OnboardingStep::Languages,
             OnboardingStep::Model,
             OnboardingStep::Shortcuts,
             OnboardingStep::Permissions,

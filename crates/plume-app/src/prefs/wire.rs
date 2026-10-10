@@ -1,4 +1,4 @@
-use super::{AppearancePref, LanguagePref, Prefs, PrefsError, Scheme};
+use super::{AppearancePref, InterfaceLanguage, LanguagePref, Prefs, PrefsError, Scheme};
 use crate::catalog::ModelId;
 use crate::history_policy::HistoryPolicy;
 use plume_session::InsertionMode;
@@ -14,6 +14,21 @@ impl Default for AppearanceWire {
 }
 
 struct LanguageWire(LanguagePref);
+
+#[derive(Default)]
+struct InterfaceLanguageWire(InterfaceLanguage);
+
+impl<'de> Deserialize<'de> for InterfaceLanguageWire {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = toml::Value::deserialize(deserializer)?;
+        Ok(Self(
+            value
+                .as_str()
+                .and_then(InterfaceLanguage::from_code)
+                .unwrap_or_default(),
+        ))
+    }
+}
 
 impl Default for LanguageWire {
     fn default() -> Self {
@@ -67,6 +82,8 @@ struct WireIn {
     appearance: AppearanceWire,
     #[serde(default)]
     language: LanguageWire,
+    #[serde(default)]
+    interface_language: InterfaceLanguageWire,
     #[serde(default = "default_insertion_mode")]
     insertion_mode: String,
     #[serde(default = "default_copy_on_failure")]
@@ -84,6 +101,7 @@ struct WireOut {
     model: String,
     appearance: &'static str,
     language: &'static str,
+    interface_language: InterfaceLanguage,
     insertion_mode: &'static str,
     copy_on_failure: bool,
 }
@@ -137,6 +155,7 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
             model,
             appearance: wire.appearance.0,
             language: wire.language.0,
+            interface_language: wire.interface_language.0,
             insertion_mode: match wire.insertion_mode.as_str() {
                 "clipboard" => InsertionMode::Clipboard,
                 "typing" => InsertionMode::Typing,
@@ -180,6 +199,7 @@ pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
         model: prefs.model.as_str().to_string(),
         appearance: prefs.appearance().as_str(),
         language: prefs.language().as_str(),
+        interface_language: prefs.interface_language(),
         insertion_mode: prefs.insertion_mode().as_str(),
         copy_on_failure: prefs.copy_on_failure(),
         history: HistoryWireOut {
@@ -245,6 +265,46 @@ fn parse_history(value: Option<toml::Value>) -> (HistoryPolicy, Vec<String>) {
 mod tests {
     use super::*;
     use crate::prefs::DEFAULT_HOLD;
+
+    #[test]
+    fn interface_and_dictation_languages_round_trip_independently() {
+        for interface in InterfaceLanguage::available() {
+            for dictation in [
+                LanguagePref::Auto,
+                LanguagePref::French,
+                LanguagePref::English,
+            ] {
+                let mut prefs = Prefs::default_fresh();
+                prefs.set_interface_language(interface);
+                prefs.set_language(dictation);
+                let (loaded, warnings) = parse_wire(&encode(&prefs).unwrap()).unwrap();
+                assert_eq!(loaded, prefs);
+                assert!(warnings.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_or_invalid_interface_language_preserves_dictation_and_setup() {
+        let legacy = "hold='Alt+Space'\ncancel='Esc'\nmodel='whisper-small'\nlanguage='fr'\nonboarding_step='permissions'\nonboarding_version=1\n";
+        for field in [
+            "",
+            "interface_language='zz-unavailable'",
+            "interface_language=42",
+            "interface_language=false",
+        ] {
+            let (loaded, _) = parse_wire(&format!("{legacy}{field}")).unwrap();
+            assert_eq!(loaded.interface_language(), InterfaceLanguage::ENGLISH);
+            assert_eq!(loaded.language(), LanguagePref::French);
+            assert_eq!(loaded.model, ModelId::WhisperSmall);
+            assert_eq!(loaded.hold(), "Alt+Space");
+            assert_eq!(
+                loaded.onboarding_step,
+                super::super::OnboardingStep::Permissions
+            );
+            assert!(!loaded.needs_onboarding());
+        }
+    }
     fn old_prefs() -> String {
         let mut value: toml::Value = encode(&Prefs::default_fresh()).unwrap().parse().unwrap();
         value.as_table_mut().unwrap().remove("history");

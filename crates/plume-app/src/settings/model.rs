@@ -1,21 +1,15 @@
+use crate::settings::i18n::tr;
 use gpui::{
-    deferred, div, prelude::*, px, relative, svg, AnyElement, Context, Div, FontWeight,
-    SharedString,
+    div, prelude::*, px, relative, svg, AnyElement, Context, Div, FontWeight, SharedString,
 };
 use plume_ui::Tokens;
 
 use crate::catalog::{self, ModelEntry, ModelId};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
-use crate::prefs::{LanguagePref, Prefs};
+use crate::prefs::Prefs;
 
 use super::view::{error_text, page, settings_divider, settings_group, settings_section};
 use super::SettingsView;
-
-const LANGUAGES: [LanguagePref; 3] = [
-    LanguagePref::Auto,
-    LanguagePref::French,
-    LanguagePref::English,
-];
 
 pub(super) fn model_page(
     view: &SettingsView,
@@ -24,24 +18,21 @@ pub(super) fn model_page(
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     page(
-        "Models",
+        tr("ui.models"),
         div()
             .flex()
             .flex_col()
             .gap(px(20.))
             .child(settings_section(
                 tokens,
-                "Recognition",
-                settings_group(tokens).child(language_row(
-                    tokens,
-                    prefs.language(),
-                    view.language_open,
-                    cx,
-                )),
+                tr("ui.languages"),
+                settings_group(tokens)
+                    .child(super::languages::dictation_language_row(view, tokens, cx)),
             ))
+            .children(super::languages::compatibility_warning(view, tokens))
             .child(settings_section(
                 tokens,
-                "Available models",
+                tr("ui.available_models"),
                 model_catalog(view, tokens, prefs, cx),
             ))
             .children(model_error(&view.phase).map(|text| error_text(tokens, text)))
@@ -106,7 +97,7 @@ fn catalog_model_row(
     let (label, enabled) = if supported {
         (label, enabled && !view.settings_preview)
     } else {
-        ("Unsupported".into(), false)
+        ("ui.unsupported".into(), false)
     };
     let can_delete = installed && !view.downloads.is_active_for(entry.id) && !view.settings_preview;
     let is_current = view.active_model == Some(entry.id);
@@ -163,6 +154,12 @@ fn catalog_model_row(
                         .flex_col()
                         .gap(px(5.))
                         .child(div().text_xs().text_color(tokens.muted).child(detail))
+                        .children((!supported).then(|| {
+                            div()
+                                .text_xs()
+                                .text_color(tokens.muted)
+                                .child(tr("ui.language_not_supported"))
+                        }))
                         .child(
                             div()
                                 .flex()
@@ -170,8 +167,8 @@ fn catalog_model_row(
                                 .flex_wrap()
                                 .items_center()
                                 .gap(px(14.))
-                                .child(spec_meter("Speed", entry.speed, tokens))
-                                .child(spec_meter("Accuracy", entry.accuracy, tokens)),
+                                .child(spec_meter(tr("ui.speed"), entry.speed, tokens))
+                                .child(spec_meter(tr("ui.accuracy"), entry.accuracy, tokens)),
                         )
                         .into_any_element(),
                 }),
@@ -232,18 +229,32 @@ fn catalog_model_action(
     installed: bool,
 ) -> (SharedString, bool) {
     if active_model == Some(id) {
-        return (if installed { "In use" } else { "In memory" }.into(), false);
+        return (
+            if installed {
+                "ui.in_use"
+            } else {
+                "ui.in_memory"
+            }
+            .into(),
+            false,
+        );
     }
     if phase.prefs().model == id {
         return match phase {
-            AppPhase::Live { .. } => (if installed { "Use" } else { "Download" }.into(), true),
+            AppPhase::Live { .. } => (
+                if installed { "ui.use" } else { "ui.download" }.into(),
+                true,
+            ),
             AppPhase::Onboarding { status, .. } => match status {
-                OnboardStatus::Idle => (if installed { "Use" } else { "Download" }.into(), true),
-                OnboardStatus::Activating => ("Loading…".into(), false),
-                OnboardStatus::Fetching { .. } => ("Downloading".into(), false),
-                OnboardStatus::Failed { .. } => ("Retry".into(), true),
+                OnboardStatus::Idle => (
+                    if installed { "ui.use" } else { "ui.download" }.into(),
+                    true,
+                ),
+                OnboardStatus::Activating => ("ui.loading_progress".into(), false),
+                OnboardStatus::Fetching { .. } => ("ui.downloading".into(), false),
+                OnboardStatus::Failed { .. } => ("ui.retry".into(), true),
             },
-            AppPhase::Refused { .. } => ("Retry".into(), true),
+            AppPhase::Refused { .. } => ("ui.retry".into(), true),
         };
     }
     let busy = matches!(
@@ -253,7 +264,10 @@ fn catalog_model_action(
             ..
         }
     );
-    (if installed { "Use" } else { "Download" }.into(), !busy)
+    (
+        if installed { "ui.use" } else { "ui.download" }.into(),
+        !busy,
+    )
 }
 
 fn catalog_model_button(
@@ -263,7 +277,7 @@ fn catalog_model_button(
     enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
-    let status = matches!(label.as_ref(), "In use" | "In memory");
+    let status = matches!(label.as_ref(), "ui.in_use" | "ui.in_memory");
     div()
         .id(SharedString::from(format!("model-{}-action", id.as_str())))
         .h(px(32.))
@@ -287,6 +301,9 @@ fn catalog_model_button(
                 .hover(|style| style.bg(tokens.fill_hover))
                 .active(|style| style.bg(tokens.group))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
+                    if !id.supports(this.phase.prefs().language()) {
+                        return;
+                    }
                     this.capture.cancel();
                     let mut prefs = this.phase.prefs().clone();
                     prefs.model = id;
@@ -294,7 +311,7 @@ fn catalog_model_button(
                     crate::begin_pack(cx, prefs, request);
                 }))
         })
-        .child(label)
+        .child(tr(label.as_ref()).to_owned())
 }
 
 fn catalog_model_delete_button(
@@ -392,120 +409,6 @@ pub(super) fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn language_row(
-    tokens: &Tokens,
-    selected: LanguagePref,
-    open: bool,
-    cx: &mut Context<SettingsView>,
-) -> impl IntoElement {
-    div()
-        .w_full()
-        .relative()
-        .min_h(px(56.))
-        .px(px(14.))
-        .py(px(10.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(16.))
-        .child(div().flex_1().min_w_0().text_sm().child("Language"))
-        .child(
-            div()
-                .id("language-select")
-                .w(px(156.))
-                .flex_shrink_0()
-                .h(px(32.))
-                .px(px(10.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(tokens.hairline)
-                .bg(tokens.fill)
-                .text_sm()
-                .cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover))
-                .when(open, |el| el.bg(tokens.fill_hover))
-                .active(|style| style.bg(tokens.group))
-                .on_click(cx.listener(|this, _event, _window, cx| {
-                    this.language_open = !this.language_open;
-                    cx.notify();
-                }))
-                .child(selected.label())
-                .child(
-                    svg()
-                        .path("fluent/chevron-down.svg")
-                        .size(px(14.))
-                        .text_color(tokens.muted),
-                ),
-        )
-        .when(open, |el| {
-            el.child(
-                // This hitbox spans both the trigger and the popup. It observes clicks
-                // elsewhere in the window without intercepting language option clicks.
-                div()
-                    .id("language-menu-boundary")
-                    .absolute()
-                    .top(px(10.))
-                    .right(px(14.))
-                    .w(px(156.))
-                    .h(px(136.))
-                    .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
-                        this.language_open = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                // The model catalog is a later sibling, so paint the menu after the page content.
-                deferred(
-                    div()
-                        .absolute()
-                        // Open into the page instead of the native title bar. The menu is
-                        // deferred below, so it still paints over the model catalog.
-                        .top(px(46.))
-                        .right(px(14.))
-                        .w(px(156.))
-                        .p(px(4.))
-                        .flex()
-                        .flex_col()
-                        .rounded(px(7.))
-                        .border_1()
-                        .border_color(tokens.hairline)
-                        .bg(tokens.elevated)
-                        .shadow_md()
-                        .children(LANGUAGES.into_iter().map(|language| {
-                            let active = language == selected;
-                            div()
-                                .id(SharedString::from(format!(
-                                    "language-{}",
-                                    language.as_str()
-                                )))
-                                .h(px(30.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(5.))
-                                .text_sm()
-                                .when(active, |row| {
-                                    row.bg(tokens.fill).font_weight(FontWeight::MEDIUM)
-                                })
-                                .when(!active, |row| {
-                                    row.cursor_pointer()
-                                        .hover(|style| style.bg(tokens.fill_hover))
-                                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                                            this.commit_language(language, cx);
-                                        }))
-                                })
-                                .child(language.label())
-                        })),
-                )
-                .with_priority(1),
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{catalog_model_action, download_status, format_bytes};
@@ -528,11 +431,11 @@ mod tests {
         let phase = onboarding(ModelId::Nemotron35Compact, OnboardStatus::Idle);
         let (label, enabled) =
             catalog_model_action(&phase, None, ModelId::Nemotron35Compact, false);
-        assert_eq!(label.as_ref(), "Download");
+        assert_eq!(label.as_ref(), "ui.download");
         assert!(enabled);
         let (label, enabled) =
             catalog_model_action(&phase, None, ModelId::WhisperLargeV3Turbo, true);
-        assert_eq!(label.as_ref(), "Use");
+        assert_eq!(label.as_ref(), "ui.use");
         assert!(enabled);
     }
 
@@ -541,11 +444,11 @@ mod tests {
         let phase = onboarding(ModelId::WhisperLargeV3Turbo, OnboardStatus::Activating);
         let (label, enabled) =
             catalog_model_action(&phase, None, ModelId::WhisperLargeV3Turbo, true);
-        assert_eq!(label.as_ref(), "Loading…");
+        assert_eq!(label.as_ref(), "ui.loading_progress");
         assert!(!enabled);
         let (label, enabled) =
             catalog_model_action(&phase, None, ModelId::Nemotron35Compact, false);
-        assert_eq!(label.as_ref(), "Download");
+        assert_eq!(label.as_ref(), "ui.download");
         assert!(!enabled);
     }
 
@@ -565,11 +468,11 @@ mod tests {
         let active = Some(ModelId::WhisperLargeV3Turbo);
         let (label, enabled) =
             catalog_model_action(&phase, active, ModelId::WhisperLargeV3Turbo, true);
-        assert_eq!(label.as_ref(), "In use");
+        assert_eq!(label.as_ref(), "ui.in_use");
         assert!(!enabled);
         let (label, enabled) =
             catalog_model_action(&phase, active, ModelId::Nemotron35Compact, false);
-        assert_eq!(label.as_ref(), "Downloading");
+        assert_eq!(label.as_ref(), "ui.downloading");
         assert!(!enabled);
     }
 
@@ -582,7 +485,7 @@ mod tests {
             ModelId::WhisperLargeV3Turbo,
             false,
         );
-        assert_eq!(label.as_ref(), "In memory");
+        assert_eq!(label.as_ref(), "ui.in_memory");
         assert!(!enabled);
     }
 

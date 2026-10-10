@@ -1,6 +1,9 @@
+use crate::settings::i18n::tr;
 mod actions;
 mod dictation;
 mod history_view;
+mod i18n;
+mod languages;
 mod model;
 mod onboarding;
 mod release_notes;
@@ -42,11 +45,11 @@ enum SettingsSection {
 impl SettingsSection {
     fn title(self) -> &'static str {
         match self {
-            Self::Dictation => "Dictation",
-            Self::Model => "Model",
-            Self::Appearance => "Appearance",
-            Self::History => "History",
-            Self::About => "About",
+            Self::Dictation => tr("ui.dictation"),
+            Self::Model => tr("ui.model"),
+            Self::Appearance => tr("interface.title"),
+            Self::History => tr("ui.history"),
+            Self::About => tr("ui.about"),
         }
     }
 
@@ -74,7 +77,10 @@ pub struct SettingsView {
     prefs_path: std::path::PathBuf,
     settings_preview: bool,
     section: SettingsSection,
-    language_open: bool,
+    language_menu: Option<languages::LanguageMenu>,
+    language_menu_index: usize,
+    language_focus: [FocusHandle; 2],
+    language_scroll: ScrollHandle,
     insertion_open: bool,
     save_error: Option<String>,
     capture: ShortcutCapture,
@@ -105,7 +111,7 @@ impl SettingsView {
     fn reset_for_phase(&mut self) {
         self.capture.cancel();
         self.shortcut_edit.take();
-        self.language_open = false;
+        self.language_menu = None;
         self.insertion_open = false;
         self.history_menu = None;
     }

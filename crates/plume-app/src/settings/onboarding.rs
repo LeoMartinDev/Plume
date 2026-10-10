@@ -1,3 +1,4 @@
+use crate::settings::i18n::tr;
 use gpui::{
     div, prelude::*, px, relative, svg, Animation, AnimationExt, AnyElement, Context, FontWeight,
     SharedString, Window,
@@ -96,13 +97,16 @@ impl SettingsView {
         if let Some(setup) = &mut self.onboarding {
             setup.model_ready = false;
             setup.engine = None;
-            self.phase.prefs_mut().onboarding_step = OnboardingStep::Model;
+            if self.phase.prefs().onboarding_step != OnboardingStep::Languages {
+                self.phase.prefs_mut().onboarding_step = OnboardingStep::Model;
+            }
             self.save_prefs();
         }
     }
 
     fn select_model(&mut self, id: ModelId, cx: &mut Context<Self>) {
-        if model_busy(&self.phase) || self.is_busy() {
+        if model_busy(&self.phase) || self.is_busy() || !id.supports(self.phase.prefs().language())
+        {
             return;
         }
         if self.phase.prefs().model == id {
@@ -124,7 +128,15 @@ impl SettingsView {
     }
 
     fn download_model(&mut self, cx: &mut Context<Self>) {
-        if model_busy(&self.phase) || self.is_busy() || self.settings_preview {
+        if model_busy(&self.phase)
+            || self.is_busy()
+            || self.settings_preview
+            || !self
+                .phase
+                .prefs()
+                .model
+                .supports(self.phase.prefs().language())
+        {
             return;
         }
         self.save_prefs();
@@ -151,7 +163,12 @@ impl SettingsView {
                 && !setup.finished
                 && self.session_control.is_some()
                 && setup.session_error.is_none()
-        }) && !self.is_busy()
+        }) && self
+            .phase
+            .prefs()
+            .model
+            .supports(self.phase.prefs().language())
+            && !self.is_busy()
             && self.save_error.is_none()
     }
 
@@ -323,6 +340,11 @@ impl SettingsView {
                 let setup = self.onboarding.as_ref().unwrap();
                 let mode = if visible
                     && setup.permissions.granted()
+                    && self
+                        .phase
+                        .prefs()
+                        .model
+                        .supports(self.phase.prefs().language())
                     && self.phase.prefs().onboarding_step == OnboardingStep::Permissions
                 {
                     SessionMode::Preview
@@ -339,6 +361,11 @@ impl SettingsView {
             && visible
             && self.phase.prefs().onboarding_step == OnboardingStep::Permissions
             && setup.model_ready
+            && self
+                .phase
+                .prefs()
+                .model
+                .supports(self.phase.prefs().language())
             && setup.permissions.granted()
         {
             if !setup.microphone_ready
@@ -432,6 +459,7 @@ pub(super) fn render(
                         return;
                     }
                     let step = match event.keystroke.key.as_str() {
+                        "0" => Some(OnboardingStep::Languages),
                         "1" => Some(OnboardingStep::Model),
                         "2" => Some(OnboardingStep::Shortcuts),
                         "3" => Some(OnboardingStep::Permissions),
@@ -459,13 +487,21 @@ pub(super) fn render(
         .border_color(tokens.hairline)
         .bg(tokens.content);
     let body = match step {
+        OnboardingStep::Languages => languages_screen(view, tokens, cx),
         OnboardingStep::Model => model_screen(view, tokens, cx),
         OnboardingStep::Shortcuts => shortcuts_screen(view, tokens, cx),
         OnboardingStep::Permissions => permissions_screen(view, tokens, cx),
     };
     let busy = model_busy(&view.phase);
     let next_enabled = match step {
-        OnboardingStep::Model => setup.model_ready || (!busy && !view.settings_preview),
+        OnboardingStep::Languages => !busy,
+        OnboardingStep::Model => {
+            view.phase
+                .prefs()
+                .model
+                .supports(view.phase.prefs().language())
+                && (setup.model_ready || (!busy && !view.settings_preview))
+        }
         OnboardingStep::Shortcuts => {
             !view.capture.is_listening() && view.capture.reject().is_none()
         }
@@ -473,19 +509,19 @@ pub(super) fn render(
     } && !view.is_busy()
         && view.save_error.is_none();
     let next_label = match step {
-        OnboardingStep::Model if busy => "Preparing…",
+        OnboardingStep::Model if busy => tr("ui.preparing_progress"),
         OnboardingStep::Model if !setup.model_ready => {
             if crate::catalog::is_complete(
                 view.phase.prefs().model,
                 &view.phase.prefs().model.data_dir(),
             ) {
-                "Load model"
+                tr("ui.load_model")
             } else {
-                "Download"
+                tr("ui.download")
             }
         }
-        OnboardingStep::Permissions => "Finish",
-        _ => "Next",
+        OnboardingStep::Permissions => tr("common.finish"),
+        _ => tr("common.next"),
     };
     content = content
         .child(
@@ -519,7 +555,7 @@ pub(super) fn render(
                         .child(button(
                             tokens,
                             "onboarding-save-retry",
-                            "Retry saving",
+                            tr("ui.retry_saving"),
                             true,
                             false,
                             cx,
@@ -541,20 +577,22 @@ pub(super) fn render(
                     div()
                         .flex_1()
                         .flex()
-                        .children((step != OnboardingStep::Model).then(|| {
+                        .children((step != OnboardingStep::Languages).then(|| {
                             button(
                                 tokens,
                                 "onboarding-back",
-                                "Back",
+                                tr("common.back"),
                                 !view.is_busy() && !setup.session_starting,
                                 false,
                                 cx,
                                 move |view, _, cx| {
                                     view.change_step(
-                                        if step == OnboardingStep::Permissions {
-                                            OnboardingStep::Shortcuts
-                                        } else {
-                                            OnboardingStep::Model
+                                        match step {
+                                            OnboardingStep::Permissions => {
+                                                OnboardingStep::Shortcuts
+                                            }
+                                            OnboardingStep::Shortcuts => OnboardingStep::Model,
+                                            _ => OnboardingStep::Languages,
                                         },
                                         cx,
                                     )
@@ -571,6 +609,7 @@ pub(super) fn render(
                     true,
                     cx,
                     move |view, _, cx| match step {
+                        OnboardingStep::Languages => view.change_step(OnboardingStep::Model, cx),
                         OnboardingStep::Model if !view.onboarding.as_ref().unwrap().model_ready => {
                             view.download_model(cx)
                         }
@@ -595,6 +634,7 @@ fn progress_indicator(step: OnboardingStep, tokens: &Tokens) -> AnyElement {
         .gap(px(6.))
         .children(
             [
+                OnboardingStep::Languages,
                 OnboardingStep::Model,
                 OnboardingStep::Shortcuts,
                 OnboardingStep::Permissions,
@@ -633,6 +673,7 @@ fn model_screen(
                 .gap(px(12.))
                 .children(CHOICES.into_iter().enumerate().map(|(index, id)| {
                     let entry = id.entry();
+                    let supported = id.supports(view.phase.prefs().language());
                     let chosen = selected == id;
                     let nvidia = id == ModelId::Nemotron35Compact;
                     div()
@@ -659,8 +700,8 @@ fn model_screen(
                         } else {
                             tokens.group
                         })
-                        .when(busy && !chosen, |el| el.opacity(0.5))
-                        .when(!busy, |el| {
+                        .when((busy && !chosen) || !supported, |el| el.opacity(0.5))
+                        .when(!busy && supported, |el| {
                             el.cursor_pointer()
                                 .tab_index(0)
                                 .hover(move |style| {
@@ -689,7 +730,7 @@ fn model_screen(
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
-                                .child(["Small", "Medium", "Large"][index]),
+                                .child([tr("ui.small"), tr("ui.medium"), tr("ui.large")][index]),
                         )
                         .child(
                             div()
@@ -736,27 +777,36 @@ fn model_screen(
                                 .flex()
                                 .flex_col()
                                 .gap(px(8.))
-                                .child(super::model::spec_meter("Speed", entry.speed, tokens))
-                                .child(super::model::spec_meter("Accuracy", entry.accuracy, tokens))
+                                .child(super::model::spec_meter(
+                                    tr("ui.speed"),
+                                    entry.speed,
+                                    tokens,
+                                ))
+                                .child(super::model::spec_meter(
+                                    tr("ui.accuracy"),
+                                    entry.accuracy,
+                                    tokens,
+                                ))
                                 .child(div().flex_1())
-                                .child(
-                                    div()
-                                        .h(px(16.))
-                                        .text_xs()
-                                        .text_color(tokens.muted)
-                                        .child(if nvidia { "Recommended" } else { "" }),
-                                )
+                                .child(div().h(px(16.)).text_xs().text_color(tokens.muted).child(
+                                    if !supported {
+                                        tr("ui.language_not_supported")
+                                    } else if nvidia {
+                                        tr("ui.recommended")
+                                    } else {
+                                        ""
+                                    },
+                                ))
                                 .into_any_element()
                         })
                 })),
         );
     if !CHOICES.contains(&selected) {
-        body = body.child(
-            div()
-                .text_xs()
-                .text_color(tokens.muted)
-                .child(format!("Current model: {}", selected.entry().name)),
-        );
+        body = body.child(div().text_xs().text_color(tokens.muted).child(format!(
+            "{} {}",
+            tr("ui.current_model"),
+            selected.entry().name
+        )));
     }
     // A legacy selection (e.g. Whisper Small) has no card in this grid.
     if busy && !CHOICES.contains(&selected) {
@@ -776,7 +826,33 @@ fn model_screen(
     {
         body = body.child(super::view::error_text(tokens, warning.clone()));
     }
-    body.into_any_element()
+    body.children(super::languages::compatibility_warning(view, tokens))
+        .into_any_element()
+}
+
+fn languages_screen(
+    view: &SettingsView,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(16.))
+        .child(
+            div()
+                .text_lg()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(tr("onboarding.languages.title")),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(tokens.muted)
+                .child(tr("onboarding.languages.description")),
+        )
+        .child(super::languages::language_choices(view, tokens, cx))
+        .into_any_element()
 }
 
 fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
@@ -792,11 +868,11 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
         .zip(total)
         .map(|(last, total)| (last.bytes as f32 / total as f32).clamp(0., 1.));
     let label = if progress.is_none() {
-        "Loading model"
+        tr("ui.loading_model")
     } else if progress.is_some_and(|last| last.bytes == 0) && total.is_none() {
-        "Connecting…"
+        tr("ui.connecting_progress")
     } else {
-        "Downloading"
+        tr("ui.downloading")
     };
     let detail = match progress {
         Some(last) => match total {
@@ -806,11 +882,15 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
                 total as f64 / 1_048_576.,
             ),
             None if last.bytes > 0 => {
-                format!("{} received", super::model::format_bytes(last.bytes))
+                format!(
+                    "{} {}",
+                    super::model::format_bytes(last.bytes),
+                    tr("ui.received")
+                )
             }
-            None => "Waiting for the download".into(),
+            None => tr("ui.waiting_for_the_download").into(),
         },
-        None => "Getting ready to transcribe".into(),
+        None => tr("ui.getting_ready_to_transcribe").into(),
     };
     let fill = div().h_full().rounded_full().bg(tokens.accent);
     let fill = if let Some(fraction) = fraction {
@@ -906,12 +986,15 @@ fn shortcut_card(
 ) -> AnyElement {
     let listening = view.capture.is_listening() && view.capture_toggle == toggle;
     let shortcut = if toggle {
-        view.phase.prefs().toggle().unwrap_or("Disabled")
+        view.phase.prefs().toggle().unwrap_or(tr("ui.disabled"))
     } else {
         view.phase.prefs().hold()
     };
     let label = if listening {
-        view.capture.preview().unwrap_or("Press keys…").to_string()
+        view.capture
+            .preview()
+            .unwrap_or(tr("ui.press_keys_progress"))
+            .to_string()
     } else {
         pretty(shortcut)
     };
@@ -943,12 +1026,16 @@ fn shortcut_card(
             div()
                 .text_sm()
                 .font_weight(FontWeight::MEDIUM)
-                .child(if toggle { "Hands free" } else { "Push to talk" }),
+                .child(if toggle {
+                    tr("ui.hands_free")
+                } else {
+                    tr("ui.push_to_talk")
+                }),
         )
         .child(div().text_xs().text_color(tokens.muted).child(if toggle {
-            "Press to start and stop"
+            tr("ui.press_to_start_and_stop")
         } else {
-            "Hold to speak"
+            tr("ui.hold_to_speak")
         }))
         .child(div().flex_1())
         .child(
@@ -1036,7 +1123,7 @@ fn shortcut_card(
                         }
                     }),
                 )
-                .child("Reset"),
+                .child(tr("ui.reset")),
         )
         .into_any_element()
 }
@@ -1097,19 +1184,19 @@ fn permissions_screen(
     let setup = view.onboarding.as_ref().unwrap();
     let ready = view.can_finish();
     let microphone_label = if setup.microphone_checking {
-        "Checking…"
+        tr("ui.checking_progress")
     } else if setup.permissions.microphone == Permission::Denied {
-        "Settings"
+        tr("ui.settings")
     } else {
-        "Allow"
+        tr("ui.allow")
     };
     let microphone_action = if setup.permissions.microphone == Permission::Granted {
         permission_allowed(
             tokens,
             if setup.microphone_checking {
-                "Checking…"
+                tr("ui.checking_progress")
             } else {
-                "Allowed"
+                tr("ui.allowed")
             },
         )
     } else {
@@ -1151,11 +1238,11 @@ fn permissions_screen(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
-                    .child("Permissions"),
+                    .child(tr("ui.permissions")),
             )
             .child(permission_row(
                 tokens,
-                "Microphone",
+                tr("ui.microphone"),
                 svg()
                     .path("fluent/mic.svg")
                     .size(px(20.))
@@ -1167,7 +1254,7 @@ fn permissions_screen(
                 el.child(div().h(px(1.)).flex_shrink_0().bg(tokens.hairline))
                     .child(permission_row(
                         tokens,
-                        "Accessibility",
+                        tr("ui.accessibility"),
                         div()
                             .size(px(20.))
                             .flex()
@@ -1178,12 +1265,12 @@ fn permissions_screen(
                             .child("⌘")
                             .into_any_element(),
                         if setup.permissions.accessibility == Permission::Granted {
-                            permission_allowed(tokens, "Allowed")
+                            permission_allowed(tokens, tr("ui.allowed"))
                         } else {
                             button(
                                 tokens,
                                 "onboarding-accessibility",
-                                "Settings",
+                                tr("ui.settings"),
                                 setup.permissions.accessibility != Permission::Granted
                                     && !view.settings_preview,
                                 false,
@@ -1199,24 +1286,21 @@ fn permissions_screen(
             div()
                 .text_xs()
                 .text_color(tokens.muted)
-                .child("If Plume is already enabled in Accessibility, the entry may belong to an older build. Quit Plume, remove that entry, add the current Plume app again, then relaunch."),
+                .child(tr("onboarding.permissions.old_build")),
         );
     }
     if let Some(error) = &setup.session_error {
         body = body
             .child(super::view::error_text(tokens, error.clone()))
             .when(cfg!(target_os = "macos"), |el| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child("Check Privacy & Security, then relaunch Plume if needed."),
-                )
+                el.child(div().text_xs().text_color(tokens.muted).child(tr(
+                    "Check Privacy & Security, then relaunch Plume if needed.",
+                )))
             })
             .child(button(
                 tokens,
                 "onboarding-service-retry",
-                "Check again",
+                tr("ui.check_again"),
                 !view.is_busy(),
                 false,
                 cx,
@@ -1229,31 +1313,31 @@ fn permissions_screen(
             ));
     }
     let status = match &setup.feedback {
-        Feedback::Starting => "Opening microphone…".to_string(),
-        Feedback::RecordingNotice { .. } => "Listening…".into(),
-        Feedback::Transcribing => "Transcribing…".into(),
-        Feedback::Cancelling => "Cancelling…".into(),
-        Feedback::NoSpeech => "No speech detected. Try again.".into(),
-        Feedback::Success => "Done".into(),
-        Feedback::Error { title, advice } => format!("{title}: {advice}"),
+        Feedback::Starting => tr("ui.opening_microphone_progress").to_string(),
+        Feedback::RecordingNotice { .. } => tr("ui.listening_progress").into(),
+        Feedback::Transcribing => tr("ui.transcribing_progress").into(),
+        Feedback::Cancelling => tr("ui.cancelling_progress").into(),
+        Feedback::NoSpeech => tr("ui.no_speech_detected_try_again").into(),
+        Feedback::Success => tr("ui.done").into(),
+        Feedback::Error { title, advice } => format!("{}: {}", tr(title), tr(advice)),
         _ if setup.permissions.microphone != Permission::Granted
             && setup.permissions.accessibility != Permission::Granted =>
         {
-            "Allow Microphone and Accessibility to continue".into()
+            tr("ui.allow_microphone_and_accessibility_to_continue").into()
         }
         _ if setup.permissions.microphone != Permission::Granted => {
-            "Allow Microphone to continue".into()
+            tr("ui.allow_microphone_to_continue").into()
         }
         _ if setup.permissions.accessibility != Permission::Granted => {
-            "Enable Plume in Accessibility settings to continue".into()
+            tr("ui.enable_plume_in_accessibility_settings_to_continue").into()
         }
-        _ if setup.session_error.is_some() => "Resolve the error above to continue".into(),
-        _ if setup.microphone_checking => "Checking microphone…".into(),
-        _ if !setup.model_ready => "Loading model…".into(),
-        _ if setup.session_starting => "Starting shortcut service…".into(),
-        _ if ready => "Hold to speak".into(),
-        _ if view.save_error.is_some() => "Save settings to continue".into(),
-        _ => "Preparing dictation…".into(),
+        _ if setup.session_error.is_some() => tr("ui.resolve_the_error_above_to_continue").into(),
+        _ if setup.microphone_checking => tr("ui.checking_microphone_progress").into(),
+        _ if !setup.model_ready => tr("ui.loading_model_progress").into(),
+        _ if setup.session_starting => tr("ui.starting_shortcut_service_progress").into(),
+        _ if ready => tr("ui.hold_to_speak").into(),
+        _ if view.save_error.is_some() => tr("ui.save_settings_to_continue").into(),
+        _ => tr("ui.preparing_dictation_progress").into(),
     };
     let active = matches!(
         setup.feedback,
@@ -1287,9 +1371,14 @@ fn permissions_screen(
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .child("Try dictation"),
+                            .child(tr("ui.try_dictation")),
                     )
-                    .child(div().text_xs().text_color(tokens.muted).child("Optional")),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.muted)
+                            .child(tr("ui.optional")),
+                    ),
             )
             .child(if setup.transcript.is_empty() {
                 div()

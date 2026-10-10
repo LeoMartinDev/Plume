@@ -1,9 +1,9 @@
+use crate::settings::i18n::tr;
 use gpui::{deferred, div, prelude::*, px, svg, AnyElement, Context, FontWeight, SharedString};
 use plume_session::InsertionMode;
 use plume_ui::{Segment, Segmented, Tokens};
 
 use crate::prefs::Prefs;
-use crate::shortcut_capture::pill_label;
 
 use super::view::{
     error_text, page, settings_divider, settings_group, settings_row, settings_section,
@@ -12,9 +12,9 @@ use super::SettingsView;
 
 const HOLD_CAPTURE_ID: &str = "hold-capture";
 const INSERTION_MODES: [(InsertionMode, &str); 3] = [
-    (InsertionMode::Auto, "Automatic"),
-    (InsertionMode::Clipboard, "Paste"),
-    (InsertionMode::Typing, "Typing"),
+    (InsertionMode::Auto, "ui.automatic"),
+    (InsertionMode::Clipboard, "ui.paste"),
+    (InsertionMode::Typing, "ui.typing"),
 ];
 
 pub(super) fn dictation_page(
@@ -29,22 +29,32 @@ pub(super) fn dictation_page(
         .map(str::to_string)
         .or_else(|| view.save_error.clone());
     page(
-        "Dictation",
+        tr("ui.dictation"),
         div()
             .flex()
             .flex_col()
             .gap(px(16.))
-            .when(view.session_control.is_none() && !view.settings_preview, |el| {
-                el.child(div().text_sm().child("Dictation is unavailable. Download or repair a model in Models before trying your shortcut."))
-                    .child(div().id("dictation-open-models").text_sm().text_color(tokens.accent)
-                        .cursor_pointer().on_click(cx.listener(|view, _, _, cx| {
-                            view.section = super::SettingsSection::Model;
-                            cx.notify();
-                        })).child("Open Models"))
-            })
+            .when(
+                view.session_control.is_none() && !view.settings_preview,
+                |el| {
+                    el.child(div().text_sm().child(tr("dictation.model_unavailable")))
+                        .child(
+                            div()
+                                .id("dictation-open-models")
+                                .text_sm()
+                                .text_color(tokens.accent)
+                                .cursor_pointer()
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    view.section = super::SettingsSection::Model;
+                                    cx.notify();
+                                }))
+                                .child(tr("ui.open_models")),
+                        )
+                },
+            )
             .child(settings_section(
                 tokens,
-                "Shortcuts",
+                tr("ui.shortcuts"),
                 settings_group(tokens)
                     .flex()
                     .flex_col()
@@ -54,7 +64,7 @@ pub(super) fn dictation_page(
             ))
             .child(settings_section(
                 tokens,
-                "Text output",
+                tr("ui.text_output"),
                 settings_group(tokens)
                     .flex()
                     .flex_col()
@@ -79,14 +89,14 @@ pub(super) fn shortcut_row(
 ) -> impl IntoElement {
     let listening = view.capture.is_listening() && view.capture_toggle == toggle;
     let shortcut = if toggle {
-        prefs.toggle().unwrap_or("Disabled")
+        prefs.toggle().unwrap_or(tr("ui.disabled"))
     } else {
         prefs.hold()
     };
     let label = if listening {
         view.capture
             .preview()
-            .unwrap_or_else(|| pill_label(view.capture.phase(), shortcut))
+            .unwrap_or_else(|| tr("ui.press_keys_progress"))
             .to_string()
     } else {
         pretty_hold(shortcut)
@@ -110,17 +120,17 @@ pub(super) fn shortcut_row(
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(
-                    div()
-                        .text_sm()
-                        .child(if toggle { "Hands free" } else { "Push to talk" }),
-                )
+                .child(div().text_sm().child(if toggle {
+                    tr("ui.hands_free")
+                } else {
+                    tr("ui.push_to_talk")
+                }))
                 .when(listening, |row| {
                     row.child(
                         div()
                             .text_xs()
                             .text_color(tokens.muted)
-                            .child("Press a shortcut, then release to apply"),
+                            .child(tr("ui.press_a_shortcut_then_release_to_apply")),
                     )
                 }),
         )
@@ -168,7 +178,7 @@ pub(super) fn shortcut_row(
                             this.capture_toggle = toggle;
                             this.reset_hold(window, cx);
                         }))
-                        .child("Reset"),
+                        .child(tr("ui.reset")),
                 ),
         )
 }
@@ -181,7 +191,13 @@ fn insertion_mode_row(
 ) -> impl IntoElement {
     settings_row()
         .relative()
-        .child(div().flex_1().min_w_0().text_sm().child("Text insertion"))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_sm()
+                .child(tr("ui.text_insertion")),
+        )
         .child(
             div()
                 .id("insertion-select")
@@ -204,7 +220,7 @@ fn insertion_mode_row(
                     this.insertion_open = !this.insertion_open;
                     cx.notify();
                 }))
-                .child(insertion_mode_label(selected))
+                .child(tr(insertion_mode_label(selected)))
                 .child(
                     svg()
                         .path("fluent/chevron-down.svg")
@@ -266,7 +282,7 @@ fn insertion_mode_row(
                                             this.commit_insertion_mode(mode, cx);
                                         }))
                                 })
-                                .child(label)
+                                .child(tr(label))
                         })),
                 )
                 .with_priority(1),
@@ -292,13 +308,13 @@ fn copy_on_failure_row(
                 .flex_1()
                 .min_w_0()
                 .text_sm()
-                .child("Copy on insertion failure"),
+                .child(tr("ui.copy_on_insertion_failure")),
         )
         .child(Segmented::new(
             *tokens,
             enabled,
             [
-                Segment::new(true, "copy-failure-on", "On").on_click(
+                Segment::new(true, "copy-failure-on", tr("ui.on")).on_click(
                     cx,
                     |this: &mut SettingsView, cx| {
                         if !this.phase.prefs().copy_on_failure() {
@@ -306,7 +322,7 @@ fn copy_on_failure_row(
                         }
                     },
                 ),
-                Segment::new(false, "copy-failure-off", "Off").on_click(
+                Segment::new(false, "copy-failure-off", tr("ui.off")).on_click(
                     cx,
                     |this: &mut SettingsView, cx| {
                         if this.phase.prefs().copy_on_failure() {

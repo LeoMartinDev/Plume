@@ -6,6 +6,7 @@ pub mod download;
 mod file_store;
 pub mod history;
 pub mod history_policy;
+mod localization;
 pub mod lock;
 mod permissions;
 pub mod phase;
@@ -205,6 +206,10 @@ fn go_live(cx: &mut App, request: DownloadRequest, engine: Engine) {
         log_line("plume-app: ignored proven download for a different model");
         return;
     }
+    if !prefs.model.supports(prefs.language()) {
+        settings_window_show_refused(cx, "This model does not support your dictation language. Choose a compatible model to continue.".into());
+        return;
+    }
     let language = match prefs.language() {
         crate::prefs::LanguagePref::Auto => Language::Auto,
         crate::prefs::LanguagePref::French => Language::French,
@@ -235,6 +240,10 @@ pub(crate) fn start_session(
     mode: plume_session::SessionMode,
 ) {
     let language_target = engine.language_target();
+    if !prefs.model.supports(prefs.language()) {
+        settings_window_show_refused(cx, "This model does not support your dictation language. Choose a compatible model to continue.".into());
+        return;
+    }
     let config = match plume_session::Config::from_prefs(
         prefs.hold(),
         prefs.cancel(),
