@@ -20,6 +20,7 @@ const links = [
 
 <header class="header" data-header>
   <nav class="nav" aria-label={s.menu}>
+    <span class="plate" aria-hidden="true"></span>
     <a href={home} class="brand"><Logo /> Plume</a>
     <div class="links" data-links>
       <span class="indicator" aria-hidden="true"></span>
@@ -78,7 +79,13 @@ const links = [
     z-index: 30;
     height: 68px;
     pointer-events: none;
+    /* Critically damped spring: eases in, settles without bouncing back */
+    --nav-ease: linear(0, 0.048, 0.15, 0.272, 0.394, 0.505, 0.603, 0.685, 0.752, 0.807, 0.85, 0.885, 0.912, 0.933, 0.949, 0.961, 0.971, 0.978, 0.983, 0.988, 0.991, 0.993, 0.995, 0.996, 1);
+    --nav-duration: 0.6s;
   }
+  /* The content never changes size while it moves: the plate behind it morphs, and the
+     brand, links and actions glide to their new place on transforms only (see the script),
+     so the text stays sharp instead of being laid out again on every frame. */
   .nav {
     position: absolute;
     top: 0;
@@ -92,27 +99,44 @@ const links = [
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+  }
+  .nav > * {
     pointer-events: auto;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    backdrop-filter: blur(0) saturate(1);
-    -webkit-backdrop-filter: blur(0) saturate(1);
-    /* One spring for the whole morph: it starts gently, settles with a slight overshoot,
-       and reverses from wherever it is when the scroll direction changes */
-    transition-property: width, height, padding, transform, background-color, border-color, box-shadow,
-      backdrop-filter, -webkit-backdrop-filter;
-    transition-duration: 0.7s;
-    transition-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
-    transition-timing-function: linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1);
   }
   .header.is-scrolled .nav,
   .header.is-open .nav {
-    /* Measured by the script so the width animates in every browser */
-    width: var(--nav-compact, fit-content);
-    max-width: calc(100% - 24px);
+    justify-content: center;
+  }
+  /* Positioned so they paint above the plate, which comes first in the markup
+     (a z-index on the plate would cut its backdrop blur off from the page) */
+  .brand,
+  .links,
+  .actions {
+    position: relative;
+    transition: transform var(--nav-duration) var(--nav-ease);
+  }
+  .plate {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    margin-inline: auto;
+    width: 100%;
+    height: 68px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    pointer-events: none;
+    transition-property: width, height, top, background-color, border-color, box-shadow, backdrop-filter,
+      -webkit-backdrop-filter;
+    transition-duration: var(--nav-duration);
+    transition-timing-function: var(--nav-ease);
+  }
+  .header.is-scrolled .plate,
+  .header.is-open .plate {
+    top: 8px;
     height: 52px;
-    padding-inline: 8px 6px;
-    transform: translateY(10px);
+    /* Measured by the script: the content's width plus 8px each side */
+    width: var(--nav-compact, 100%);
     background-color: var(--nav-pill-bg);
     border-color: var(--border-strong);
     box-shadow: var(--nav-pill-shadow);
@@ -216,19 +240,19 @@ const links = [
 
   .cta {
     display: flex;
-    overflow: hidden;
-    max-width: 180px;
     padding-left: 4px;
-    transition:
-      max-width 0.7s cubic-bezier(0.45, 0, 0.2, 1),
-      padding 0.7s cubic-bezier(0.45, 0, 0.2, 1),
-      opacity 0.3s ease;
-    transition-timing-function: linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1), linear(0, 0.046, 0.141, 0.264, 0.392, 0.508, 0.617, 0.71, 0.784, 0.846, 0.893, 0.928, 0.955, 0.975, 0.987, 0.996, 1.002, 1.005, 1.006, 1.007, 1.006, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.001, 1.001, 1.001, 1), ease;
+    transform-origin: right center;
+    transition: opacity 0.25s ease 0.1s, transform 0.25s ease 0.1s;
   }
+  /* Out of the flow, so the island takes its final size at once; it only fades */
   .header.cta-hidden .cta {
-    max-width: 0;
-    padding-left: 0;
+    position: absolute;
+    right: 0;
     opacity: 0;
+    transform: scale(0.92);
+    pointer-events: none;
+    transition-duration: 0.15s;
+    transition-delay: 0s;
   }
   .cta-btn {
     display: inline-flex;
@@ -277,15 +301,19 @@ const links = [
     /* Edge to edge on phones, so the menu can hang from its right end */
     .header.is-scrolled .nav,
     .header.is-open .nav {
+      justify-content: space-between;
+      padding-inline: 21px 19px;
+    }
+    .header.is-scrolled .plate,
+    .header.is-open .plate {
       width: calc(100% - 24px);
-      padding-inline: 8px 6px;
     }
     .menu {
       display: flex;
       flex-direction: column;
       position: absolute;
-      top: calc(100% + 8px);
-      right: 0;
+      top: 66px;
+      right: 12px;
       width: min(280px, calc(100vw - 24px));
       padding: 8px;
       border-radius: 22px;
@@ -330,28 +358,51 @@ const links = [
   const menu = document.querySelector<HTMLElement>('[data-menu]');
 
   if (header && links) {
+    const nav = header.querySelector<HTMLElement>('.nav')!;
+    const brand = header.querySelector<HTMLElement>('.brand')!;
+    const actions = header.querySelector<HTMLElement>('.actions')!;
+    const moving = [brand, links, actions];
+
+    // Width of the island in its scrolled state: the content, its gaps, 8px each side and the border.
+    // Rounded to an even number so the centered plate lands on whole pixels.
+    const measure = () => {
+      const gaps = 2 * parseFloat(getComputedStyle(nav).columnGap);
+      const width = brand.offsetWidth + links.offsetWidth + actions.offsetWidth + gaps + 16 + 2;
+      nav.style.setProperty('--nav-compact', `${2 * Math.ceil(width / 2)}px`);
+    };
+
+    // Switch the layout at once, then let each block glide from where it was (FLIP):
+    // only transforms animate, so nothing is laid out again while it moves.
+    const morph = (change: () => void) => {
+      const before = moving.map((el) => el.getBoundingClientRect().left);
+      change();
+      measure();
+      moving.forEach((el) => {
+        el.style.transition = 'none';
+        el.style.transform = '';
+      });
+      moving.forEach((el, i) => {
+        const dx = before[i] - el.getBoundingClientRect().left;
+        if (Math.abs(dx) > 0.5) el.style.transform = `translateX(${dx}px)`;
+      });
+      void nav.offsetWidth;
+      moving.forEach((el) => {
+        el.style.transition = '';
+        el.style.transform = '';
+      });
+    };
+    const setState = (name: string, on: boolean) => {
+      if (header.classList.contains(name) !== on) morph(() => header.classList.toggle(name, on));
+    };
+
+    measure();
+    document.fonts?.ready.then(measure);
+
     const anchors = [...links.querySelectorAll<HTMLAnchorElement>('a[data-section]')];
     const sections = anchors
       .map((a) => document.getElementById(a.dataset.section!))
       .filter((el): el is HTMLElement => el !== null);
     let active: HTMLAnchorElement | null = null;
-
-    // Width of the island: its content plus the padding, border and gaps of the scrolled state.
-    // A length (unlike fit-content) can be animated by every browser.
-    const nav = header.querySelector<HTMLElement>('.nav')!;
-    const brand = header.querySelector<HTMLElement>('.brand')!;
-    const actions = header.querySelector<HTMLElement>('.actions')!;
-    const cta = header.querySelector<HTMLElement>('.cta')!;
-    const ctaButton = header.querySelector<HTMLElement>('.cta-btn')!;
-    const measure = () => {
-      // The button plus its 4px lead-in, or nothing while it is folded away
-      const ctaWidth = header.classList.contains('cta-hidden') ? 0 : ctaButton.offsetWidth + 4;
-      const content = brand.offsetWidth + links.offsetWidth + actions.offsetWidth - cta.offsetWidth + ctaWidth;
-      const gaps = 2 * parseFloat(getComputedStyle(nav).columnGap);
-      nav.style.setProperty('--nav-compact', `${content + gaps + 8 + 6 + 2}px`);
-    };
-    measure();
-    document.fonts?.ready.then(measure);
 
     // Slide the highlight under the active link (or fade it out between sections)
     const place = (next: HTMLAnchorElement | null) => {
@@ -369,7 +420,7 @@ const links = [
     let ticking = false;
     const update = () => {
       ticking = false;
-      header.classList.toggle('is-scrolled', window.scrollY > 16);
+      setState('is-scrolled', window.scrollY > 16);
       // The section crossing a line a third of the way down the screen is the current one
       const line = window.innerHeight * 0.33;
       const current = sections.find((el) => {
@@ -395,28 +446,26 @@ const links = [
     const heroCta = document.querySelector('[data-smart-download]');
     if (heroCta && 'IntersectionObserver' in window) {
       new IntersectionObserver(([entry]) => {
-        const pastHero = !entry.isIntersecting && entry.boundingClientRect.top < 0;
-        header.classList.toggle('cta-hidden', pastHero);
-        measure();
+        setState('cta-hidden', !entry.isIntersecting && entry.boundingClientRect.top < 0);
       }).observe(heroCta);
     }
-  }
 
-  if (header && toggle && menu) {
-    const setOpen = (open: boolean) => {
-      header.classList.toggle('is-open', open);
-      toggle.setAttribute('aria-expanded', String(open));
-    };
-    toggle.addEventListener('click', () => setOpen(!header.classList.contains('is-open')));
-    menu.querySelectorAll('.menu-link').forEach((a) => a.addEventListener('click', () => setOpen(false)));
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && header.classList.contains('is-open')) {
-        setOpen(false);
-        toggle.focus();
-      }
-    });
-    document.addEventListener('click', (e) => {
-      if (!header.contains(e.target as Node)) setOpen(false);
-    });
+    if (toggle && menu) {
+      const setOpen = (open: boolean) => {
+        setState('is-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+      };
+      toggle.addEventListener('click', () => setOpen(!header.classList.contains('is-open')));
+      menu.querySelectorAll('.menu-link').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && header.classList.contains('is-open')) {
+          setOpen(false);
+          toggle.focus();
+        }
+      });
+      document.addEventListener('click', (e) => {
+        if (!header.contains(e.target as Node)) setOpen(false);
+      });
+    }
   }
 </script>
