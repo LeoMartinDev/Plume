@@ -1,6 +1,6 @@
 name: Website
 
-# Cloudflare Pages builds and deploys the site from the repo on its own
+# Cloudflare Workers Builds deploys the site from the repo on its own
 # (root directory: website/). This workflow only asks Cloudflare to rebuild
 # when a release is published, so the download buttons point at the new installers.
 
@@ -16,7 +16,7 @@ jobs:
   rebuild:
     runs-on: ubuntu-24.04
     steps:
-      - name: Trigger Cloudflare Pages deploy hook
+      - name: Trigger Cloudflare deploy hook
         env:
           DEPLOY_HOOK: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK }}
         run: |
