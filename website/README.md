@@ -27,20 +27,21 @@ The hero download button detects the visitor's OS and links straight to its inst
 
 ## Deploy (Cloudflare Pages)
 
-The Cloudflare Pages project is connected to this GitHub repo and builds the site itself:
+The Cloudflare Worker `plume` (static assets only, see `wrangler.jsonc`) is connected to this
+GitHub repo through Workers Builds:
 
 - Root directory: `website`
 - Build command: `npm run build`
-- Build output directory: `dist`
-- Node version: from `website/.nvmrc` (22; Astro needs 22.12+)
+- Deploy command: `npx wrangler deploy`
+- Non-production branch deploy command: `npx wrangler versions upload` (preview URLs)
 - Build watch paths → include `website/*`, so app-only commits don't rebuild the site
-- Production branch `main`; other branches and pull requests get preview URLs
+- Node version: from `website/.nvmrc` (22; Astro needs 22.12+)
 
 When a GitHub release is published, `.github/workflows/website.yml` calls a Cloudflare
 deploy hook so the site rebuilds and the download buttons point at the new installers.
-Setup: Pages project → Settings → Builds → Deploy hooks → create one for `main`,
-then save its URL as the repo secret `CLOUDFLARE_DEPLOY_HOOK`.
+Setup: Worker → Settings → Build → Deploy hooks → create one for `main`, then save its URL
+as the repo secret `CLOUDFLARE_DEPLOY_HOOK`.
 
 The app CI (`ci.yml`) ignores `website/**`, so website-only changes don't trigger app builds.
 
-Custom domain: Pages project → Custom domains → add `speakplume.com` (and `www.speakplume.com`).
+Custom domain: Worker → Settings → Domains & Routes → add `speakplume.com` (and `www.speakplume.com`).
