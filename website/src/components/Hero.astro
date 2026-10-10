@@ -11,6 +11,7 @@ const { lang, release } = Astro.props;
 const s = t(lang).hero;
 const k = KEYS[lang];
 const names = t(lang).download.platforms;
+const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
 ---
 
 <section id="top" class="container hero">
@@ -19,7 +20,7 @@ const names = t(lang).download.platforms;
     {release.version && <span class="version">{release.version}</span>}
     {s.badge}
   </p>
-  <h1 class="title">{s.title1}<br /><span class="dim">{s.title2}</span></h1>
+  <h1 class="title">{s.title1}<br /><span class="dim serif">{s.title2}</span></h1>
   <p class="lead">{s.lead}</p>
   <div class="ctas">
     <a
@@ -40,10 +41,10 @@ const names = t(lang).download.platforms;
     <a href={REPO_URL} class="btn btn-secondary btn-lg">{s.source}</a>
   </div>
   <p class="hint">
-    {s.hold} <kbd>{k.ctrl}</kbd> <kbd>{k.space}</kbd> {s.toTalk}
+    {s.hold} <kbd data-hero-key>{k.ctrl}</kbd> <span aria-hidden="true">+</span> <kbd data-hero-key>{k.space}</kbd> {s.toTalk}
   </p>
 
-  <div class="stage">
+  <div class="stage" data-hero-demo>
     <div class="window">
       <div class="chrome">
         <span></span><span></span><span></span>
@@ -52,10 +53,16 @@ const names = t(lang).download.platforms;
       <div class="doc">
         <p class="doc-title">{s.docTitle}</p>
         <p>{s.docLine1}</p>
-        <p><mark>{s.docLine2}</mark><span class="caret" aria-hidden="true"></span></p>
+        <p class="dictated" data-line><mark data-typed>{s.docLine2}</mark><span class="caret" aria-hidden="true"></span><span class="rest" data-rest></span></p>
       </div>
-      <div class="pill-slot">
-        <VoicePill state="listening" lang={lang} />
+      <div class="pill-slot" aria-hidden="true">
+        {
+          states.map((state) => (
+            <span class:list={['pill-frame', { 'is-active': state === 'listening' }]} data-pill={state}>
+              <VoicePill state={state} lang={lang} />
+            </span>
+          ))
+        }
       </div>
     </div>
   </div>
@@ -118,6 +125,10 @@ const names = t(lang).download.platforms;
   .dim {
     color: var(--faint);
   }
+  .title .serif {
+    font-size: 1.1em;
+    line-height: 0.9;
+  }
   .lead {
     position: relative;
     margin-top: 28px;
@@ -151,6 +162,13 @@ const names = t(lang).download.platforms;
     border: 1px solid var(--border-strong);
     border-bottom-width: 2px;
     color: var(--text);
+    transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+  .hint kbd.is-down {
+    transform: translateY(1px);
+    background: var(--highlight);
+    border-color: var(--accent);
+    color: var(--accent-text);
   }
 
   .stage {
@@ -161,6 +179,7 @@ const names = t(lang).download.platforms;
     background-color: var(--stage-bg);
     background-image: radial-gradient(var(--stage-dots) 1px, transparent 1px);
     background-size: 22px 22px;
+    border: 1px solid var(--stage-border);
     padding: clamp(20px, 5vw, 64px) clamp(12px, 5vw, 64px) 0;
     overflow: hidden;
   }
@@ -197,7 +216,7 @@ const names = t(lang).download.platforms;
     color: var(--subtle);
   }
   .doc {
-    padding: clamp(24px, 4vw, 44px) clamp(20px, 5vw, 56px) 150px;
+    padding: clamp(24px, 4vw, 44px) clamp(20px, 5vw, 56px) 124px;
     font-size: clamp(15px, 1.6vw, 18px);
     line-height: 1.65;
     color: var(--window-text);
@@ -216,12 +235,39 @@ const names = t(lang).download.platforms;
     padding: 1px 2px;
     background: var(--highlight);
     color: var(--window-title);
+    transition: background 0.8s ease;
+  }
+  mark:empty {
+    padding: 0;
+  }
+  .dictated {
+    transition: opacity 0.35s ease;
+  }
+  .dictated.is-settled mark {
+    background: transparent;
+  }
+  .dictated.is-clearing {
+    opacity: 0;
+  }
+  .rest {
+    color: transparent;
   }
   .pill-slot {
     position: absolute;
     left: 50%;
     bottom: 40px;
     transform: translateX(-50%);
+    display: grid;
+    place-items: center;
+  }
+  /* The four pill states share one slot and cross-fade */
+  .pill-frame {
+    grid-area: 1 / 1;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .pill-frame:not(.is-active) {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
   }
   .btn-lg {
     height: 52px;
@@ -235,3 +281,45 @@ const names = t(lang).download.platforms;
     }
   }
 </style>
+
+<script>
+  import { clearText, motionAllowed, timeline, typeWords } from '../lib/demo';
+
+  // Loop the dictation: hold the keys, speak, release, the text lands in the note.
+  const stage = document.querySelector<HTMLElement>('[data-hero-demo]');
+  const line = stage?.querySelector<HTMLElement>('[data-line]');
+  const typed = line?.querySelector<HTMLElement>('[data-typed]');
+  const rest = line?.querySelector<HTMLElement>('[data-rest]');
+  if (stage && line && typed && rest && motionAllowed()) {
+    const text = typed.textContent ?? '';
+    const keys = document.querySelectorAll<HTMLElement>('[data-hero-key]');
+    const frames = stage.querySelectorAll<HTMLElement>('[data-pill]');
+    const setPill = (state: string) => frames.forEach((f) => f.classList.toggle('is-active', f.dataset.pill === state));
+    const press = (down: boolean) => keys.forEach((k) => k.classList.toggle('is-down', down));
+    const tl = timeline(stage);
+
+    (async () => {
+      for (;;) {
+        line.classList.add('is-clearing');
+        await tl.wait(350);
+        clearText(typed, rest);
+        line.classList.remove('is-clearing', 'is-settled');
+        setPill('idle');
+        await tl.wait(1300);
+        press(true);
+        setPill('listening');
+        await tl.wait(2600);
+        press(false);
+        setPill('transcribing');
+        await tl.wait(1100);
+        setPill('inserted');
+        await typeWords(typed, rest, text, tl, 45);
+        await tl.wait(1600);
+        line.classList.add('is-settled');
+        await tl.wait(1400);
+        setPill('idle');
+        await tl.wait(1800);
+      }
+    })();
+  }
+</script>

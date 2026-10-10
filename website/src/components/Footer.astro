@@ -36,11 +36,19 @@ const s = t(lang);
     padding-bottom: 32px;
   }
   .word {
-    font-size: clamp(80px, 19vw, 260px);
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: clamp(96px, 24vw, 330px);
     line-height: 0.8;
-    font-weight: 600;
-    letter-spacing: -0.07em;
-    color: var(--footer-word);
+    letter-spacing: -0.04em;
+    /* Room for the italic overhangs, which background-clip would otherwise cut off */
+    padding: 0.04em 0.1em 0.16em 0.08em;
+    margin-left: -0.08em;
+    width: fit-content;
+    background: linear-gradient(180deg, var(--footer-word) 30%, var(--bg));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
     user-select: none;
   }
   .bar {

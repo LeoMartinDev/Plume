@@ -53,6 +53,12 @@ const en = {
       text: 'Messages, notes, documents, AI prompts. Insert automatically, by clipboard paste or by typing — with an optional clipboard fallback.',
       chips: ['Slack', 'Mail', 'Notion', 'VS Code', 'Claude', 'Google Docs'],
       chipLast: 'any text field',
+      demos: [
+        { app: 'Slack', context: '# design', text: 'Looks great, ship it after lunch.' },
+        { app: 'Mail', context: 'Re: Q3 planning', text: 'Thanks Sam, Thursday works for me.' },
+        { app: 'VS Code', context: 'retry.rs', text: '// Retry once before showing the error' },
+        { app: 'Claude', context: 'New chat', text: 'Summarize this thread in three bullet points.' },
+      ],
     },
     items: [
       { icon: 'local', title: 'Fully local', text: 'Speech is transcribed on your machine. Internet is only used to download models and check for updates.' },
@@ -162,6 +168,12 @@ const fr: Strings = {
       text: 'Messages, notes, documents, prompts IA. Insertion automatique, par collage ou par frappe — avec un repli presse-papiers optionnel.',
       chips: ['Slack', 'Mail', 'Notion', 'VS Code', 'Claude', 'Google Docs'],
       chipLast: 'tout champ de texte',
+      demos: [
+        { app: 'Slack', context: '# design', text: 'Top, on livre après le déjeuner.' },
+        { app: 'Mail', context: 'Re : Planning T3', text: 'Merci Sam, jeudi me va très bien.' },
+        { app: 'VS Code', context: 'retry.rs', text: '// Réessayer une fois avant d’afficher l’erreur' },
+        { app: 'Claude', context: 'Nouvelle conversation', text: 'Résume ce fil en trois points.' },
+      ],
     },
     items: [
       { icon: 'local', title: '100 % local', text: 'La transcription se fait sur votre machine. Internet ne sert qu’à télécharger les modèles et vérifier les mises à jour.' },

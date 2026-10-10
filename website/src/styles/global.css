@@ -17,12 +17,13 @@
   --btn-bg: #141414;
   --btn-fg: #ffffff;
   --highlight: #e6ecff;
-  --footer-word: #e4e4e0;
+  --footer-word: #d2d2cc;
   --nav-bg: rgba(244, 244, 242, 0.86);
 
   /* hero stage */
   --stage-bg: #141414;
   --stage-dots: rgba(255, 255, 255, 0.07);
+  --stage-border: transparent;
   --window-bg: #fbfbfa;
   --window-border: #ecece8;
   --window-text: #2a2a2e;
@@ -37,6 +38,11 @@
   --feature-chip: #2a2a2e;
   --feature-chip-strong-bg: var(--accent);
   --feature-chip-strong-fg: #ffffff;
+  --feature-chip-active: #3a3a40;
+  --feature-ring: rgba(255, 255, 255, 0.35);
+  --feature-field: #1f1f22;
+  --feature-field-border: #2e2e32;
+  --feature-caret: var(--accent);
 
   /* inverted block (privacy) */
   --invert-bg: #141414;
@@ -57,6 +63,7 @@
 
   --radius-lg: 24px;
   --font-sans: 'Geist Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'Instrument Serif', ui-serif, Georgia, serif;
   --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
@@ -76,13 +83,14 @@
   --btn-bg: #f2f2f0;
   --btn-fg: #0b0b0c;
   --highlight: rgba(59, 109, 255, 0.24);
-  --footer-word: #18181b;
+  --footer-word: #2a2a2e;
   --nav-bg: rgba(11, 11, 12, 0.8);
 
-  --stage-bg: transparent;
-  --stage-dots: transparent;
-  --window-bg: #131315;
-  --window-border: #1f1f22;
+  --stage-bg: #101012;
+  --stage-dots: rgba(255, 255, 255, 0.05);
+  --stage-border: #1f1f22;
+  --window-bg: #161618;
+  --window-border: #2a2a2e;
   --window-text: #c9c9ce;
   --window-title: #f2f2f0;
   --window-chrome: #2e2e33;
@@ -94,6 +102,11 @@
   --feature-chip: rgba(255, 255, 255, 0.16);
   --feature-chip-strong-bg: #ffffff;
   --feature-chip-strong-fg: #0b0b0c;
+  --feature-chip-active: rgba(255, 255, 255, 0.3);
+  --feature-ring: rgba(255, 255, 255, 0.6);
+  --feature-field: rgba(255, 255, 255, 0.12);
+  --feature-field-border: rgba(255, 255, 255, 0.22);
+  --feature-caret: #ffffff;
 
   --invert-bg: #f2f2f0;
   --invert-fg: #0b0b0c;
@@ -201,6 +214,13 @@ kbd,
   line-height: 1;
   font-weight: 600;
   letter-spacing: -0.045em;
+}
+/* Serif italic for the second line of display titles: the "writing" voice */
+.serif {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 .lead {
   font-size: 17px;

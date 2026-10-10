@@ -17,6 +17,8 @@ Requires Node 22.12 or newer.
 
 - `src/components/Landing.astro` composes the page; each section is its own component.
 - `src/components/VoicePill.astro` is the voice pill (`idle`, `listening`, `transcribing`, `inserted`).
+- `src/lib/demo.ts` drives the looping demos (hero window, "works in every app" card). They pause
+  off screen and stay static when the visitor prefers reduced motion.
 - `src/i18n/strings.ts` holds all copy, in English (`/`) and French (`/fr/`). Edit text there.
 - `src/styles/global.css` holds the color tokens for light and dark themes.
 - `src/lib/release.ts` fetches the latest GitHub release at build time to link each installer

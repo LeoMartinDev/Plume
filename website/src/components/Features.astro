@@ -6,19 +6,28 @@ interface Props {
 }
 const { lang } = Astro.props;
 const s = t(lang).features;
+const demos = s.anyApp.demos;
+const first = demos[0];
 ---
 
 <section id="features" class="container section">
   <div class="intro">
     <p class="eyebrow">{s.eyebrow}</p>
-    <h2 class="h2">{s.title1}<br /><span class="dim">{s.title2}</span></h2>
+    <h2 class="h2">{s.title1}<br /><span class="dim serif">{s.title2}</span></h2>
   </div>
   <div class="grid">
-    <article class="wide">
+    <article class="wide" data-apps-demo data-demos={JSON.stringify(demos)}>
       <ul class="chips" aria-hidden="true">
-        {s.anyApp.chips.map((c) => <li>{c}</li>)}
+        {s.anyApp.chips.map((c) => <li class:list={{ 'is-active': c === first.app }} data-app={c}>{c}</li>)}
         <li class="strong">{s.anyApp.chipLast}</li>
       </ul>
+      <div class="field" aria-hidden="true">
+        <p class="field-head">
+          <span class="field-app" data-field-app>{first.app}</span>
+          <span class="field-ctx mono" data-field-ctx>{first.context}</span>
+        </p>
+        <p class="field-text" data-line><span data-typed>{first.text}</span><span class="caret"></span><span class="rest" data-rest></span></p>
+      </div>
       <div>
         <h3 class="wide-title">{s.anyApp.title}</h3>
         <p class="wide-text">{s.anyApp.text}</p>
@@ -85,7 +94,7 @@ const s = t(lang).features;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 40px;
+    gap: 28px;
     min-height: 280px;
   }
   @media (min-width: 1000px) {
@@ -111,11 +120,55 @@ const s = t(lang).features;
     padding: 8px 14px;
     border-radius: 999px;
     background: var(--feature-chip);
+    color: var(--feature-muted);
     font-size: 14px;
+    transition: background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .chips li.is-active {
+    background: var(--feature-chip-active);
+    color: var(--feature-fg);
+    box-shadow: inset 0 0 0 1px var(--feature-ring);
   }
   .chips .strong {
     background: var(--feature-chip-strong-bg);
     color: var(--feature-chip-strong-fg);
+  }
+  /* A text field from the highlighted app, receiving the dictation */
+  .field {
+    padding: 18px 20px 16px;
+    border-radius: 16px;
+    background: var(--feature-field);
+    border: 1px solid var(--feature-field-border);
+  }
+  .field-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .field-app {
+    font-weight: 600;
+  }
+  .field-ctx {
+    font-size: 12px;
+    color: var(--feature-muted);
+  }
+  .field-text {
+    margin-top: 10px;
+    min-height: 3em;
+    font-size: clamp(17px, 2vw, 20px);
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    transition: opacity 0.3s ease;
+  }
+  .field-text.is-clearing {
+    opacity: 0;
+  }
+  .field .caret {
+    background: var(--feature-caret);
+  }
+  .rest {
+    color: transparent;
   }
   .wide-title {
     margin-bottom: 10px;
@@ -133,7 +186,6 @@ const s = t(lang).features;
     padding: 32px;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
     gap: 32px;
   }
   .big {
@@ -154,3 +206,37 @@ const s = t(lang).features;
     color: var(--muted);
   }
 </style>
+
+<script>
+  import { clearText, motionAllowed, timeline, typeWords } from '../lib/demo';
+
+  // Cycle through the apps: highlight one, dictate a line into its text field.
+  const card = document.querySelector<HTMLElement>('[data-apps-demo]');
+  const line = card?.querySelector<HTMLElement>('[data-line]');
+  const typed = line?.querySelector<HTMLElement>('[data-typed]');
+  const rest = line?.querySelector<HTMLElement>('[data-rest]');
+  const app = card?.querySelector<HTMLElement>('[data-field-app]');
+  const ctx = card?.querySelector<HTMLElement>('[data-field-ctx]');
+  if (card && line && typed && rest && app && ctx && motionAllowed()) {
+    const demos: { app: string; context: string; text: string }[] = JSON.parse(card.dataset.demos ?? '[]');
+    const chips = card.querySelectorAll<HTMLElement>('[data-app]');
+    const tl = timeline(card);
+
+    (async () => {
+      await tl.wait(2400);
+      for (let i = 1; ; i = (i + 1) % demos.length) {
+        const demo = demos[i];
+        line.classList.add('is-clearing');
+        await tl.wait(300);
+        clearText(typed, rest);
+        line.classList.remove('is-clearing');
+        chips.forEach((c) => c.classList.toggle('is-active', c.dataset.app === demo.app));
+        app.textContent = demo.app;
+        ctx.textContent = demo.context;
+        await tl.wait(700);
+        await typeWords(typed, rest, demo.text, tl, 70);
+        await tl.wait(2400);
+      }
+    })();
+  }
+</script>
