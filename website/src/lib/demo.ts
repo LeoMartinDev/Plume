@@ -1,12 +1,13 @@
 // Helpers for the looping product demos (hero window, "works in every app" card).
-// Demos only run when motion is allowed, and pause while off screen or in a hidden tab.
+// Demos only run when motion is allowed, and only while mostly on screen in a visible tab:
+// starting the moment the first pixel scrolls in would change the demo as people arrive on it.
 
 export function motionAllowed(): boolean {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export interface Timeline {
-  /** Resolves after `ms` of on-screen time (waits for the element to be visible first). */
+  /** Resolves after `ms` of on-screen time (waits for the element to be in view first). */
   wait(ms: number): Promise<void>;
 }
 
@@ -20,10 +21,15 @@ export function timeline(el: Element): Timeline {
       resume = null;
     }
   };
-  new IntersectionObserver(([entry]) => {
-    intersecting = entry.isIntersecting;
-    check();
-  }).observe(el);
+  // Half the element, or most of the viewport when the element is taller than that
+  const ratio = Math.min(0.5, (0.8 * window.innerHeight) / el.getBoundingClientRect().height);
+  new IntersectionObserver(
+    ([entry]) => {
+      intersecting = entry.isIntersecting && entry.intersectionRatio >= ratio - 0.01;
+      check();
+    },
+    { threshold: [0, ratio] },
+  ).observe(el);
   document.addEventListener('visibilitychange', check);
 
   const whenVisible = () => (visible() ? Promise.resolve() : new Promise<void>((r) => (resume = r)));

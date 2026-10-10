@@ -58,7 +58,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
       <div class="pill-slot" aria-hidden="true">
         {
           states.map((state) => (
-            <span class:list={['pill-frame', { 'is-active': state === 'listening' }]} data-pill={state}>
+            <span class:list={['pill-frame', { 'is-active': state === 'inserted' }]} data-pill={state}>
               <VoicePill state={state} lang={lang} />
             </span>
           ))
@@ -299,13 +299,19 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
     const tl = timeline(stage);
 
     (async () => {
+      // Each loop starts from the server-rendered frame (line just inserted), so the
+      // first change people see is the natural next step, never a jump.
       for (;;) {
+        await tl.wait(1800);
+        line.classList.add('is-settled');
+        await tl.wait(1400);
+        setPill('idle');
+        await tl.wait(1400);
         line.classList.add('is-clearing');
         await tl.wait(350);
         resetText(typed, rest, text);
         line.classList.remove('is-clearing', 'is-settled');
-        setPill('idle');
-        await tl.wait(1300);
+        await tl.wait(500);
         press(true);
         setPill('listening');
         await tl.wait(2600);
@@ -314,11 +320,6 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
         await tl.wait(1100);
         setPill('inserted');
         await typeWords(typed, rest, text, tl, 45);
-        await tl.wait(1600);
-        line.classList.add('is-settled');
-        await tl.wait(1400);
-        setPill('idle');
-        await tl.wait(1800);
       }
     })();
   }
