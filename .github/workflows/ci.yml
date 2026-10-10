@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
-    # Website-only changes are built and deployed by Cloudflare Pages.
+    # Website-only changes are built and deployed by Cloudflare.
     # (Path filters never apply to tag pushes, so releases always build.)
     paths-ignore: ['website/**', '.github/workflows/website.yml']
   pull_request:
