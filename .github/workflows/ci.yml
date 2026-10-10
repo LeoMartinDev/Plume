@@ -74,9 +74,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev xvfb dbus-x11
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: native
+          shared-key: ${{ runner.os == 'Windows' && 'windows-debug-v2' || 'native' }}
           cache-on-failure: true
-          workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
+          # Workspace target paths are relative; C:\t must be cached explicitly.
+          workspaces: . -> target
+          cache-targets: ${{ runner.os != 'Windows' }}
+          cache-directories: ${{ runner.os == 'Windows' && env.CARGO_TARGET_DIR || '' }}
       - run: node --test scripts/*.test.mjs
       - run: cargo build --workspace --locked
       - if: runner.os != 'Windows'
@@ -149,9 +152,12 @@ jobs:
         run: echo 'RUSTFLAGS=-C link-arg=-Wl,-rpath,@loader_path -C link-arg=-Wl,-headerpad_max_install_names' >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: native
+          shared-key: ${{ runner.os == 'Windows' && 'windows-release-v2' || 'native' }}
           cache-on-failure: true
-          workspaces: . -> ${{ env.CARGO_TARGET_DIR || 'target' }}
+          # Workspace target paths are relative; C:\t must be cached explicitly.
+          workspaces: . -> target
+          cache-targets: ${{ runner.os != 'Windows' }}
+          cache-directories: ${{ runner.os == 'Windows' && env.CARGO_TARGET_DIR || '' }}
       - if: runner.os == 'Windows'
         name: Install Inno Setup
         shell: pwsh

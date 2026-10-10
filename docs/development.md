@@ -143,6 +143,12 @@ Release builds copy it directly and need no Finder automation. To change the
 window or icon positions, regenerate it with `python3 scripts/generate-dmg-layout.py`
 in a development environment with `ds_store==1.3.3` installed.
 
+Windows CI keeps Cargo artifacts in `C:\t` to avoid long paths. The cache action
+uses `cache-directories` for this absolute path, since `workspaces` target paths
+are relative to the checkout. Windows debug/test and release installer jobs use
+separate cache keys; Rust and dependency changes still invalidate the cache through
+`rust-cache`'s automatic keys. The first run for each new key builds a fresh cache.
+
 ## Releases
 
 All workspace crates share a stable `MAJOR.MINOR.PATCH` version. From a clean
