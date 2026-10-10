@@ -27,21 +27,20 @@ The hero download button detects the visitor's OS and links straight to its inst
 
 ## Deploy (Cloudflare Pages)
 
-`.github/workflows/website.yml` builds the site and deploys it with Wrangler:
+The Cloudflare Pages project is connected to this GitHub repo and builds the site itself:
 
-- push to `main` touching `website/` → production
-- a published GitHub release → production (refreshes download links)
-- pull request → preview URL
+- Root directory: `website`
+- Build command: `npm run build`
+- Build output directory: `dist`
+- Node version: from `website/.nvmrc` (22; Astro needs 22.12+)
+- Build watch paths → include `website/*`, so app-only commits don't rebuild the site
+- Production branch `main`; other branches and pull requests get preview URLs
 
-One-time setup:
+When a GitHub release is published, `.github/workflows/website.yml` calls a Cloudflare
+deploy hook so the site rebuilds and the download buttons point at the new installers.
+Setup: Pages project → Settings → Builds → Deploy hooks → create one for `main`,
+then save its URL as the repo secret `CLOUDFLARE_DEPLOY_HOOK`.
 
-1. In Cloudflare, create a Pages project named `plume-website`
-   (Workers & Pages → Create → Pages → Direct upload), or run
-   `npx wrangler pages project create plume-website --production-branch=main` once.
-2. Create an API token with the **Cloudflare Pages: Edit** permission.
-3. In GitHub → Settings → Secrets and variables → Actions, add
-   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-4. In the Pages project → Custom domains, add `speakplume.com` (and `www.speakplume.com`).
-   With the domain registered at Cloudflare, DNS records are created for you.
+The app CI (`ci.yml`) ignores `website/**`, so website-only changes don't trigger app builds.
 
-Without the secrets, the workflow still builds the site but skips the deploy.
+Custom domain: Pages project → Custom domains → add `speakplume.com` (and `www.speakplume.com`).
