@@ -1,0 +1,30 @@
+---
+interface Props {
+  size?: number;
+}
+const { size = 28 } = Astro.props;
+---
+
+<span class="mark" style={`--s:${size}px`} aria-hidden="true">
+  <svg width={size * 0.5} height={size * 0.64} viewBox="420 350 440 570">
+    <path
+      fill="currentColor"
+      fill-rule="evenodd"
+      d="M432 908V550C432 435 524 361 638 361C684 361 713 374 748 404L817 463L764 459C813 470 842 514 842 571C842 684 750 774 638 774C605 774 577 766 551 751V908Z M728 574A91 90 0 1 0 546 574A91 90 0 1 0 728 574Z"
+    ></path>
+  </svg>
+</span>
+
+<style>
+  .mark {
+    width: var(--s);
+    height: var(--s);
+    border-radius: calc(var(--s) / 4);
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+</style>

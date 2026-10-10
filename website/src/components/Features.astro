@@ -1,0 +1,156 @@
+---
+import { t, type Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang).features;
+---
+
+<section id="features" class="container section">
+  <div class="intro">
+    <p class="eyebrow">{s.eyebrow}</p>
+    <h2 class="h2">{s.title1}<br /><span class="dim">{s.title2}</span></h2>
+  </div>
+  <div class="grid">
+    <article class="wide">
+      <ul class="chips" aria-hidden="true">
+        {s.anyApp.chips.map((c) => <li>{c}</li>)}
+        <li class="strong">{s.anyApp.chipLast}</li>
+      </ul>
+      <div>
+        <h3 class="wide-title">{s.anyApp.title}</h3>
+        <p class="wide-text">{s.anyApp.text}</p>
+      </div>
+    </article>
+    {
+      s.items.map((item) => (
+        <article class="card feature">
+          {item.icon === '99' ? (
+            <span class="big">99</span>
+          ) : (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              {item.icon === 'local' && (
+                <>
+                  <rect x="3" y="4" width="18" height="12" rx="2" />
+                  <path d="M8 20h8M12 16v4" />
+                </>
+              )}
+              {item.icon === 'history' && (
+                <>
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                  <path d="M3 3v5h5M12 7v5l3 2" />
+                </>
+              )}
+              {item.icon === 'theme' && (
+                <>
+                  <circle cx="12" cy="12" r="8" />
+                  <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" />
+                </>
+              )}
+              {item.icon === 'bolt' && <path d="M13 2 4 14h7l-1 8 9-12h-7z" />}
+            </svg>
+          )}
+          <div>
+            <h3>{item.title}</h3>
+            <p>{item.text}</p>
+          </div>
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .intro {
+    max-width: 720px;
+  }
+  .dim {
+    color: var(--faint);
+  }
+  .grid {
+    margin-top: 56px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+    gap: 16px;
+  }
+  .wide {
+    grid-column: span 2;
+    min-width: 0;
+    background: var(--feature-bg);
+    color: var(--feature-fg);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 40px;
+    min-height: 280px;
+  }
+  @media (min-width: 1000px) {
+    .wide {
+      grid-row: span 2;
+    }
+  }
+  @media (max-width: 680px) {
+    .wide {
+      grid-column: auto;
+      padding: 28px;
+    }
+  }
+  .chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chips li {
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--feature-chip);
+    font-size: 14px;
+  }
+  .chips .strong {
+    background: var(--feature-chip-strong-bg);
+    color: var(--feature-chip-strong-fg);
+  }
+  .wide-title {
+    margin-bottom: 10px;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.035em;
+  }
+  .wide-text {
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--feature-muted);
+    max-width: 520px;
+  }
+  .feature {
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 32px;
+  }
+  .big {
+    font-size: 44px;
+    font-weight: 600;
+    letter-spacing: -0.05em;
+    line-height: 32px;
+  }
+  .feature h3 {
+    margin-bottom: 8px;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+  .feature p {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+</style>

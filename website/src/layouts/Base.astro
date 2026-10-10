@@ -1,0 +1,113 @@
+---
+import '@fontsource/geist-sans/latin-400.css';
+import '@fontsource/geist-sans/latin-500.css';
+import '@fontsource/geist-sans/latin-600.css';
+import '@fontsource/geist-mono/latin-400.css';
+import '../styles/global.css';
+import { t, type Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang).meta;
+const site = Astro.site ?? new URL('https://speakplume.com');
+const canonical = new URL(lang === 'en' ? '/' : '/fr/', site).href;
+const enUrl = new URL('/', site).href;
+const frUrl = new URL('/fr/', site).href;
+---
+
+<!doctype html>
+<html lang={lang} data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{s.title}</title>
+    <meta name="description" content={s.description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="en" href={enUrl} />
+    <link rel="alternate" hreflang="fr" href={frUrl} />
+    <link rel="alternate" hreflang="x-default" href={enUrl} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#f4f4f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={s.title} />
+    <meta property="og:description" content={s.description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content={lang === 'fr' ? 'fr_FR' : 'en_US'} />
+    <meta name="twitter:card" content="summary" />
+    <script is:inline>
+      // Apply the theme before first paint: saved choice, else the system setting.
+      (function () {
+        var root = document.documentElement;
+        var saved = null;
+        try {
+          saved = localStorage.getItem('plume-theme');
+        } catch (e) {}
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        root.dataset.theme = saved || (mq.matches ? 'dark' : 'light');
+        mq.addEventListener('change', function (e) {
+          var stored = null;
+          try {
+            stored = localStorage.getItem('plume-theme');
+          } catch (err) {}
+          if (!stored) root.dataset.theme = e.matches ? 'dark' : 'light';
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <slot />
+    <script>
+      // Theme toggle
+      document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const root = document.documentElement;
+          const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+          root.dataset.theme = next;
+          try {
+            localStorage.setItem('plume-theme', next);
+          } catch {}
+        });
+      });
+
+      // Point the main download button at the installer for the visitor's OS.
+      type OS = 'mac' | 'windows' | 'linux';
+      function detectOS(): OS | null {
+        const nav = navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } };
+        const ua = navigator.userAgent;
+        if (nav.userAgentData?.mobile || /Android|iPhone|iPad|iPod/i.test(ua)) return null;
+        const platform = (nav.userAgentData?.platform || navigator.platform || ua).toLowerCase();
+        if (platform.includes('mac')) return 'mac';
+        if (platform.includes('win')) return 'windows';
+        if (platform.includes('linux') && !/cros/i.test(ua)) return 'linux';
+        return null;
+      }
+      const os = detectOS();
+      if (os) {
+        document.querySelectorAll<HTMLAnchorElement>('[data-smart-download]').forEach((a) => {
+          const url = a.dataset[os];
+          const name = a.dataset[`name${os[0].toUpperCase()}${os.slice(1)}`];
+          if (!url || !name) return;
+          a.href = url;
+          const label = a.querySelector('[data-label]');
+          if (label) label.textContent = `${a.dataset.labelPrefix} ${name}`;
+        });
+        document.querySelector(`[data-platform="${os}"]`)?.classList.add('is-current');
+      }
+
+      // Show the floating pill only once the hero buttons have scrolled away.
+      const floating = document.querySelector<HTMLElement>('[data-floating]');
+      const heroCta = document.querySelector('[data-smart-download]');
+      if (floating && heroCta && 'IntersectionObserver' in window) {
+        floating.classList.add('is-hidden');
+        new IntersectionObserver(([entry]) => {
+          const pastHero = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+          floating.classList.toggle('is-hidden', !pastHero);
+        }).observe(heroCta);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,119 @@
+---
+import { t, type Lang } from '../i18n/strings';
+import { LATEST_URL, type Platform, type ReleaseInfo } from '../lib/release';
+
+interface Props {
+  lang: Lang;
+  release: ReleaseInfo;
+}
+const { lang, release } = Astro.props;
+const s = t(lang).download;
+const order: { id: Platform; ext: string }[] = [
+  { id: 'mac', ext: '.dmg' },
+  { id: 'windows', ext: '.exe' },
+  { id: 'linux', ext: '.deb' },
+];
+---
+
+<section id="download" class="container section center">
+  <h2 class="h2 title">{s.title}</h2>
+  <p class="lead sub">{s.lead}</p>
+  <div class="grid">
+    {
+      order.map(({ id, ext }) => {
+        const p = s.platforms[id];
+        return (
+          <a class="card platform" href={release.assets[id]} data-platform={id}>
+            <span class="row">
+              <span class="name">{p.name}</span>
+              <span class="ext mono">{ext}</span>
+            </span>
+            <span class="req">{p.req}</span>
+            <span class="cta">{p.cta}</span>
+          </a>
+        );
+      })
+    }
+  </div>
+  <p class="all">
+    <a href={LATEST_URL}>{s.allReleases}{release.version && ` · ${release.version}`}</a>
+  </p>
+</section>
+
+<style>
+  .center {
+    text-align: center;
+  }
+  .title {
+    margin: 0 auto;
+    max-width: 720px;
+  }
+  .sub {
+    margin: 18px auto 0;
+    max-width: 520px;
+  }
+  .grid {
+    margin-top: 48px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    gap: 16px;
+    text-align: left;
+  }
+  .platform {
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    text-decoration: none;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .platform:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-strong);
+  }
+  .platform.is-current {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .name {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+  .ext {
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .req {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted);
+    flex: 1;
+  }
+  .cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 46px;
+    border-radius: 12px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .all {
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .all a {
+    color: var(--muted);
+  }
+</style>

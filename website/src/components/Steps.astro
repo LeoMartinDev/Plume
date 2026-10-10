@@ -1,0 +1,90 @@
+---
+import VoicePill from './VoicePill.astro';
+import { t, KEYS, type Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const steps = t(lang).steps;
+const k = KEYS[lang];
+---
+
+<section class="container section-tight">
+  <ol class="grid">
+    <li class="step">
+      <span class="num">01</span>
+      <div class="visual keys" aria-hidden="true"><kbd>{k.ctrl}</kbd><kbd class="space">{k.space}</kbd></div>
+      <h3>{steps[0].title}</h3>
+      <p>{steps[0].text}</p>
+    </li>
+    <li class="step">
+      <span class="num">02</span>
+      <div class="visual"><VoicePill state="listening" lang={lang} /></div>
+      <h3>{steps[1].title}</h3>
+      <p>{steps[1].text}</p>
+    </li>
+    <li class="step">
+      <span class="num">03</span>
+      <div class="visual"><VoicePill state="inserted" lang={lang} /></div>
+      <h3>{steps[2].title}</h3>
+      <p>{steps[2].text}</p>
+    </li>
+  </ol>
+</section>
+
+<style>
+  .section-tight {
+    padding-top: clamp(80px, 10vw, 120px);
+  }
+  .grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 28px;
+  }
+  .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--subtle);
+  }
+  .visual {
+    margin-top: 40px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+  }
+  .keys {
+    gap: 6px;
+  }
+  .keys kbd {
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 3px;
+  }
+  .keys .space {
+    padding-inline: 36px;
+  }
+  h3 {
+    margin: 28px 0 8px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+  p {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+</style>

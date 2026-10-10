@@ -1,0 +1,34 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from './Nav.astro';
+import Hero from './Hero.astro';
+import Steps from './Steps.astro';
+import Features from './Features.astro';
+import Models from './Models.astro';
+import Privacy from './Privacy.astro';
+import Download from './Download.astro';
+import Faq from './Faq.astro';
+import Footer from './Footer.astro';
+import { getLatestRelease } from '../lib/release';
+import type { Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const release = await getLatestRelease();
+---
+
+<Base lang={lang}>
+  <Nav lang={lang} />
+  <main>
+    <Hero lang={lang} release={release} />
+    <Steps lang={lang} />
+    <Features lang={lang} />
+    <Models lang={lang} />
+    <Privacy lang={lang} />
+    <Download lang={lang} release={release} />
+    <Faq lang={lang} />
+  </main>
+  <Footer lang={lang} />
+</Base>

@@ -1,0 +1,81 @@
+---
+import VoicePill from './VoicePill.astro';
+import { t, type Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang).privacy;
+---
+
+<section id="privacy" class="container section">
+  <div class="block invert">
+    <div>
+      <p class="eyebrow inv">{s.eyebrow}</p>
+      <h2 class="h2">{s.title}</h2>
+      <p class="text">{s.lead}</p>
+      <div class="pill"><VoicePill state="transcribing" lang={lang} /></div>
+    </div>
+    <dl class="stats">
+      {
+        s.stats.map((st) => (
+          <div>
+            <dt>{st.value}</dt>
+            <dd>{st.label}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+</section>
+
+<style>
+  .block {
+    background: var(--invert-bg);
+    color: var(--invert-fg);
+    border-radius: 28px;
+    padding: clamp(32px, 6vw, 80px);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+    gap: 56px;
+    align-items: center;
+  }
+  .inv {
+    color: var(--invert-eyebrow);
+  }
+  .text {
+    margin-top: 20px;
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--invert-muted);
+    max-width: 440px;
+  }
+  .pill {
+    margin-top: 32px;
+  }
+  .stats {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--invert-line);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  .stats div {
+    background: var(--invert-cell);
+    padding: 26px;
+  }
+  dt {
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+  dd {
+    margin: 6px 0 0;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--invert-muted);
+  }
+</style>
