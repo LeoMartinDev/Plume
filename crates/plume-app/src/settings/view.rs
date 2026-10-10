@@ -1,6 +1,6 @@
 use gpui::{
     bounds, canvas, div, fill, point, prelude::*, px, size, svg, AnyElement, Context, Div,
-    FontWeight, Rgba, ScrollHandle, SharedString, Window,
+    FontWeight, ScrollHandle, SharedString, Window,
 };
 use plume_ui::{Palette, Segment, Segmented, Tokens};
 
@@ -190,7 +190,7 @@ impl Render for SettingsView {
                             .when(!is_history, |el| el.px(px(28.)).py(px(24.)))
                             .child(content),
                     )
-                    .child(scrollbar(scroll, self.scrollbar_drag.clone(), tokens.muted)),
+                    .child(scrollbar(scroll, self.scrollbar_drag.clone(), tokens)),
             );
 
         let shell = div()
@@ -254,7 +254,7 @@ impl ContentScroll {
 fn scrollbar(
     scroll: ContentScroll,
     drag: std::rc::Rc<std::cell::Cell<Option<f32>>>,
-    color: Rgba,
+    tokens: Tokens,
 ) -> impl IntoElement {
     use gpui::{
         DispatchPhase, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -267,19 +267,35 @@ fn scrollbar(
                 return;
             }
             let height: f32 = track.size.height.into();
+            let hovered = hitbox.is_hovered(window);
+            let dragging = drag.get().is_some();
+            let thumb_width = if hovered || dragging { 8. } else { 6. };
+            let color = if dragging {
+                tokens.scrollbar_active
+            } else if hovered {
+                tokens.scrollbar_hover
+            } else {
+                tokens.scrollbar
+            };
             let thumb_height = (height * viewport / (viewport + maximum))
                 .max(24.)
                 .min(height);
             let travel = height - thumb_height;
             let top: f32 = track.top().into();
             let thumb_top = travel * (offset / maximum).clamp(0., 1.);
-            window.paint_quad(fill(
-                bounds(
-                    point(track.left() + px(4.), track.top() + px(thumb_top)),
-                    size(px(4.), px(thumb_height)),
-                ),
-                color,
-            ));
+            window.paint_quad(
+                fill(
+                    bounds(
+                        point(
+                            track.left() + (track.size.width - px(thumb_width)) / 2.,
+                            track.top() + px(thumb_top),
+                        ),
+                        size(px(thumb_width), px(thumb_height)),
+                    ),
+                    color,
+                )
+                .corner_radii(px(thumb_width / 2.)),
+            );
             let down_scroll = scroll.clone();
             let down_drag = drag.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -312,11 +328,15 @@ fn scrollbar(
                     return;
                 }
                 let Some(grab) = move_drag.get() else {
+                    if hovered != track.contains(&event.position) {
+                        window.refresh();
+                    }
                     return;
                 };
                 if !event.dragging() {
                     move_drag.set(None);
                     move_scroll.end_drag();
+                    window.refresh();
                     return;
                 }
                 let y: f32 = event.position.y.into();
@@ -340,10 +360,10 @@ fn scrollbar(
         },
     )
     .absolute()
-    .top(px(16.))
-    .bottom(px(16.))
-    .right(px(8.))
-    .w(px(12.))
+    .top(px(20.))
+    .bottom(px(20.))
+    .right(px(12.))
+    .w(px(14.))
 }
 
 fn sidebar(
