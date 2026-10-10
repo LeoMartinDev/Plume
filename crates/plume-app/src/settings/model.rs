@@ -375,11 +375,11 @@ pub(super) fn download_status(progress: &Progress) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-fn progress_speed(bytes_per_second: Option<u64>) -> Option<String> {
+pub(super) fn progress_speed(bytes_per_second: Option<u64>) -> Option<String> {
     bytes_per_second.map(|bytes| format!("{}/s", format_bytes(bytes)))
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(super) fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     let bytes = bytes as f64;

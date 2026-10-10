@@ -1,5 +1,6 @@
 use gpui::{
-    div, prelude::*, px, relative, svg, AnyElement, Context, FontWeight, SharedString, Window,
+    div, prelude::*, px, relative, svg, Animation, AnimationExt, AnyElement, Context, FontWeight,
+    SharedString, Window,
 };
 use plume_engine::Engine;
 use plume_overlay::Feedback;
@@ -658,6 +659,7 @@ fn model_screen(
                         } else {
                             tokens.group
                         })
+                        .when(busy && !chosen, |el| el.opacity(0.5))
                         .when(!busy, |el| {
                             el.cursor_pointer()
                                 .tab_index(0)
@@ -726,25 +728,26 @@ fn model_screen(
                                 )
                                 .child(div().text_xs().text_color(tokens.muted).child(entry.size)),
                         )
-                        .child(
+                        .child(if busy && chosen {
+                            model_download_progress(&view.phase, tokens)
+                        } else {
                             div()
+                                .h(px(76.))
                                 .flex()
                                 .flex_col()
                                 .gap(px(8.))
                                 .child(super::model::spec_meter("Speed", entry.speed, tokens))
-                                .child(super::model::spec_meter(
-                                    "Accuracy",
-                                    entry.accuracy,
-                                    tokens,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .h(px(16.))
-                                .text_xs()
-                                .text_color(tokens.muted)
-                                .child(if nvidia { "Recommended" } else { "" }),
-                        )
+                                .child(super::model::spec_meter("Accuracy", entry.accuracy, tokens))
+                                .child(div().flex_1())
+                                .child(
+                                    div()
+                                        .h(px(16.))
+                                        .text_xs()
+                                        .text_color(tokens.muted)
+                                        .child(if nvidia { "Recommended" } else { "" }),
+                                )
+                                .into_any_element()
+                        })
                 })),
         );
     if !CHOICES.contains(&selected) {
@@ -755,39 +758,9 @@ fn model_screen(
                 .child(format!("Current model: {}", selected.entry().name)),
         );
     }
-    if let AppPhase::Onboarding {
-        status: OnboardStatus::Fetching { last },
-        ..
-    } = &view.phase
-    {
-        let fraction = last
-            .total
-            .filter(|total| *total > 0)
-            .map(|total| (last.bytes as f32 / total as f32).clamp(0., 1.))
-            .unwrap_or(0.);
-        let status =
-            super::model::download_status(last).unwrap_or_else(|| "Preparing download…".into());
-        body = body
-            .child(div().text_xs().text_color(tokens.muted).child(format!(
-                "Downloading · {status} · {:.1} MB received",
-                last.bytes as f64 / 1_048_576.
-            )))
-            .child(
-                div().h(px(3.)).rounded(px(2.)).bg(tokens.fill).child(
-                    div()
-                        .h_full()
-                        .w(relative(fraction))
-                        .bg(tokens.accent)
-                        .rounded(px(2.)),
-                ),
-            );
-    } else if busy {
-        body = body.child(
-            div()
-                .text_xs()
-                .text_color(tokens.muted)
-                .child("Loading model…"),
-        );
+    // A legacy selection (e.g. Whisper Small) has no card in this grid.
+    if busy && !CHOICES.contains(&selected) {
+        body = body.child(model_download_progress(&view.phase, tokens));
     }
     if let AppPhase::Onboarding {
         status: OnboardStatus::Failed { reason },
@@ -804,6 +777,100 @@ fn model_screen(
         body = body.child(super::view::error_text(tokens, warning.clone()));
     }
     body.into_any_element()
+}
+
+fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
+    let progress = match phase {
+        AppPhase::Onboarding {
+            status: OnboardStatus::Fetching { last },
+            ..
+        } => Some(last),
+        _ => None,
+    };
+    let total = progress.and_then(|last| last.total.filter(|total| *total > 0));
+    let fraction = progress
+        .zip(total)
+        .map(|(last, total)| (last.bytes as f32 / total as f32).clamp(0., 1.));
+    let label = if progress.is_none() {
+        "Loading model"
+    } else if progress.is_some_and(|last| last.bytes == 0) && total.is_none() {
+        "Connecting…"
+    } else {
+        "Downloading"
+    };
+    let detail = match progress {
+        Some(last) => match total {
+            Some(total) => format!(
+                "{:.0} / {:.0} MB",
+                last.bytes as f64 / 1_048_576.,
+                total as f64 / 1_048_576.,
+            ),
+            None if last.bytes > 0 => {
+                format!("{} received", super::model::format_bytes(last.bytes))
+            }
+            None => "Waiting for the download".into(),
+        },
+        None => "Getting ready to transcribe".into(),
+    };
+    let fill = div().h_full().rounded_full().bg(tokens.accent);
+    let fill = if let Some(fraction) = fraction {
+        fill.w(relative(fraction)).into_any_element()
+    } else {
+        fill.w(relative(0.35))
+            .with_animation(
+                "onboarding-download-pending",
+                Animation::new(Duration::from_secs(2)).repeat(),
+                |el, delta| el.opacity(0.4 + 0.6 * (delta * std::f32::consts::PI).sin()),
+            )
+            .into_any_element()
+    };
+    div()
+        .id("onboarding-model-download")
+        .h(px(76.))
+        .w_full()
+        .flex()
+        .flex_col()
+        .justify_end()
+        .gap(px(8.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .child(label)
+                .children(fraction.map(|fraction| {
+                    div()
+                        .text_color(tokens.accent)
+                        .child(format!("{:.0}%", fraction * 100.))
+                })),
+        )
+        .child(
+            div()
+                .h(px(4.))
+                .flex_shrink_0()
+                .rounded_full()
+                .overflow_hidden()
+                .bg(tokens.hairline)
+                .child(fill),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .text_size(px(11.))
+                .text_color(tokens.muted)
+                .child(div().child(detail))
+                .children(
+                    progress
+                        .and_then(|last| super::model::progress_speed(last.bytes_per_second))
+                        .map(|speed| div().flex_shrink_0().whitespace_nowrap().child(speed)),
+                ),
+        )
+        .into_any_element()
 }
 
 fn shortcuts_screen(
@@ -864,11 +931,7 @@ fn shortcut_card(
         .gap(px(10.))
         .rounded(px(10.))
         .border_1()
-        .border_color(if listening {
-            tokens.accent
-        } else {
-            tokens.hairline
-        })
+        .border_color(tokens.hairline)
         .bg(tokens.group)
         .when(listening, |el| {
             el.track_focus(&view.hold_focus)

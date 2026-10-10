@@ -16,6 +16,9 @@ use crate::shortcut_capture::ShortcutCapture;
 
 use super::{SettingsSection, SettingsView, SETTINGS_TITLE};
 
+#[cfg(windows)]
+mod windows;
+
 static SETTINGS: Mutex<Option<WindowHandle<SettingsView>>> = Mutex::new(None);
 /// Keeps the controller alive independently of either native window.
 struct AppController(Entity<SettingsView>);
@@ -60,11 +63,34 @@ pub fn open_settings_preview(cx: &mut App, prefs: Prefs, dirs: crate::dirs::AppD
 
 /// Isolated visual preview; no downloads, permissions, or native dictation.
 pub fn open_onboarding_preview(cx: &mut App, prefs: Prefs, dirs: crate::dirs::AppDirs) {
+    let status = if std::env::args().any(|arg| arg == "--preview-download") {
+        crate::phase::OnboardStatus::Fetching {
+            last: Progress {
+                file: "model.bin".into(),
+                bytes: 312 * 1_048_576,
+                total: Some(793 * 1_048_576),
+                bytes_per_second: Some(12 * 1_048_576),
+            },
+        }
+    } else if std::env::args().any(|arg| arg == "--preview-connecting") {
+        crate::phase::OnboardStatus::Fetching {
+            last: Progress {
+                file: "model.bin".into(),
+                bytes: 0,
+                total: None,
+                bytes_per_second: None,
+            },
+        }
+    } else if std::env::args().any(|arg| arg == "--preview-loading") {
+        crate::phase::OnboardStatus::Activating
+    } else {
+        crate::phase::OnboardStatus::Idle
+    };
     open_settings_window(
         cx,
         AppPhase::Onboarding {
             prefs,
-            status: crate::phase::OnboardStatus::Idle,
+            status,
             warning: None,
         },
         DownloadRequestTracker::default(),
@@ -142,6 +168,8 @@ fn open_settings_window(
             },
             move |window, cx| {
                 crate::app_icon::install(window);
+                #[cfg(windows)]
+                windows::set_fixed_size(window, bounds.size, cx);
                 window.on_window_should_close(cx, move |_, cx| {
                     cx.spawn(async move |cx| {
                         cx.background_executor().timer(CLOSE_DISPATCH_DELAY).await;
@@ -420,6 +448,8 @@ pub(super) fn finish_onboarding_window(cx: &mut App) {
             },
             move |window, cx| {
                 crate::app_icon::install(window);
+                #[cfg(windows)]
+                windows::set_fixed_size(window, bounds.size, cx);
                 window.on_window_should_close(cx, |_, cx| {
                     cx.defer(|cx| {
                         if crate::tray::is_available() {

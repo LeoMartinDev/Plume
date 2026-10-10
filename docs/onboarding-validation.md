@@ -29,3 +29,8 @@ Opening Privacy & Security through Settings must leave System Settings in front.
 ## Visual preview
 
 `cargo run -p plume-app --example onboarding_preview -- [shortcuts|permissions]` opens a visual-only app with temporary preferences. Ctrl+1/2/3 changes screens; Ctrl+4 verifies the native window handoff to settings. Use it to inspect spacing and keyboard shortcut capture without invoking native permissions, models or microphone capture. Append `--dark` to inspect the dark scheme.
+
+On the model screen, append `--preview-download`, `--preview-connecting`, or
+`--preview-loading` to inspect simulated progress without downloading anything.
+Progress occupies the bottom of the selected model card; the other cards are
+dimmed and the grid/footer keep their positions. Verify both light and dark modes.
