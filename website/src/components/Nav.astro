@@ -10,52 +10,114 @@ const { lang } = Astro.props;
 const s = t(lang).nav;
 const home = lang === 'en' ? '/' : '/fr/';
 const otherLang = lang === 'en' ? { href: '/fr/', label: 'FR', name: 'Français' } : { href: '/', label: 'EN', name: 'English' };
+const links = [
+  { id: 'features', label: s.features },
+  { id: 'models', label: s.models },
+  { id: 'privacy', label: s.privacy },
+  { id: 'faq', label: s.faq },
+];
 ---
 
-<header class="header">
-  <nav class="container nav" aria-label={s.menu}>
+<header class="header" data-header>
+  <nav class="nav" aria-label={s.menu}>
     <a href={home} class="brand"><Logo /> Plume</a>
-    <div class="links">
-      <a href="#features">{s.features}</a>
-      <a href="#models">{s.models}</a>
-      <a href="#privacy">{s.privacy}</a>
-      <a href="#faq">{s.faq}</a>
+    <div class="links" data-links>
+      <span class="indicator" aria-hidden="true"></span>
+      {links.map((l) => <a href={`#${l.id}`} data-section={l.id}>{l.label}</a>)}
     </div>
     <div class="actions">
-      <a class="lang" href={otherLang.href} hreflang={lang === 'en' ? 'fr' : 'en'} aria-label={otherLang.name}>{otherLang.label}</a>
-      <button class="icon-btn" type="button" data-theme-toggle aria-label={s.theme}>
-        <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
-        </svg>
-        <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path>
+      <div class="tools">
+        <a class="icon-btn lang" href={otherLang.href} hreflang={lang === 'en' ? 'fr' : 'en'} aria-label={otherLang.name}>{otherLang.label}</a>
+        <button class="icon-btn" type="button" data-theme-toggle aria-label={s.theme}>
+          <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+          </svg>
+          <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path>
+          </svg>
+        </button>
+        <a href={REPO_URL} class="icon-btn" aria-label={s.github}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
+        </a>
+      </div>
+      <!-- Folds away while the floating pill at the bottom offers the same download -->
+      <span class="cta"><a href="#download" class="cta-btn" data-nav-cta>{s.download}</a></span>
+      <button class="icon-btn menu-btn" type="button" aria-label={s.toggle} aria-expanded="false" aria-controls="nav-menu" data-menu-toggle>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path class="bar-top" d="M4 8h16"></path><path class="bar-bottom" d="M4 16h16"></path>
         </svg>
       </button>
-      <a href={REPO_URL} class="btn btn-secondary btn-sm hide-sm">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
-        GitHub
-      </a>
-      <a href="#download" class="btn btn-primary btn-sm">{s.download}</a>
+    </div>
+
+    <!-- Small screens: the links and tools drop down from the island -->
+    <div class="menu" id="nav-menu" data-menu>
+      {links.map((l) => <a href={`#${l.id}`} class="menu-link">{l.label}</a>)}
+      <div class="menu-tools">
+        <a class="icon-btn lang" href={otherLang.href} hreflang={lang === 'en' ? 'fr' : 'en'} aria-label={otherLang.name}>{otherLang.label}</a>
+        <button class="icon-btn" type="button" data-theme-toggle aria-label={s.theme}>
+          <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+          </svg>
+          <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path>
+          </svg>
+        </button>
+        <a href={REPO_URL} class="icon-btn" aria-label={s.github}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
+        </a>
+      </div>
     </div>
   </nav>
 </header>
 
 <style>
+  /* The header keeps a fixed height so the island can shrink and float without moving the page */
   .header {
     position: sticky;
     top: 0;
     z-index: 30;
-    background: var(--nav-bg);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--border);
+    height: 68px;
+    pointer-events: none;
   }
   .nav {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    margin-inline: auto;
+    width: min(100%, 1180px);
+    height: 68px;
+    padding-inline: 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
-    padding-block: 14px;
+    gap: 16px;
+    pointer-events: auto;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    /* Lets the width animate to fit-content where supported; elsewhere it snaps */
+    interpolate-size: allow-keywords;
+    transition:
+      width 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+      height 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+      padding 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+      transform 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+      background-color 0.3s ease,
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+  .header.is-scrolled .nav,
+  .header.is-open .nav {
+    width: fit-content;
+    max-width: calc(100% - 24px);
+    height: 52px;
+    padding-inline: 8px 6px;
+    transform: translateY(10px);
+    background-color: var(--nav-pill-bg);
+    border-color: var(--border-strong);
+    box-shadow: var(--nav-pill-shadow);
+    backdrop-filter: blur(16px) saturate(1.6);
+    -webkit-backdrop-filter: blur(16px) saturate(1.6);
   }
   .brand {
     display: flex;
@@ -65,30 +127,62 @@ const otherLang = lang === 'en' ? { href: '/fr/', label: 'FR', name: 'Français'
     font-weight: 600;
     font-size: 17px;
     letter-spacing: -0.02em;
+    white-space: nowrap;
   }
+  .header.is-scrolled .brand {
+    padding-right: 8px;
+  }
+
+  /* Links, with a highlight that slides to the section on screen */
   .links {
+    position: relative;
     display: flex;
-    gap: 28px;
     font-size: 14px;
   }
-  .links a,
-  .lang {
+  .links a {
+    position: relative;
+    z-index: 1;
+    padding: 8px 14px;
+    border-radius: 999px;
     color: var(--muted);
     text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.2s ease;
   }
   .links a:hover,
-  .lang:hover {
+  .links a.is-active {
     color: var(--text);
   }
-  .actions {
+  .indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: var(--w, 0);
+    transform: translateX(var(--x, 0));
+    border-radius: 999px;
+    background: var(--nav-hover);
+    opacity: 0;
+    transition:
+      transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+      width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+      opacity 0.25s ease;
+  }
+  .links.has-active .indicator {
+    opacity: 1;
+  }
+
+  .actions,
+  .tools,
+  .menu-tools {
     display: flex;
     align-items: center;
-    gap: 8px;
   }
-  .lang {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 8px;
+  .actions {
+    gap: 4px;
+  }
+  .tools {
+    gap: 2px;
   }
   .icon-btn {
     width: 38px;
@@ -96,11 +190,22 @@ const otherLang = lang === 'en' ? { href: '/fr/', label: 'FR', name: 'Français'
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
-    border: 1px solid var(--border-strong);
+    flex: none;
+    border-radius: 999px;
+    border: 0;
     background: transparent;
-    color: var(--text);
+    color: var(--muted);
+    text-decoration: none;
     cursor: pointer;
+    transition: color 0.2s ease, background-color 0.2s ease;
+  }
+  .icon-btn:hover {
+    color: var(--text);
+    background: var(--nav-hover);
+  }
+  .lang {
+    font-family: var(--font-mono);
+    font-size: 12px;
   }
   .moon {
     display: none;
@@ -111,10 +216,185 @@ const otherLang = lang === 'en' ? { href: '/fr/', label: 'FR', name: 'Français'
   :global(:root[data-theme='dark']) .moon {
     display: block;
   }
+
+  .cta {
+    display: flex;
+    overflow: hidden;
+    max-width: 180px;
+    padding-left: 4px;
+    transition: max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s ease, padding 0.4s ease;
+  }
+  .header.cta-hidden .cta {
+    max-width: 0;
+    padding-left: 0;
+    opacity: 0;
+  }
+  .cta-btn {
+    display: inline-flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: 999px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: opacity 0.15s ease;
+  }
+  .cta-btn:hover {
+    opacity: 0.86;
+  }
+
+  .menu-btn,
+  .menu {
+    display: none;
+  }
+  .menu-btn path {
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+    transform-origin: 12px 12px;
+  }
+  .header.is-open .bar-top {
+    transform: translateY(4px) rotate(45deg);
+  }
+  .header.is-open .bar-bottom {
+    transform: translateY(-4px) rotate(-45deg);
+  }
+
   @media (max-width: 860px) {
     .links,
-    .hide-sm {
+    .tools {
       display: none;
+    }
+    .menu-btn {
+      display: inline-flex;
+    }
+    .nav {
+      padding-inline: 16px;
+    }
+    /* Edge to edge on phones, so the menu can hang from its right end */
+    .header.is-scrolled .nav,
+    .header.is-open .nav {
+      width: calc(100% - 24px);
+      padding-inline: 8px 6px;
+    }
+    .menu {
+      display: flex;
+      flex-direction: column;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      width: min(280px, calc(100vw - 24px));
+      padding: 8px;
+      border-radius: 22px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      box-shadow: var(--nav-pill-shadow);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-6px) scale(0.98);
+      transform-origin: top right;
+      transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 0.25s;
+    }
+    .header.is-open .menu {
+      opacity: 1;
+      visibility: visible;
+      transform: none;
+      transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .menu-link {
+      padding: 12px 14px;
+      border-radius: 14px;
+      font-size: 16px;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .menu-link:hover {
+      background: var(--nav-hover);
+    }
+    .menu-tools {
+      gap: 2px;
+      margin-top: 4px;
+      padding: 6px 6px 0;
+      border-top: 1px solid var(--border);
     }
   }
 </style>
+
+<script>
+  const header = document.querySelector<HTMLElement>('[data-header]');
+  const links = document.querySelector<HTMLElement>('[data-links]');
+  const toggle = document.querySelector<HTMLButtonElement>('[data-menu-toggle]');
+  const menu = document.querySelector<HTMLElement>('[data-menu]');
+
+  if (header && links) {
+    const anchors = [...links.querySelectorAll<HTMLAnchorElement>('a[data-section]')];
+    const sections = anchors
+      .map((a) => document.getElementById(a.dataset.section!))
+      .filter((el): el is HTMLElement => el !== null);
+    let active: HTMLAnchorElement | null = null;
+
+    // Slide the highlight under the active link (or fade it out between sections)
+    const place = (next: HTMLAnchorElement | null) => {
+      if (next === active) return;
+      active?.classList.remove('is-active');
+      next?.classList.add('is-active');
+      active = next;
+      links.classList.toggle('has-active', next !== null);
+      if (next) {
+        links.style.setProperty('--x', `${next.offsetLeft}px`);
+        links.style.setProperty('--w', `${next.offsetWidth}px`);
+      }
+    };
+
+    let ticking = false;
+    const update = () => {
+      ticking = false;
+      header.classList.toggle('is-scrolled', window.scrollY > 16);
+      // The section crossing a line a third of the way down the screen is the current one
+      const line = window.innerHeight * 0.33;
+      const current = sections.find((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top <= line && r.bottom > line;
+      });
+      place(current ? anchors[sections.indexOf(current)] : null);
+    };
+    const schedule = () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+    };
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    update();
+
+    // Hide the navbar's download button while the floating pill shows its own
+    const heroCta = document.querySelector('[data-smart-download]');
+    if (heroCta && 'IntersectionObserver' in window) {
+      new IntersectionObserver(([entry]) => {
+        const pastHero = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+        header.classList.toggle('cta-hidden', pastHero);
+      }).observe(heroCta);
+    }
+  }
+
+  if (header && toggle && menu) {
+    const setOpen = (open: boolean) => {
+      header.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+    };
+    toggle.addEventListener('click', () => setOpen(!header.classList.contains('is-open')));
+    menu.querySelectorAll('.menu-link').forEach((a) => a.addEventListener('click', () => setOpen(false)));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && header.classList.contains('is-open')) {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!header.contains(e.target as Node)) setOpen(false);
+    });
+  }
+</script>

@@ -16,6 +16,8 @@ const en = {
     download: 'Download',
     theme: 'Toggle dark mode',
     menu: 'Main navigation',
+    toggle: 'Menu',
+    github: 'Source code on GitHub',
   },
   hero: {
     badge: 'Runs 100% on your computer · macOS, Windows & Linux',
@@ -131,6 +133,8 @@ const fr: Strings = {
     download: 'Télécharger',
     theme: 'Basculer le mode sombre',
     menu: 'Navigation principale',
+    toggle: 'Menu',
+    github: 'Code source sur GitHub',
   },
   hero: {
     badge: '100 % sur votre ordinateur · macOS, Windows & Linux',

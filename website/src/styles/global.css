@@ -21,7 +21,10 @@
   --highlight: #e6ecff;
   --footer-word: #a9a9a3;
   --footer-word-end: #e0e0dc;
-  --nav-bg: rgba(244, 244, 242, 0.86);
+  /* navbar island (once scrolled) */
+  --nav-pill-bg: rgba(255, 255, 255, 0.84);
+  --nav-pill-shadow: 0 8px 32px rgba(20, 20, 20, 0.08), 0 1px 2px rgba(20, 20, 20, 0.04);
+  --nav-hover: rgba(20, 20, 20, 0.06);
 
   /* hero stage */
   --stage-bg: #141414;
@@ -89,7 +92,9 @@
   --highlight: rgba(59, 109, 255, 0.24);
   --footer-word: #6a6a72;
   --footer-word-end: #1e1e21;
-  --nav-bg: rgba(11, 11, 12, 0.8);
+  --nav-pill-bg: rgba(22, 22, 24, 0.72);
+  --nav-pill-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --nav-hover: rgba(255, 255, 255, 0.08);
 
   --stage-bg: #101012;
   --stage-dots: rgba(255, 255, 255, 0.05);
