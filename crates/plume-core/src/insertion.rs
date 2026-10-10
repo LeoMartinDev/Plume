@@ -18,10 +18,42 @@ impl InsertionMode {
     }
 }
 
+/// Where dictated text goes once transcribed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Destination {
+    /// Insert into the focused field; copy instead when nothing is focused.
+    #[default]
+    FocusedField,
+    /// Only copy to the clipboard, never paste or type.
+    Clipboard,
+}
+
+impl Destination {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FocusedField => "insert",
+            Self::Clipboard => "copy",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertionMethod {
     Clipboard,
     Typing,
+    /// Left on the clipboard for the user to paste.
+    Copied,
+}
+
+impl InsertionMethod {
+    /// Label kept in history and recordings.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Clipboard => "Paste",
+            Self::Typing => "Typing",
+            Self::Copied => "Copy",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +61,8 @@ pub enum TargetAssessment {
     Editable,
     NonEditable,
     Sensitive,
+    /// The system reports no focused control that could take text.
+    NoFocus,
     Unknown,
 }
 

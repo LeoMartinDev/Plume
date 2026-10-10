@@ -14,7 +14,7 @@ pub use cancellation::CancellationToken;
 pub use dictation::{Dictation, DictationUpdate, Edit};
 pub use hotkey::{GlobalHotkey, HotkeyEvent};
 pub use insertion::{
-    boundary_spacing, FieldContext, InjectionReport, InsertionMethod, InsertionMode,
+    boundary_spacing, Destination, FieldContext, InjectionReport, InsertionMethod, InsertionMode,
     TargetAssessment, TextInjector,
 };
 pub use session::{

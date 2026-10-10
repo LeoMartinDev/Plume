@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::catalog::ModelId;
 use crate::history_policy::HistoryPolicy;
-use plume_session::InsertionMode;
+use plume_session::{Destination, InsertionMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scheme {
@@ -121,6 +121,15 @@ impl AppearancePref {
             Self::Auto => os,
         }
     }
+
+    /// The dictation pill follows the app's theme, and the system in Auto.
+    pub fn overlay(self) -> plume_overlay::Appearance {
+        match self {
+            Self::Fixed(Scheme::Light) => plume_overlay::Appearance::Light,
+            Self::Fixed(Scheme::Dark) => plume_overlay::Appearance::Dark,
+            Self::Auto => plume_overlay::Appearance::System,
+        }
+    }
 }
 
 pub const DEFAULT_HOLD: &str = plume_session::Config::DEFAULT_HOLD;
@@ -147,6 +156,7 @@ pub struct Prefs {
     appearance: AppearancePref,
     language: LanguagePref,
     interface_language: InterfaceLanguage,
+    destination: Destination,
     insertion_mode: InsertionMode,
     copy_on_failure: bool,
     history: HistoryPolicy,
@@ -164,6 +174,7 @@ impl Prefs {
             appearance: AppearancePref::Auto,
             language: LanguagePref::Auto,
             interface_language: InterfaceLanguage::ENGLISH,
+            destination: Destination::FocusedField,
             insertion_mode: InsertionMode::Auto,
             copy_on_failure: true,
             history: HistoryPolicy::default(),
@@ -227,6 +238,14 @@ impl Prefs {
 
     pub fn set_interface_language(&mut self, language: InterfaceLanguage) {
         self.interface_language = language;
+    }
+
+    pub fn destination(&self) -> Destination {
+        self.destination
+    }
+
+    pub fn set_destination(&mut self, destination: Destination) {
+        self.destination = destination;
     }
 
     pub fn insertion_mode(&self) -> InsertionMode {
@@ -468,6 +487,45 @@ mod tests {
             _ => panic!("saved insertion settings must load"),
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn destination_round_trips_and_defaults_to_insert() {
+        assert_eq!(
+            Prefs::default_fresh().destination(),
+            Destination::FocusedField
+        );
+        let path = temp_prefs("destination-round");
+        let mut prefs = Prefs::default_fresh();
+        prefs.set_destination(Destination::Clipboard);
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => assert_eq!(loaded.destination(), Destination::Clipboard),
+            _ => panic!("saved destination must load"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn unknown_destination_inserts_and_does_not_quarantine() {
+        for value in ["\"elsewhere\"", "3"] {
+            let path = temp_prefs("destination-unknown");
+            std::fs::write(
+                &path,
+                format!(
+                    "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\ndestination = {value}\n"
+                ),
+            )
+            .unwrap();
+            match load_at(&path) {
+                PrefsLoad::Loaded(prefs) => {
+                    assert_eq!(prefs.destination(), Destination::FocusedField)
+                }
+                _ => panic!("unknown destination must be Loaded"),
+            }
+            assert!(!path.with_extension("toml.bad").exists());
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        }
     }
 
     #[test]

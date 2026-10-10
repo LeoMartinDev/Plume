@@ -158,6 +158,7 @@ impl TextInjector for NativeInjector {
         let method = transaction::deliver(&mut transaction, text, mode)?;
         let application = transaction.application;
         let target = transaction.target;
+        tracing::debug!(?method, ?target, ?application, "plume-inject: delivered");
         Ok(plume_core::InjectionReport {
             method,
             application,
@@ -193,16 +194,19 @@ impl transaction::Target for DeliveryTarget<'_> {
     fn snapshot(&mut self) -> Result<Self::Snapshot, BoxError> {
         clipboard::Snapshot::capture()
     }
-    fn prepare(&mut self, text: &str) -> Result<String, BoxError> {
+    fn prepare(&mut self, text: &str) -> Result<Option<String>, BoxError> {
         let current = self.injector.field_context();
         (self.application, self.target) = self.injector.target_info();
         reject_target(self.target)?;
+        if self.target == plume_core::TargetAssessment::NoFocus {
+            return Ok(None);
+        }
         let context = current.as_ref().filter(|now| {
             self.context
                 .as_ref()
                 .is_some_and(|old| now.target_id == old.target_id)
         });
-        Ok(plume_core::boundary_spacing(text, context))
+        Ok(Some(plume_core::boundary_spacing(text, context)))
     }
     fn type_text(&mut self, text: &str) -> Result<(), BoxError> {
         self.injector.insert(text)
@@ -258,7 +262,9 @@ impl NativeInjector {
         }
     }
 
-    fn target_info(&self) -> (Option<String>, plume_core::TargetAssessment) {
+    /// The foreground application and how Plume judges its focused control.
+    /// Read-only: it never touches the clipboard or sends input.
+    pub fn target_info(&self) -> (Option<String>, plume_core::TargetAssessment) {
         match &self.inner {
             #[cfg(target_os = "linux")]
             Inner::X11(injector) => injector.target_info(),

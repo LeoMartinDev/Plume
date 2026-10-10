@@ -127,6 +127,21 @@ impl SettingsView {
         cx.notify();
     }
 
+    pub(in crate::settings) fn commit_destination(
+        &mut self,
+        next: plume_session::Destination,
+        cx: &mut Context<Self>,
+    ) {
+        self.insertion_open = false;
+        if self.phase.prefs().destination() == next {
+            return;
+        }
+        self.phase.prefs_mut().set_destination(next);
+        self.save_prefs();
+        self.retarget_insertion();
+        cx.notify();
+    }
+
     pub(in crate::settings) fn toggle_copy_on_failure(&mut self, cx: &mut Context<Self>) {
         let enabled = !self.phase.prefs().copy_on_failure();
         self.phase.prefs_mut().set_copy_on_failure(enabled);
@@ -151,6 +166,7 @@ impl SettingsView {
             return;
         }
         self.phase.prefs_mut().set_appearance(next);
+        cx.set_global(next.overlay());
         self.save_prefs();
         cx.notify();
     }
@@ -166,6 +182,7 @@ fn engine_language(language: LanguagePref) -> Language {
 
 fn insertion_config(prefs: &Prefs) -> InsertionConfig {
     InsertionConfig {
+        destination: prefs.destination(),
         mode: prefs.insertion_mode(),
         copy_on_failure: prefs.copy_on_failure(),
     }

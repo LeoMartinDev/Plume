@@ -15,7 +15,9 @@ use plume_core::BoxError;
 use plume_engine::{Engine, ModelDir};
 
 pub use config::{Config, ConfigError};
-pub use plume_core::{InjectionReport, InsertionMethod, InsertionMode, TargetAssessment};
+pub use plume_core::{
+    Destination, InjectionReport, InsertionMethod, InsertionMode, TargetAssessment,
+};
 pub use startup::{
     start, DictationResult, EngineTarget, HoldTarget, InsertionConfig, InsertionTarget,
     LiveSession, PreparedSession, PreviewEvent, SessionControl, SessionMode, ShortcutEditGuard,

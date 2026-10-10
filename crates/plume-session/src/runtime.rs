@@ -71,6 +71,9 @@ struct Active {
     mode: Option<Mode>,
     silence_shown: bool,
     limit_shown: bool,
+    /// The VAD flagged speech during this capture. A silent capture skips
+    /// "Transcribing" and goes straight to "No speech detected".
+    heard_speech: bool,
     retry: bool,
     cancel_feedback: Option<Feedback>,
 }
@@ -223,9 +226,11 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                         if let Some(tx) = &active.commands {
                             let _ = tx.send(CaptureCommand::Finish);
                         }
-                        self.outputs
-                            .bubbles
-                            .feedback(active.ui_id, Feedback::Transcribing);
+                        if active.retry || active.heard_speech {
+                            self.outputs
+                                .bubbles
+                                .feedback(active.ui_id, Feedback::Transcribing);
+                        }
                     }
                 }
                 Some(Action::Cancel) => {
@@ -317,6 +322,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
             mode: Some(mode),
             silence_shown: false,
             limit_shown: false,
+            heard_speech: false,
             retry: false,
             cancel_feedback: None,
         };
@@ -398,6 +404,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
             mode: None,
             silence_shown: false,
             limit_shown: false,
+            heard_speech: false,
             retry: true,
             cancel_feedback: None,
         });
@@ -438,12 +445,14 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                                 Feedback::RecordingNotice {
                                     silence: false,
                                     limit: false,
+                                    cancel: self.config.cancel.as_str().into(),
                                 },
                             );
                         }
                     }
                     CaptureEvent::Speech(at) => {
                         active.last_speech = Some(at);
+                        active.heard_speech = true;
                         if active.silence_shown {
                             active.silence_shown = false;
                             if matches!(self.controller.phase, Phase::Recording(_)) {
@@ -452,6 +461,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                                     Feedback::RecordingNotice {
                                         silence: false,
                                         limit: active.limit_shown,
+                                        cancel: self.config.cancel.as_str().into(),
                                     },
                                 );
                             }
@@ -463,9 +473,13 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                         active.error = error;
                         if self.controller.phase != Phase::Cancelling {
                             self.controller.phase = Phase::Transcribing;
-                            self.outputs
-                                .bubbles
-                                .feedback(active.ui_id, Feedback::Transcribing);
+                            // Speech in the last frames may only show up here.
+                            let silent = active.record.as_ref().is_some_and(|r| !r.has_speech);
+                            if active.retry || !silent {
+                                self.outputs
+                                    .bubbles
+                                    .feedback(active.ui_id, Feedback::Transcribing);
+                            }
                         }
                     }
                 }
@@ -495,18 +509,25 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
         if silence != active.silence_shown || limit != active.limit_shown {
             active.silence_shown = silence;
             active.limit_shown = limit;
-            self.outputs
-                .bubbles
-                .feedback(active.ui_id, Feedback::RecordingNotice { silence, limit });
+            self.outputs.bubbles.feedback(
+                active.ui_id,
+                Feedback::RecordingNotice {
+                    silence,
+                    limit,
+                    cancel: self.config.cancel.as_str().into(),
+                },
+            );
         }
         if timing.limit {
             if let Some(tx) = &active.commands {
                 let _ = tx.send(CaptureCommand::Limit);
             }
             self.controller.phase = Phase::Transcribing;
-            self.outputs
-                .bubbles
-                .feedback(active.ui_id, Feedback::Transcribing);
+            if active.heard_speech {
+                self.outputs
+                    .bubbles
+                    .feedback(active.ui_id, Feedback::Transcribing);
+            }
         }
     }
     fn commit_if_finished(&mut self) {
@@ -792,6 +813,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
                     mode: active.mode,
                     silence_shown: false,
                     limit_shown: false,
+                    heard_speech: false,
                     retry: active.retry,
                     cancel_feedback: active.cancel_feedback.take(),
                 });

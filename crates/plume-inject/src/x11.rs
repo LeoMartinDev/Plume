@@ -90,27 +90,33 @@ impl X11Injector {
     }
 
     pub(crate) fn target_info(&self) -> (Option<String>, plume_core::TargetAssessment) {
-        (
-            self.active_application().ok().flatten(),
-            plume_core::TargetAssessment::Unknown,
-        )
+        match self.active_window() {
+            // The window manager reports no active window: nothing can take text.
+            Ok(None) => (None, plume_core::TargetAssessment::NoFocus),
+            Ok(Some(window)) => (
+                self.application(window).ok().flatten(),
+                plume_core::TargetAssessment::Unknown,
+            ),
+            Err(_) => (None, plume_core::TargetAssessment::Unknown),
+        }
     }
 
-    fn active_application(&self) -> Result<Option<String>, BoxError> {
+    fn active_window(&self) -> Result<Option<u32>, BoxError> {
         let active_atom = self
             .conn
             .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
             .reply()?
             .atom;
-        let active = self
+        Ok(self
             .conn
             .get_property(false, self.root, active_atom, AtomEnum::WINDOW, 0, 1)?
             .reply()?
             .value32()
-            .and_then(|mut values| values.next());
-        let Some(window) = active else {
-            return Ok(None);
-        };
+            .and_then(|mut values| values.next())
+            .filter(|window| *window != 0))
+    }
+
+    fn application(&self, window: u32) -> Result<Option<String>, BoxError> {
         let class = self
             .conn
             .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 1024)?

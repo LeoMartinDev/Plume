@@ -1,10 +1,23 @@
 mod feedback;
 mod frame;
+mod pill;
 mod window;
 
 use plume_core::{Dictation, Session, SessionState};
 
 pub use window::{attach, prepare_display, run, run_with, WINDOW_TITLE};
+
+/// Pill theme picked in the app's settings, stored as a GPUI global. Without
+/// it, or with `System`, the pill follows the operating system's appearance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl gpui::Global for Appearance {}
 
 /// Latest partial and session phase shown in the overlay bubble.
 ///
@@ -24,13 +37,26 @@ pub enum Feedback {
     Transcribing,
     Cancelling,
     NoSpeech,
-    RecordingNotice { silence: bool, limit: bool },
+    /// `cancel` is the cancel shortcut as typed in settings ("Esc").
+    RecordingNotice {
+        silence: bool,
+        limit: bool,
+        cancel: String,
+    },
     Session,
     Inserting,
     Success,
+    /// Delivered to the clipboard instead of a field.
+    Copied,
     Empty,
-    InsertionFailed { text: String, copied: bool },
-    Error { title: String, advice: String },
+    InsertionFailed {
+        text: String,
+        copied: bool,
+    },
+    Error {
+        title: String,
+        advice: String,
+    },
 }
 
 impl Bubble {

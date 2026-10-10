@@ -30,6 +30,7 @@ pub enum PreviewEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InsertionConfig {
+    pub destination: plume_core::Destination,
     pub mode: plume_core::InsertionMode,
     pub copy_on_failure: bool,
 }
@@ -37,6 +38,7 @@ pub struct InsertionConfig {
 impl Default for InsertionConfig {
     fn default() -> Self {
         Self {
+            destination: plume_core::Destination::FocusedField,
             mode: plume_core::InsertionMode::Auto,
             copy_on_failure: true,
         }

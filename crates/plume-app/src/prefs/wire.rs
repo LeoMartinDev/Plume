@@ -1,7 +1,7 @@
 use super::{AppearancePref, InterfaceLanguage, LanguagePref, Prefs, PrefsError, Scheme};
 use crate::catalog::ModelId;
 use crate::history_policy::HistoryPolicy;
-use plume_session::InsertionMode;
+use plume_session::{Destination, InsertionMode};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
@@ -84,6 +84,9 @@ struct WireIn {
     language: LanguageWire,
     #[serde(default)]
     interface_language: InterfaceLanguageWire,
+    /// Any unknown value or type means the default: insert into the field.
+    #[serde(default)]
+    destination: Option<toml::Value>,
     #[serde(default = "default_insertion_mode")]
     insertion_mode: String,
     #[serde(default = "default_copy_on_failure")]
@@ -102,6 +105,7 @@ struct WireOut {
     appearance: &'static str,
     language: &'static str,
     interface_language: InterfaceLanguage,
+    destination: &'static str,
     insertion_mode: &'static str,
     copy_on_failure: bool,
 }
@@ -156,6 +160,10 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
             appearance: wire.appearance.0,
             language: wire.language.0,
             interface_language: wire.interface_language.0,
+            destination: match wire.destination.as_ref().and_then(toml::Value::as_str) {
+                Some("copy") => Destination::Clipboard,
+                _ => Destination::FocusedField,
+            },
             insertion_mode: match wire.insertion_mode.as_str() {
                 "clipboard" => InsertionMode::Clipboard,
                 "typing" => InsertionMode::Typing,
@@ -200,6 +208,7 @@ pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
         appearance: prefs.appearance().as_str(),
         language: prefs.language().as_str(),
         interface_language: prefs.interface_language(),
+        destination: prefs.destination().as_str(),
         insertion_mode: prefs.insertion_mode().as_str(),
         copy_on_failure: prefs.copy_on_failure(),
         history: HistoryWireOut {

@@ -52,16 +52,46 @@ fn focused() -> Option<Owned> {
     attr(system.0, "AXFocusedUIElement")
 }
 pub(crate) fn target() -> (Option<String>, TargetAssessment) {
+    // No focused element at all: the desktop, or an app without a window.
     let Some(element) = focused() else {
-        return (None, TargetAssessment::Unknown);
+        return (None, TargetAssessment::NoFocus);
     };
     (None, assessment(&element))
+}
+/// Roles that never take typed or pasted text. Web areas, groups and custom
+/// views stay Unknown: terminals and editors draw their text there.
+fn never_text(role: &str) -> bool {
+    matches!(
+        role,
+        "AXButton"
+            | "AXCheckBox"
+            | "AXRadioButton"
+            | "AXLink"
+            | "AXMenu"
+            | "AXMenuBar"
+            | "AXMenuBarItem"
+            | "AXMenuItem"
+            | "AXMenuButton"
+            | "AXPopUpButton"
+            | "AXImage"
+            | "AXTabGroup"
+            | "AXToolbar"
+            | "AXScrollBar"
+            | "AXSlider"
+            | "AXList"
+            | "AXOutline"
+            | "AXBrowser"
+            | "AXRow"
+            | "AXDisclosureTriangle"
+    )
 }
 fn assessment(element: &Owned) -> TargetAssessment {
     let role = attr(element.0, "AXRole").and_then(|v| string(&v));
     let subrole = attr(element.0, "AXSubrole").and_then(|v| string(&v));
     if subrole.as_deref() == Some("AXSecureTextField") {
         TargetAssessment::Sensitive
+    } else if role.as_deref().is_some_and(never_text) {
+        TargetAssessment::NoFocus
     } else if matches!(
         role.as_deref(),
         Some("AXTextField" | "AXTextArea" | "AXComboBox")

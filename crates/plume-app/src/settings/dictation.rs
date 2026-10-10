@@ -1,6 +1,6 @@
 use crate::settings::i18n::tr;
 use gpui::{deferred, div, prelude::*, px, svg, AnyElement, Context, FontWeight, SharedString};
-use plume_session::InsertionMode;
+use plume_session::{Destination, InsertionMode};
 use plume_ui::{Segment, Segmented, Tokens};
 
 use crate::prefs::Prefs;
@@ -68,14 +68,22 @@ pub(super) fn dictation_page(
                 settings_group(tokens)
                     .flex()
                     .flex_col()
+                    .child(destination_row(tokens, prefs.destination(), cx))
+                    .child(settings_divider(tokens))
                     .child(insertion_mode_row(
                         tokens,
                         prefs.insertion_mode(),
                         view.insertion_open,
+                        prefs.destination() == Destination::FocusedField,
                         cx,
                     ))
                     .child(settings_divider(tokens))
-                    .child(copy_on_failure_row(tokens, prefs.copy_on_failure(), cx)),
+                    .child(copy_on_failure_row(
+                        tokens,
+                        prefs.copy_on_failure(),
+                        prefs.destination() == Destination::FocusedField,
+                        cx,
+                    )),
             ))
             .children(error.map(|text| error_text(tokens, text))),
     )
@@ -183,14 +191,58 @@ pub(super) fn shortcut_row(
         )
 }
 
+/// Insert into the focused field, or only copy to the clipboard.
+fn destination_row(
+    tokens: &Tokens,
+    selected: Destination,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    settings_row()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_sm()
+                .child(tr("ui.text_destination")),
+        )
+        .child(Segmented::new(
+            *tokens,
+            selected,
+            [
+                Segment::new(
+                    Destination::FocusedField,
+                    "destination-insert",
+                    tr("ui.insert"),
+                )
+                .on_click(cx, |this: &mut SettingsView, cx| {
+                    this.commit_destination(Destination::FocusedField, cx);
+                }),
+                Segment::new(Destination::Clipboard, "destination-copy", tr("ui.copy")).on_click(
+                    cx,
+                    |this: &mut SettingsView, cx| {
+                        this.commit_destination(Destination::Clipboard, cx);
+                    },
+                ),
+            ],
+        ))
+}
+
+/// Insertion settings only apply when text goes into the focused field.
+fn inserting(view: &SettingsView) -> bool {
+    view.phase.prefs().destination() == Destination::FocusedField
+}
+
 fn insertion_mode_row(
     tokens: &Tokens,
     selected: InsertionMode,
     open: bool,
+    enabled: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
+    let open = open && enabled;
     settings_row()
         .relative()
+        .when(!enabled, |row| row.opacity(0.45))
         .child(
             div()
                 .flex_1()
@@ -214,12 +266,15 @@ fn insertion_mode_row(
                 .border_color(tokens.hairline)
                 .bg(tokens.fill)
                 .text_sm()
-                .cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover))
-                .on_click(cx.listener(|this, _event, _window, cx| {
-                    this.insertion_open = !this.insertion_open;
-                    cx.notify();
-                }))
+                .when(enabled, |select| {
+                    select
+                        .cursor_pointer()
+                        .hover(|style| style.bg(tokens.fill_hover))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.insertion_open = !this.insertion_open;
+                            cx.notify();
+                        }))
+                })
                 .child(tr(insertion_mode_label(selected)))
                 .child(
                     svg()
@@ -300,9 +355,11 @@ fn insertion_mode_label(mode: InsertionMode) -> &'static str {
 fn copy_on_failure_row(
     tokens: &Tokens,
     enabled: bool,
+    available: bool,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     settings_row()
+        .when(!available, |row| row.opacity(0.45))
         .child(
             div()
                 .flex_1()
@@ -317,7 +374,7 @@ fn copy_on_failure_row(
                 Segment::new(true, "copy-failure-on", tr("ui.on")).on_click(
                     cx,
                     |this: &mut SettingsView, cx| {
-                        if !this.phase.prefs().copy_on_failure() {
+                        if inserting(this) && !this.phase.prefs().copy_on_failure() {
                             this.toggle_copy_on_failure(cx);
                         }
                     },
@@ -325,7 +382,7 @@ fn copy_on_failure_row(
                 Segment::new(false, "copy-failure-off", tr("ui.off")).on_click(
                     cx,
                     |this: &mut SettingsView, cx| {
-                        if this.phase.prefs().copy_on_failure() {
+                        if inserting(this) && this.phase.prefs().copy_on_failure() {
                             this.toggle_copy_on_failure(cx);
                         }
                     },

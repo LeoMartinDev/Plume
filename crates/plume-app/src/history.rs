@@ -107,11 +107,13 @@ impl HistoryStore {
         let (application, method, status, error) = match result.injection {
             Ok(report) => (
                 report.application,
-                Some(match report.method {
-                    InsertionMethod::Clipboard => "Paste".to_string(),
-                    InsertionMethod::Typing => "Typing".to_string(),
-                }),
-                "Dispatched".to_string(),
+                Some(report.method.label().to_string()),
+                if report.method == InsertionMethod::Copied {
+                    "Copied"
+                } else {
+                    "Dispatched"
+                }
+                .to_string(),
                 None,
             ),
             Err(error) => (
@@ -425,6 +427,33 @@ mod tests {
         assert_eq!(store.entries.len(), 1);
         assert_eq!(store.entries[0].text, "new");
         assert_eq!(store.entries[0].status, "Copied");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copied_delivery_is_recorded_as_copied() {
+        let root = temp_root();
+        let mut store = HistoryStore::empty(root.join("history.json"), HistoryPolicy::default());
+        store
+            .push(DictationResult {
+                record_id: None,
+                audio_available: false,
+                recovered: false,
+                transcription_error: None,
+                text: "copied".into(),
+                injection: Ok(plume_session::InjectionReport {
+                    method: InsertionMethod::Copied,
+                    application: None,
+                    target: plume_session::TargetAssessment::NoFocus,
+                }),
+                copied_on_failure: false,
+            })
+            .unwrap();
+        let entry = &store.entries[0];
+        assert_eq!(entry.status, "Copied");
+        assert_eq!(entry.method.as_deref(), Some("Copy"));
+        assert!(!entry.copied_on_failure);
+        assert_eq!(entry.error, None);
         std::fs::remove_dir_all(root).unwrap();
     }
 

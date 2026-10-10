@@ -2,16 +2,17 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, hsla, point, prelude::*, px, rgb, size, App, Application, AsyncApp, Bounds, BoxShadow,
-    Context, Pixels, Size, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    div, point, prelude::*, px, size, App, Application, AsyncApp, Bounds, Context, Pixels,
+    SharedString, Size, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowHandle, WindowKind, WindowOptions,
 };
 use plume_core::Dictation;
-use plume_ui::BubbleFrame;
+use plume_ui::Palette;
 
-use crate::feedback::{FeedbackState, Phase, NO_SPEECH_DURATION, SUCCESS_DURATION};
+use crate::feedback::{FeedbackState, Phase};
 use crate::frame::hide_server_frame;
-use crate::{Bubble, Feedback};
+use crate::pill::{self, Lead, Measure, PillSpec, Tone, PILL_HEIGHT, WAVE_BARS};
+use crate::{Appearance, Bubble, Feedback};
 
 pub const WINDOW_TITLE: &str = "Plume — Dictation";
 
@@ -21,264 +22,238 @@ const FRAME_RECHECK_DELAYS: [Duration; 3] = [
     Duration::from_millis(400),
 ];
 
-const BUBBLE_WIDTH: f32 = 96.;
-const BUBBLE_HEIGHT: f32 = 36.;
-const SHADOW_MARGIN: f32 = 12.;
+const SHADOW_MARGIN: f32 = 20.;
 const BUBBLE_BOTTOM_GAP: f32 = 48.;
-const CARD_WIDTH: f32 = 360.;
-const CARD_HEIGHT: f32 = 88.;
+const INITIAL_WIDTH: f32 = 160.;
+const SHAKE_DURATION: Duration = Duration::from_millis(600);
+const SHAKE_AMPLITUDE: f32 = 7.;
+const SHAKE_OSCILLATIONS: f32 = 3.;
+const PASTE_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    "Cmd+V"
+} else {
+    "Ctrl+V"
+};
+const FADE_DURATION: Duration = Duration::from_millis(315);
 
 struct BubbleView {
     feedback: FeedbackState,
-    bars: [f32; 8],
+    bars: [f32; WAVE_BARS],
     target_level: f32,
     last_animation_frame: Instant,
     reduced_motion: bool,
     placed_phase: Phase,
-    expansion: f32,
+    palette: Palette,
+    width: f32,
+    height: f32,
+    measured: Option<(PillSpec, Measure)>,
+}
+
+impl BubbleView {
+    fn spec(&self) -> PillSpec {
+        match self.feedback.phase() {
+            Phase::Hidden => PillSpec::new(Lead::Idle, "Ready"),
+            Phase::Starting => PillSpec::new(Lead::Idle, "Starting…"),
+            Phase::Cancelling => PillSpec::new(Lead::Idle, "Cancelling…"),
+            Phase::NoSpeech => PillSpec::new(Lead::Idle, "No speech detected"),
+            Phase::Recording => {
+                let (limit, cancel) = match &self.feedback.bubble.feedback {
+                    Feedback::RecordingNotice { limit, cancel, .. } => (*limit, cancel.as_str()),
+                    _ => (false, ""),
+                };
+                PillSpec {
+                    tone: if limit { Tone::Warning } else { Tone::Muted },
+                    keys: shortcut_keys(cancel),
+                    ..PillSpec::new(
+                        Lead::Listening,
+                        if limit { "1 minute left" } else { "Listening" },
+                    )
+                }
+            }
+            Phase::Transcribing | Phase::Inserting => {
+                PillSpec::new(Lead::Thinking, "Transcribing on-device")
+            }
+            Phase::Success if self.feedback.bubble.feedback == Feedback::Copied => PillSpec {
+                keys: shortcut_keys(PASTE_SHORTCUT),
+                ..PillSpec::new(Lead::Done, "Copied")
+            },
+            Phase::Success => PillSpec::new(Lead::Done, "Inserted"),
+            Phase::Attention => self.attention(),
+        }
+    }
+
+    fn attention(&self) -> PillSpec {
+        if let Some(recovery) = self.feedback.recoveries.front() {
+            let spec = if recovery.copy_failed {
+                notice(
+                    Lead::Alert,
+                    "Clipboard unavailable",
+                    "Your text is safe. Try Copy again.",
+                )
+            } else if recovery.copied {
+                notice(
+                    Lead::Done,
+                    "Text copied",
+                    if cfg!(target_os = "macos") {
+                        "Press Cmd+V to paste into your app."
+                    } else {
+                        "Press Ctrl+V to paste into your app."
+                    },
+                )
+            } else {
+                notice(
+                    Lead::Caution,
+                    "Insertion unavailable",
+                    "Your transcription is saved.",
+                )
+            };
+            return PillSpec {
+                action: Some("Copy".into()),
+                ..spec
+            };
+        }
+        match &self.feedback.bubble.feedback {
+            Feedback::Error { title, advice } => notice(Lead::Alert, title, advice),
+            _ => notice(
+                Lead::Caution,
+                "Insertion unavailable",
+                "Your transcription is saved.",
+            ),
+        }
+    }
+}
+
+/// Two-line pill with a dismiss button. Errors can carry raw multi-line
+/// messages; the pill shows each part on one line.
+fn notice(lead: Lead, title: &str, detail: &str) -> PillSpec {
+    let line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let detail = line(detail);
+    PillSpec {
+        tone: Tone::Strong,
+        detail: (!detail.is_empty()).then(|| detail.into()),
+        dismiss: true,
+        ..PillSpec::new(lead, line(title))
+    }
+}
+
+/// "Ctrl+Shift+X" → one key cap per key.
+fn shortcut_keys(shortcut: &str) -> Vec<SharedString> {
+    shortcut
+        .split('+')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(|key| SharedString::from(key.to_owned()))
+        .collect()
 }
 
 impl Render for BubbleView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let phase = self.feedback.phase();
-        let motion = terminal_motion(phase, self.feedback.since.elapsed(), self.reduced_motion);
-        let bars = if phase == Phase::Recording {
-            self.bars
-        } else {
-            [0.0; 8]
+        let elapsed = self.feedback.since.elapsed();
+        let motion = terminal_motion(
+            phase,
+            self.feedback.lifetime(),
+            elapsed,
+            self.reduced_motion,
+        );
+        let spec = self.spec();
+        let detail = match &self.measured {
+            Some((measured, measure)) if *measured == spec => measure.detail.clone(),
+            _ => spec.detail.clone(),
         };
-        let content = if phase == Phase::Attention {
-            let recovery = self.feedback.recoveries.front();
-            let copied = recovery.is_some_and(|recovery| recovery.copied);
-            let copy_failed = recovery.is_some_and(|recovery| recovery.copy_failed);
-            let (title, advice) = if recovery.is_some() {
-                if copy_failed {
-                    (
-                        "Clipboard unavailable",
-                        "Your text is safe. Try Copy again.",
-                    )
-                } else if copied {
-                    (
-                        "Text copied",
-                        if cfg!(target_os = "macos") {
-                            "Press Cmd+V to paste into your app."
-                        } else {
-                            "Press Ctrl+V to paste into your app."
-                        },
-                    )
-                } else {
-                    ("Insertion unavailable", "Your transcription is saved.")
-                }
-            } else if let Feedback::Error { title, advice } = &self.feedback.bubble.feedback {
-                (title.as_str(), advice.as_str())
-            } else {
-                ("Insertion unavailable", "Your transcription is saved.")
-            };
-            div()
-                .w(px(CARD_WIDTH))
-                .h(px(CARD_HEIGHT))
-                .rounded(px(18.))
-                .bg(rgb(0x171719))
-                .border_1()
-                .border_color(rgb(0x343438))
-                .px(px(18.))
-                .flex()
-                .items_center()
-                .gap(px(14.))
-                .child(
-                    div()
-                        .text_color(rgb(if copied { 0x91d5ae } else { 0xf0c47b }))
-                        .text_size(px(20.))
-                        .child(if copied { "✓" } else { "!" }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(5.))
-                        .child(
-                            div()
-                                .text_color(rgb(0xf5f5f7))
-                                .text_size(px(13.))
-                                .child(title.to_owned()),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(0xa7a7ae))
-                                .text_size(px(11.))
-                                .child(advice.to_owned()),
-                        ),
-                )
-                .when(recovery.is_some(), |el| {
-                    el.child(
-                        div()
-                            .id("copy-recovery")
-                            .cursor_pointer()
-                            .px(px(11.))
-                            .py(px(7.))
-                            .rounded(px(9.))
-                            .bg(rgb(0xf5f5f7))
-                            .text_color(rgb(0x171719))
-                            .text_size(px(12.))
-                            .hover(|el| el.bg(rgb(0xdadade)))
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                if let Some(recovery) = view.feedback.recoveries.front_mut() {
-                                    let result =
-                                        arboard::Clipboard::new().and_then(|mut clipboard| {
-                                            clipboard.set_text(recovery.text.clone())
-                                        });
-                                    recovery.copied = result.is_ok();
-                                    recovery.copy_failed = result.is_err();
-                                }
-                                cx.notify();
-                            }))
-                            .child("Copy"),
-                    )
-                })
-                .child(
-                    div()
-                        .id("dismiss-recovery")
-                        .cursor_pointer()
-                        .text_color(rgb(0xa7a7ae))
-                        .text_size(px(18.))
-                        .px(px(4.))
-                        .on_click(cx.listener(|view, _, _, cx| {
-                            view.feedback.dismiss();
-                            cx.notify();
-                        }))
-                        .child("×"),
-                )
-                .into_any_element()
-        } else if phase == Phase::NoSpeech {
-            div()
-                .size_full()
-                .rounded_full()
-                .bg(rgb(0x000000))
-                .into_any_element()
-        } else if phase == Phase::Success {
-            BubbleFrame::new(0.0).into_any_element()
-        } else if phase == Phase::Recording
-            && matches!(
-                self.feedback.bubble.feedback,
-                Feedback::RecordingNotice { limit: true, .. }
-            )
-        {
-            div()
-                .text_color(rgb(0xf0c47b))
-                .text_size(px(10.))
-                .child("1 minute left")
-                .into_any_element()
-        } else if phase == Phase::Recording {
-            BubbleFrame::new(0.0).bars(bars).into_any_element()
-        } else {
-            let time = if self.reduced_motion {
+        let frame = pill::Frame {
+            width: self.width,
+            height: self.height,
+            offset_x: motion.offset_x,
+            opacity: motion.opacity,
+            time: if self.reduced_motion {
                 0.
             } else {
-                self.feedback.since.elapsed().as_secs_f32()
-            };
-            let mut indicator = div()
-                .size_full()
-                .rounded_full()
-                .bg(rgb(0x000000))
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(7.));
-            if phase == Phase::Starting || phase == Phase::Cancelling {
-                indicator = indicator
-                    .text_color(rgb(0xf5f5f7))
-                    .text_size(px(10.))
-                    .child(if phase == Phase::Starting {
-                        "Starting…"
-                    } else {
-                        "Cancelling…"
-                    });
-            } else {
-                indicator = indicator.children((0..3).map(|index| {
-                    let opacity = if self.reduced_motion {
-                        1.
-                    } else {
-                        0.35 + 0.65 * ((time * 5. - index as f32 * 0.9).sin() + 1.) / 2.
-                    };
-                    div()
-                        .size(px(5.))
-                        .rounded_full()
-                        .bg(rgb(0xffffff))
-                        .opacity(opacity)
-                }));
-            }
-            indicator.into_any_element()
+                elapsed.as_secs_f32()
+            },
+            animate: !self.reduced_motion,
+            bars: &self.bars,
+            detail,
         };
+        let on_copy = cx.listener(|view, _, _, cx| {
+            if let Some(recovery) = view.feedback.recoveries.front_mut() {
+                let result = arboard::Clipboard::new()
+                    .and_then(|mut clipboard| clipboard.set_text(recovery.text.clone()));
+                recovery.copied = result.is_ok();
+                recovery.copy_failed = result.is_err();
+            }
+            cx.notify();
+        });
+        let on_dismiss = cx.listener(|view, _, _, cx| {
+            view.feedback.dismiss();
+            cx.notify();
+        });
         div()
             .flex()
             .items_center()
             .justify_center()
             .size_full()
-            .child(
-                div()
-                    .relative()
-                    .left(px(motion.offset_x))
-                    .opacity(motion.opacity)
-                    .w(px(BUBBLE_WIDTH
-                        + (CARD_WIDTH - BUBBLE_WIDTH) * self.expansion
-                        - motion.contraction))
-                    .h(px(BUBBLE_HEIGHT
-                        + (CARD_HEIGHT - BUBBLE_HEIGHT) * self.expansion
-                        - motion.contraction * 0.5))
-                    .rounded(px(if phase == Phase::Attention { 18. } else { 24. }))
-                    .shadow(vec![
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.28),
-                            offset: point(px(0.), px(1.)),
-                            blur_radius: px(4.),
-                            spread_radius: px(0.),
-                        },
-                        BoxShadow {
-                            color: hsla(0., 0., 0., 0.18),
-                            offset: point(px(0.), px(2.)),
-                            blur_radius: px(8.),
-                            spread_radius: px(1.),
-                        },
-                    ])
-                    .child(content),
-            )
+            .child(pill::render(
+                &spec,
+                frame,
+                &pill::colors(self.palette),
+                Box::new(on_copy),
+                Box::new(on_dismiss),
+            ))
     }
 }
 
 struct TerminalMotion {
     offset_x: f32,
-    contraction: f32,
     opacity: f32,
 }
 
-fn terminal_motion(phase: Phase, elapsed: Duration, reduced_motion: bool) -> TerminalMotion {
+/// `lifetime` is how long the terminal state stays; the pill fades out at
+/// its end. No lifetime: the pill holds still.
+fn terminal_motion(
+    phase: Phase,
+    lifetime: Option<Duration>,
+    elapsed: Duration,
+    reduced_motion: bool,
+) -> TerminalMotion {
     let mut motion = TerminalMotion {
         offset_x: 0.,
-        contraction: 0.,
         opacity: 1.,
     };
     if reduced_motion {
         return motion;
     }
-    let duration = match phase {
-        Phase::NoSpeech => NO_SPEECH_DURATION,
-        Phase::Success => SUCCESS_DURATION,
-        _ => return motion,
+    let Some(duration) = lifetime else {
+        return motion;
     };
-    let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.);
     if phase == Phase::NoSpeech {
-        // Two small oscillations, settling before the bubble fades away.
-        let shake = (progress / 0.55).clamp(0., 1.);
-        motion.offset_x = (shake * std::f32::consts::TAU * 2.).sin() * 3. * (1. - shake).powi(2);
-    } else {
-        // A small, smooth release of the pill replaces the completion glyph.
-        let ease = progress * progress * (3. - 2. * progress);
-        motion.contraction = 4. * ease;
+        // A head-shake "no": three swings that settle well before the fade.
+        let shake = (elapsed.as_secs_f32() / SHAKE_DURATION.as_secs_f32()).clamp(0., 1.);
+        motion.offset_x = (shake * std::f32::consts::TAU * SHAKE_OSCILLATIONS).sin()
+            * SHAKE_AMPLITUDE
+            * (1. - shake).powf(1.4);
     }
-    let fade = ((progress - 0.55) / 0.45).clamp(0., 1.);
+    let fade_start = duration.saturating_sub(FADE_DURATION);
+    let fade = (elapsed.saturating_sub(fade_start).as_secs_f32() / FADE_DURATION.as_secs_f32())
+        .clamp(0., 1.);
     motion.opacity = 1. - fade * fade * (3. - 2. * fade);
     motion
+}
+
+fn palette(appearance: Appearance, window: &Window) -> Palette {
+    match appearance {
+        Appearance::Light => Palette::Light,
+        Appearance::Dark => Palette::Dark,
+        Appearance::System => Palette::from_window(window),
+    }
+}
+
+/// Exponential ease of the pill's size towards its measured content.
+fn approach(current: f32, target: f32, elapsed: Duration, snap: bool) -> f32 {
+    if snap || (target - current).abs() < 0.5 {
+        target
+    } else {
+        current + (target - current) * (elapsed.as_secs_f32() * 18.).min(1.)
+    }
 }
 
 /// Exponential smoothing towards the audio target. Slightly different lags
@@ -415,30 +390,52 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                     view.feedback.receive(bubble, now);
                     let still_speaking = view.feedback.phase() == Phase::Recording;
                     if !still_speaking {
-                        view.bars = [0.0; 8];
+                        view.bars = [0.0; WAVE_BARS];
                         view.target_level = 0.0;
                     }
                     changed = true;
                 }
                 view.feedback.tick(now);
                 let phase = view.feedback.phase();
-                let target = if phase == Phase::Attention { 1. } else { 0. };
-                let previous = view.expansion;
-                view.expansion = if view.reduced_motion || (target - previous).abs() < 0.005 {
-                    target
-                } else {
-                    previous + (target - previous) * (elapsed.as_secs_f32() * 18.).min(1.)
+                let appearance = cx.try_global::<Appearance>().copied().unwrap_or_default();
+                let palette = palette(appearance, window);
+                if palette != view.palette {
+                    view.palette = palette;
+                    changed = true;
+                }
+                // Shaping text is only needed when the pill's content changes.
+                let spec = view.spec();
+                let target = match &view.measured {
+                    Some((measured, measure)) if *measured == spec => {
+                        (measure.width, measure.height)
+                    }
+                    _ => {
+                        let measure = spec.measure(window);
+                        let size = (measure.width, measure.height);
+                        view.measured = Some((spec, measure));
+                        size
+                    }
                 };
-                changed |= view.expansion != previous;
+                // A pill that appears takes its size at once; between two
+                // visible states it eases to the new content.
+                let snap = view.reduced_motion || view.placed_phase == Phase::Hidden;
+                let previous = (view.width, view.height);
+                view.width = approach(view.width, target.0, elapsed, snap);
+                view.height = approach(view.height, target.1, elapsed, snap);
+                changed |= (view.width, view.height) != previous;
                 if changed || phase != view.placed_phase {
-                    place_bubble(window, phase != Phase::Hidden, view.expansion, cx);
+                    place_bubble(window, phase != Phase::Hidden, view.width, view.height, cx);
                     changed = true;
                     view.placed_phase = phase;
                 }
                 if !view.reduced_motion
                     && matches!(
                         phase,
-                        Phase::Transcribing | Phase::Inserting | Phase::NoSpeech | Phase::Success
+                        Phase::Recording
+                            | Phase::Transcribing
+                            | Phase::Inserting
+                            | Phase::NoSpeech
+                            | Phase::Success
                     )
                 {
                     changed = true;
@@ -473,10 +470,7 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
 }
 
 fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView> {
-    let window_size = size(
-        px(BUBBLE_WIDTH + SHADOW_MARGIN * 2.),
-        px(BUBBLE_HEIGHT + SHADOW_MARGIN * 2.),
-    );
+    let window_size = window_size(INITIAL_WIDTH, PILL_HEIGHT);
     let bounds = bottom_center_bounds(window_size, cx);
     let handle = cx
         .open_window(
@@ -497,18 +491,22 @@ fn open_popup(cx: &mut App, initially_visible: bool) -> WindowHandle<BubbleView>
                 window_decorations: Some(WindowDecorations::Client),
                 ..Default::default()
             },
-            |_window, cx| {
+            |window, cx| {
+                let appearance = cx.try_global::<Appearance>().copied().unwrap_or_default();
                 cx.new(|_cx| BubbleView {
                     feedback: FeedbackState::new(
                         Bubble::from_dictation(&Dictation::new()),
                         Instant::now(),
                     ),
-                    bars: [0.0; 8],
+                    bars: [0.0; WAVE_BARS],
                     target_level: 0.0,
                     last_animation_frame: Instant::now(),
                     reduced_motion: reduced_motion(),
                     placed_phase: Phase::Hidden,
-                    expansion: 0.,
+                    palette: palette(appearance, window),
+                    width: INITIAL_WIDTH,
+                    height: PILL_HEIGHT,
+                    measured: None,
                 })
             },
         )
@@ -533,17 +531,24 @@ fn place_overlay(cx: &mut App, handle: WindowHandle<BubbleView>, preview_visible
         place_bubble(
             window,
             preview_visible || view.feedback.phase() != Phase::Hidden,
-            view.expansion,
+            view.width,
+            view.height,
             cx,
         );
     });
 }
 
-fn place_bubble(window: &mut Window, visible: bool, expansion: f32, cx: &App) {
-    let dimensions = size(
-        px(BUBBLE_WIDTH + (CARD_WIDTH - BUBBLE_WIDTH) * expansion + SHADOW_MARGIN * 2.),
-        px(BUBBLE_HEIGHT + (CARD_HEIGHT - BUBBLE_HEIGHT) * expansion + SHADOW_MARGIN * 2.),
-    );
+/// The pill plus room for its shadow, in whole pixels so the window does not
+/// jitter while the pill eases between sizes.
+fn window_size(width: f32, height: f32) -> Size<Pixels> {
+    size(
+        px((width + SHADOW_MARGIN * 2.).ceil()),
+        px((height + SHADOW_MARGIN * 2.).ceil()),
+    )
+}
+
+fn place_bubble(window: &mut Window, visible: bool, width: f32, height: f32, cx: &App) {
+    let dimensions = window_size(width, height);
     if window.bounds().size != dimensions {
         window.resize(dimensions);
     }
@@ -955,7 +960,85 @@ mod linux {
 mod tests {
     use std::time::Duration;
 
-    use super::{bar_attack, smooth_level_tuned};
+    use super::{
+        bar_attack, notice, shortcut_keys, smooth_level_tuned, terminal_motion, SHAKE_AMPLITUDE,
+        SHAKE_DURATION,
+    };
+    use crate::feedback::{Phase, COPIED_DURATION, NO_SPEECH_DURATION, SUCCESS_DURATION};
+    use crate::pill::{Lead, Tone};
+
+    #[test]
+    fn no_speech_shakes_then_settles_before_fading() {
+        let at = |ms| {
+            terminal_motion(
+                Phase::NoSpeech,
+                Some(NO_SPEECH_DURATION),
+                Duration::from_millis(ms),
+                false,
+            )
+        };
+        assert_eq!(at(0).offset_x, 0.);
+        assert!((1..SHAKE_DURATION.as_millis() as u64).any(|ms| at(ms).offset_x.abs() > 5.));
+        assert!((0..2000).all(|ms| at(ms).offset_x.abs() <= SHAKE_AMPLITUDE));
+        assert!(at(SHAKE_DURATION.as_millis() as u64).offset_x.abs() < 1e-4);
+        assert_eq!(at(SHAKE_DURATION.as_millis() as u64).opacity, 1.);
+        assert_eq!(at(NO_SPEECH_DURATION.as_millis() as u64).opacity, 0.);
+    }
+
+    #[test]
+    fn success_holds_then_fades_without_moving() {
+        for lifetime in [SUCCESS_DURATION, COPIED_DURATION] {
+            let at = |ms| {
+                terminal_motion(
+                    Phase::Success,
+                    Some(lifetime),
+                    Duration::from_millis(ms),
+                    false,
+                )
+            };
+            assert_eq!(at(400).opacity, 1.);
+            assert_eq!(at(400).offset_x, 0.);
+            assert_eq!(at(lifetime.as_millis() as u64).opacity, 0.);
+        }
+        assert_eq!(
+            terminal_motion(Phase::Success, None, Duration::from_secs(5), false).opacity,
+            1.
+        );
+    }
+
+    #[test]
+    fn reduced_motion_keeps_the_pill_still() {
+        let motion = terminal_motion(
+            Phase::NoSpeech,
+            Some(NO_SPEECH_DURATION),
+            Duration::from_millis(100),
+            true,
+        );
+        assert_eq!(motion.offset_x, 0.);
+        assert_eq!(motion.opacity, 1.);
+    }
+
+    #[test]
+    fn cancel_shortcut_becomes_key_caps() {
+        assert_eq!(shortcut_keys("Esc"), vec!["Esc"]);
+        assert_eq!(shortcut_keys("Ctrl + Shift+X"), vec!["Ctrl", "Shift", "X"]);
+        assert!(shortcut_keys("").is_empty());
+    }
+
+    #[test]
+    fn error_pill_keeps_messages_on_one_line() {
+        let spec = notice(
+            Lead::Alert,
+            "Recording unavailable",
+            "No device.
+Check   the mic.",
+        );
+        assert_eq!(spec.lead, Lead::Alert);
+        assert_eq!(spec.tone, Tone::Strong);
+        assert_eq!(spec.detail, Some("No device. Check the mic.".into()));
+        assert!(spec.dismiss);
+        assert_eq!(notice(Lead::Alert, "Failed", "  ").detail, None);
+    }
 
     #[test]
     fn voice_level_is_responsive_in_both_directions() {

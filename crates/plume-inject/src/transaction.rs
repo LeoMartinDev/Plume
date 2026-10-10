@@ -1,11 +1,13 @@
 use plume_core::{BoxError, InsertionMethod, InsertionMode};
 /// Drives exactly one insertion. Snapshot failures may choose typing; once a
 /// paste is dispatched, every error returns to recovery without a second insertion.
+/// With nothing focused, the text is left on the clipboard instead.
 pub(crate) trait Target {
     type Snapshot;
     fn snapshot(&mut self) -> Result<Self::Snapshot, BoxError>;
-    fn prepare(&mut self, text: &str) -> Result<String, BoxError> {
-        Ok(text.to_owned())
+    /// The text to dispatch, or `None` when no control has the focus.
+    fn prepare(&mut self, text: &str) -> Result<Option<String>, BoxError> {
+        Ok(Some(text.to_owned()))
     }
     fn type_text(&mut self, text: &str) -> Result<(), BoxError>;
     fn stage(&mut self, text: &str) -> Result<(), BoxError>;
@@ -23,27 +25,35 @@ pub(crate) fn deliver<T: Target>(
     mode: InsertionMode,
 ) -> Result<InsertionMethod, BoxError> {
     if mode == InsertionMode::Typing {
-        let text = target.prepare(text)?;
+        let Some(prepared) = target.prepare(text)? else {
+            return copy(target, text);
+        };
         if !target.allow_dispatch() {
             return Err("dictation cancelled".into());
         }
-        target.type_text(&text)?;
+        target.type_text(&prepared)?;
         return Ok(InsertionMethod::Typing);
     }
     let snapshot = match target.snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) if mode == InsertionMode::Auto => {
             tracing::warn!("clipboard snapshot unavailable: {error}");
-            let text = target.prepare(text)?;
+            let Some(prepared) = target.prepare(text)? else {
+                return copy(target, text);
+            };
             if !target.allow_dispatch() {
                 return Err("dictation cancelled".into());
             }
-            target.type_text(&text)?;
+            target.type_text(&prepared)?;
             return Ok(InsertionMethod::Typing);
         }
         Err(error) => return Err(error),
     };
-    let text = target.prepare(text)?;
+    // The previous clipboard is not restored when copying: the text must
+    // stay there for the user to paste.
+    let Some(text) = target.prepare(text)? else {
+        return copy(target, text);
+    };
     target.stage(&text)?;
     let token = target.version()?;
     let allowed = target.allow_dispatch();
@@ -69,6 +79,14 @@ pub(crate) fn deliver<T: Target>(
     restored?;
     Ok(InsertionMethod::Clipboard)
 }
+/// Nothing can take the text: leave it on the clipboard.
+fn copy<T: Target>(target: &mut T, text: &str) -> Result<InsertionMethod, BoxError> {
+    if !target.allow_dispatch() {
+        return Err("dictation cancelled".into());
+    }
+    target.stage(text)?;
+    Ok(InsertionMethod::Copied)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,6 +102,7 @@ mod tests {
         paste_error: bool,
         restore_error: bool,
         cancel_before_dispatch: bool,
+        no_focus: bool,
     }
     impl Target for Fake {
         type Snapshot = ();
@@ -93,6 +112,9 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+        fn prepare(&mut self, text: &str) -> Result<Option<String>, BoxError> {
+            Ok((!self.no_focus).then(|| text.to_owned()))
         }
         fn type_text(&mut self, _: &str) -> Result<(), BoxError> {
             self.typed += 1;
@@ -180,6 +202,36 @@ mod tests {
             assert!(deliver(&mut target, "words", InsertionMode::Auto).is_err());
             assert_eq!((target.typed, target.pasted, target.restored), (0, 1, 1));
         }
+    }
+    #[test]
+    fn nothing_focused_leaves_the_text_on_the_clipboard() {
+        for (mode, unsupported) in [
+            (InsertionMode::Auto, false),
+            (InsertionMode::Auto, true),
+            (InsertionMode::Clipboard, false),
+            (InsertionMode::Typing, false),
+        ] {
+            let mut target = Fake {
+                no_focus: true,
+                unsupported,
+                ..Default::default()
+            };
+            assert_eq!(
+                deliver(&mut target, "words", mode).unwrap(),
+                InsertionMethod::Copied
+            );
+            assert_eq!(
+                (target.staged, target.pasted, target.typed, target.restored),
+                (1, 0, 0, 0)
+            );
+        }
+        let mut target = Fake {
+            no_focus: true,
+            cancel_before_dispatch: true,
+            ..Default::default()
+        };
+        assert!(deliver(&mut target, "words", InsertionMode::Auto).is_err());
+        assert_eq!(target.staged, 0);
     }
     #[test]
     fn user_copy_is_preserved_and_normal_transactions_restore() {

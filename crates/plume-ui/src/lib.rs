@@ -1,7 +1,7 @@
 mod controls;
 mod tokens;
 
-pub use controls::{AccentButton, BubbleFrame, InsetRow, ListGroup, Segment, Segmented};
+pub use controls::{AccentButton, InsetRow, ListGroup, Segment, Segmented};
 pub use tokens::{Palette, Tokens};
 
 /// Cadence for polling background updates displayed by GPUI.

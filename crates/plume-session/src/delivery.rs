@@ -1,6 +1,9 @@
 use crate::destination::TextDestination;
 use crate::startup::{DictationResult, InsertionConfig};
-use plume_core::{CancellationToken, TextInjector};
+use plume_core::{
+    CancellationToken, Destination, InjectionReport, InsertionMethod, TargetAssessment,
+    TextInjector,
+};
 use plume_overlay::Feedback;
 use std::sync::mpsc;
 
@@ -37,9 +40,12 @@ impl<I: TextInjector> TranscriptDelivery<I> {
         before_dispatch: &mut dyn FnMut() -> bool,
     ) -> Feedback {
         self.last_result = None;
-        let injection = self
-            .target
-            .insert_checked(&text, config.mode, before_dispatch);
+        let injection = if config.destination == Destination::Clipboard {
+            self.copy_only(&text, before_dispatch)
+        } else {
+            self.target
+                .insert_checked(&text, config.mode, before_dispatch)
+        };
         if injection.is_err() {
             before_dispatch();
         }
@@ -60,8 +66,12 @@ impl<I: TextInjector> TranscriptDelivery<I> {
             }
         };
         self.target.reset();
-        let feedback = if injection.is_ok() {
-            Feedback::Success
+        let feedback = if let Ok(report) = &injection {
+            if report.method == InsertionMethod::Copied {
+                Feedback::Copied
+            } else {
+                Feedback::Success
+            }
         } else {
             Feedback::InsertionFailed {
                 text: text.clone(),
@@ -79,6 +89,22 @@ impl<I: TextInjector> TranscriptDelivery<I> {
         };
         self.last_result = Some(result);
         feedback
+    }
+    /// The copy destination: the text goes to the clipboard and stays there.
+    fn copy_only(
+        &mut self,
+        text: &str,
+        before_dispatch: &mut dyn FnMut() -> bool,
+    ) -> Result<InjectionReport, plume_core::BoxError> {
+        if !before_dispatch() {
+            return Err("dictation cancelled".into());
+        }
+        self.target.copy_text(text)?;
+        Ok(InjectionReport {
+            method: InsertionMethod::Copied,
+            application: None,
+            target: TargetAssessment::Unknown,
+        })
     }
     pub fn publish(&self, result: DictationResult) {
         let _ = self.result_tx.send(result);
@@ -113,6 +139,93 @@ impl<I: TextInjector> TranscriptDelivery<I> {
 mod tests {
     use super::*;
     use plume_core::BoxError;
+    #[derive(Default)]
+    struct Copier {
+        copied: Vec<String>,
+        inserted: usize,
+    }
+    impl TextInjector for Copier {
+        fn insert(&mut self, _: &str) -> Result<(), BoxError> {
+            self.inserted += 1;
+            Ok(())
+        }
+        fn replace_last(&mut self, _: &str, _: &str) -> Result<(), BoxError> {
+            unreachable!()
+        }
+        fn copy_text(&mut self, text: &str) -> Result<(), BoxError> {
+            self.copied.push(text.into());
+            Ok(())
+        }
+    }
+    #[test]
+    fn copy_destination_only_copies_and_reports_it() {
+        let (tx, rx) = mpsc::channel();
+        let mut delivery = TranscriptDelivery::new(Copier::default(), tx);
+        let config = InsertionConfig {
+            destination: Destination::Clipboard,
+            ..InsertionConfig::default()
+        };
+        assert_eq!(
+            delivery.deliver(3, "Bonjour.".into(), config),
+            Feedback::Copied
+        );
+        let injector = delivery.target.injector();
+        assert_eq!(injector.copied, vec!["Bonjour.".to_string()]);
+        assert_eq!(injector.inserted, 0);
+        let result = rx.recv().unwrap();
+        assert_eq!(result.injection.unwrap().method, InsertionMethod::Copied);
+        assert!(!result.copied_on_failure);
+    }
+    #[test]
+    fn copy_destination_respects_cancellation() {
+        let (tx, rx) = mpsc::channel();
+        let mut delivery = TranscriptDelivery::new(Copier::default(), tx);
+        let token = CancellationToken::default();
+        let cancel = token.clone();
+        let mut guard = move || {
+            cancel.cancel();
+            false
+        };
+        let config = InsertionConfig {
+            destination: Destination::Clipboard,
+            ..InsertionConfig::default()
+        };
+        assert_eq!(
+            delivery.deliver_checked(4, "text".into(), config, &token, &mut guard),
+            Feedback::Empty
+        );
+        assert!(delivery.target.injector().copied.is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+    #[test]
+    fn a_copied_insertion_is_a_copied_success() {
+        struct Unfocused;
+        impl TextInjector for Unfocused {
+            fn insert(&mut self, _: &str) -> Result<(), BoxError> {
+                unreachable!()
+            }
+            fn replace_last(&mut self, _: &str, _: &str) -> Result<(), BoxError> {
+                unreachable!()
+            }
+            fn insert_with_mode(
+                &mut self,
+                _: &str,
+                _: plume_core::InsertionMode,
+            ) -> Result<InjectionReport, BoxError> {
+                Ok(InjectionReport {
+                    method: InsertionMethod::Copied,
+                    application: None,
+                    target: TargetAssessment::NoFocus,
+                })
+            }
+        }
+        let (tx, _rx) = mpsc::channel();
+        let mut delivery = TranscriptDelivery::new(Unfocused, tx);
+        assert_eq!(
+            delivery.deliver(5, "text".into(), InsertionConfig::default()),
+            Feedback::Copied
+        );
+    }
     struct Failed;
     impl TextInjector for Failed {
         fn insert(&mut self, _: &str) -> Result<(), BoxError> {

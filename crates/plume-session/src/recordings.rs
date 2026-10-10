@@ -404,14 +404,13 @@ impl RecordingStore {
             let mut record = self.records[index].clone();
             record.insertion = Some(match &result.injection {
                 Ok(report) => RecordedInsertion {
-                    status: "Dispatched".into(),
-                    method: Some(
-                        match report.method {
-                            plume_core::InsertionMethod::Clipboard => "Paste",
-                            plume_core::InsertionMethod::Typing => "Typing",
-                        }
-                        .into(),
-                    ),
+                    status: if report.method == plume_core::InsertionMethod::Copied {
+                        "Copied"
+                    } else {
+                        "Dispatched"
+                    }
+                    .into(),
+                    method: Some(report.method.label().into()),
                     application: report.application.clone(),
                     error: None,
                     copied: false,

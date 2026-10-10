@@ -259,6 +259,7 @@ pub(crate) fn start_session(
     };
     let ready = plume_session::PreparedSession::from_open(config, engine).with_insertion(
         plume_session::InsertionConfig {
+            destination: prefs.destination(),
             mode: prefs.insertion_mode(),
             copy_on_failure: prefs.copy_on_failure(),
         },
@@ -270,6 +271,7 @@ pub(crate) fn start_session(
     match plume_session::start(ready) {
         Ok(live) => {
             log_line("plume-app: compositor started");
+            cx.set_global(prefs.appearance().overlay());
             plume_overlay::attach(cx, live.bubbles, live.levels);
             settings_window_show_live(
                 cx,

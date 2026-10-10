@@ -3,8 +3,11 @@ use plume_core::SessionState;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(700);
-pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(320);
+// Long enough to read the pill's label before it fades out.
+pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(1600);
+pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(900);
+// Copied also shows the paste shortcut, so it stays a little longer.
+pub(crate) const COPIED_DURATION: Duration = Duration::from_millis(1600);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -68,19 +71,25 @@ impl FeedbackState {
     }
 
     pub fn tick(&mut self, now: Instant) {
-        if self.bubble.feedback == Feedback::NoSpeech
-            && now.duration_since(self.since) >= NO_SPEECH_DURATION
-        {
-            self.bubble.feedback = Feedback::Empty;
-        }
         if self.pending.is_some() && now.duration_since(self.since) >= Duration::from_millis(150) {
             self.bubble = self.pending.take().unwrap();
             self.since = now;
         }
-        if self.bubble.feedback == Feedback::Success
-            && now.duration_since(self.since) >= SUCCESS_DURATION
+        if self
+            .lifetime()
+            .is_some_and(|lifetime| now.duration_since(self.since) >= lifetime)
         {
             self.bubble.feedback = Feedback::Empty;
+        }
+    }
+
+    /// How long a terminal state stays before the pill hides itself.
+    pub fn lifetime(&self) -> Option<Duration> {
+        match self.bubble.feedback {
+            Feedback::NoSpeech => Some(NO_SPEECH_DURATION),
+            Feedback::Success => Some(SUCCESS_DURATION),
+            Feedback::Copied => Some(COPIED_DURATION),
+            _ => None,
         }
     }
 
@@ -98,7 +107,7 @@ impl FeedbackState {
                 _ => Phase::Hidden,
             },
             Feedback::Inserting => Phase::Inserting,
-            Feedback::Success => Phase::Success,
+            Feedback::Success | Feedback::Copied => Phase::Success,
             Feedback::Error { .. } => Phase::Attention,
             _ if !self.recoveries.is_empty() => Phase::Attention,
             _ => Phase::Hidden,
@@ -147,6 +156,20 @@ mod tests {
         state.tick(now + Duration::from_millis(150));
         assert_eq!(state.phase(), Phase::Success);
         state.tick(now + Duration::from_millis(150) + SUCCESS_DURATION);
+        assert_eq!(state.phase(), Phase::Hidden);
+    }
+
+    #[test]
+    fn copied_lasts_longer_than_inserted() {
+        let now = Instant::now();
+        let mut state = FeedbackState::new(Bubble::feedback(0, Feedback::Inserting), now);
+        state.receive(Bubble::feedback(0, Feedback::Copied), now);
+        state.tick(now + Duration::from_millis(150));
+        assert_eq!(state.phase(), Phase::Success);
+        let shown = now + Duration::from_millis(150);
+        state.tick(shown + SUCCESS_DURATION);
+        assert_eq!(state.phase(), Phase::Success);
+        state.tick(shown + COPIED_DURATION);
         assert_eq!(state.phase(), Phase::Hidden);
     }
 

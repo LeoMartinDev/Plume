@@ -51,6 +51,53 @@ pub(crate) fn win_strokes(strokes: &[Stroke]) -> Vec<WinStroke> {
     out
 }
 
+/// UI Automation's view of the focused element, reduced to what decides
+/// whether it can take text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControlKind {
+    /// Edit or document: text goes there.
+    Text,
+    /// Buttons, links, list and tree items, menus, tabs: never text.
+    NonText,
+    /// Panes, windows, custom controls: terminals and canvases live here.
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FocusProbe {
+    pub foreground: bool,
+    /// The foreground window is the desktop or the taskbar.
+    pub shell: bool,
+    /// The foreground thread reports a focused window.
+    pub focus_window: bool,
+    /// The focused element and whether it takes keyboard focus, when UI
+    /// Automation answers.
+    pub control: Option<(ControlKind, bool)>,
+}
+
+/// Only an explicit signal counts: `Unknown` covers browsers, terminals and
+/// Electron apps where pasting works, so those are never treated as unfocused.
+pub(crate) fn nothing_focused(probe: FocusProbe) -> bool {
+    if !probe.foreground || probe.shell {
+        return true;
+    }
+    match probe.control {
+        Some((ControlKind::NonText, _)) => true,
+        Some((ControlKind::Text, _)) => false,
+        Some((ControlKind::Other, keyboard_focusable)) => {
+            !probe.focus_window && !keyboard_focusable
+        }
+        None => false,
+    }
+}
+
+pub(crate) fn is_shell_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+    )
+}
+
 #[cfg(target_os = "windows")]
 mod sys {
     use std::mem::size_of;
@@ -60,10 +107,7 @@ mod sys {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     };
-    use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_DocumentControlTypeId,
-        UIA_EditControlTypeId, UIA_ValuePatternId,
-    };
+    use windows::Win32::UI::Accessibility::*;
     use windows_sys::Win32::Foundation::{CloseHandle, RECT};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -77,8 +121,9 @@ mod sys {
         GetWindowThreadProcessId, GUITHREADINFO, GWL_STYLE,
     };
 
-    use super::WinStroke;
+    use super::{ControlKind, FocusProbe, WinStroke};
     use crate::InjectError;
+    use plume_core::TargetAssessment;
 
     pub(super) fn post(strokes: &[WinStroke]) -> Result<(), BoxError> {
         if strokes.is_empty() {
@@ -131,21 +176,41 @@ mod sys {
         }
     }
 
-    pub(super) fn target_info() -> (Option<String>, plume_core::TargetAssessment) {
+    pub(super) fn target_info() -> (Option<String>, TargetAssessment) {
         let native = native_target_info();
-        if native.1 != plume_core::TargetAssessment::Unknown {
-            return native;
+        if native.target != TargetAssessment::Unknown {
+            return (native.application, native.target);
         }
-        if let Some(info) = uia_target_info() {
-            return info;
+        let uia = uia_target_info();
+        let probe = FocusProbe {
+            foreground: native.foreground,
+            shell: native.shell,
+            focus_window: native.focus_window,
+            control: uia.as_ref().map(|uia| uia.control),
+        };
+        match uia {
+            // A password field stays refused even inside an odd container.
+            Some(uia) if uia.target == TargetAssessment::Sensitive => (uia.application, uia.target),
+            Some(uia) if super::nothing_focused(probe) => {
+                (uia.application, TargetAssessment::NoFocus)
+            }
+            Some(uia) => (uia.application, uia.target),
+            None if super::nothing_focused(probe) => {
+                (native.application, TargetAssessment::NoFocus)
+            }
+            None => (native.application, native.target),
         }
+    }
 
-        native
+    struct UiaFocus {
+        application: Option<String>,
+        target: TargetAssessment,
+        control: (ControlKind, bool),
     }
 
     /// UI Automation covers browser, Electron, Office and other non-native editors.
     /// It is intentionally limited to metadata: no text or window title is read.
-    fn uia_target_info() -> Option<(Option<String>, plume_core::TargetAssessment)> {
+    fn uia_target_info() -> Option<UiaFocus> {
         unsafe {
             // UI Automation works in either apartment. RPC_E_CHANGED_MODE only means that the
             // caller already initialized this thread with another apartment model.
@@ -160,38 +225,97 @@ mod sys {
                 .ok()
                 .and_then(|pattern| pattern.CurrentIsReadOnly().ok())
                 .is_some_and(|read_only| read_only.as_bool());
+            let focusable = element.CurrentIsKeyboardFocusable().ok()?.as_bool();
+            let kind = control_kind(element.CurrentControlType().ok()?);
 
             let target = if element.CurrentIsPassword().ok()?.as_bool() {
-                plume_core::TargetAssessment::Sensitive
+                TargetAssessment::Sensitive
             } else if !element.CurrentIsEnabled().ok()?.as_bool() || read_only {
-                plume_core::TargetAssessment::NonEditable
+                TargetAssessment::NonEditable
+            } else if focusable && kind == ControlKind::Text {
+                TargetAssessment::Editable
             } else {
-                let control_type = element.CurrentControlType().ok()?;
-                let focusable = element.CurrentIsKeyboardFocusable().ok()?.as_bool();
-                if focusable
-                    && (control_type == UIA_EditControlTypeId
-                        || control_type == UIA_DocumentControlTypeId)
-                {
-                    plume_core::TargetAssessment::Editable
-                } else {
-                    plume_core::TargetAssessment::Unknown
-                }
+                TargetAssessment::Unknown
             };
-            Some((application, target))
+            Some(UiaFocus {
+                application,
+                target,
+                control: (kind, focusable),
+            })
         }
+    }
+
+    fn control_kind(control_type: UIA_CONTROLTYPE_ID) -> ControlKind {
+        if control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId {
+            return ControlKind::Text;
+        }
+        const NON_TEXT: [UIA_CONTROLTYPE_ID; 24] = [
+            UIA_ButtonControlTypeId,
+            UIA_CheckBoxControlTypeId,
+            UIA_RadioButtonControlTypeId,
+            UIA_HyperlinkControlTypeId,
+            UIA_ListControlTypeId,
+            UIA_ListItemControlTypeId,
+            UIA_TreeControlTypeId,
+            UIA_TreeItemControlTypeId,
+            UIA_MenuControlTypeId,
+            UIA_MenuBarControlTypeId,
+            UIA_MenuItemControlTypeId,
+            UIA_TabControlTypeId,
+            UIA_TabItemControlTypeId,
+            UIA_ToolBarControlTypeId,
+            UIA_TitleBarControlTypeId,
+            UIA_ScrollBarControlTypeId,
+            UIA_SliderControlTypeId,
+            UIA_ImageControlTypeId,
+            UIA_StatusBarControlTypeId,
+            UIA_ThumbControlTypeId,
+            UIA_HeaderControlTypeId,
+            UIA_HeaderItemControlTypeId,
+            UIA_SeparatorControlTypeId,
+            UIA_SplitButtonControlTypeId,
+        ];
+        if NON_TEXT.contains(&control_type) {
+            ControlKind::NonText
+        } else {
+            ControlKind::Other
+        }
+    }
+
+    struct NativeFocus {
+        application: Option<String>,
+        target: TargetAssessment,
+        foreground: bool,
+        shell: bool,
+        focus_window: bool,
+    }
+
+    fn class_name(window: windows_sys::Win32::Foundation::HWND) -> Option<String> {
+        let mut class = [0u16; 128];
+        let len = unsafe { GetClassNameW(window, class.as_mut_ptr(), class.len() as i32) };
+        (len > 0).then(|| String::from_utf16_lossy(&class[..len as usize]))
     }
 
     /// Classic Win32 fallback. Unlike UI Automation, this exposes the read-only style on native
     /// edit controls, so keep it even when UIA is available.
-    fn native_target_info() -> (Option<String>, plume_core::TargetAssessment) {
+    fn native_target_info() -> NativeFocus {
+        let mut focus = NativeFocus {
+            application: None,
+            target: TargetAssessment::Unknown,
+            foreground: false,
+            shell: false,
+            focus_window: false,
+        };
         let foreground = unsafe { GetForegroundWindow() };
         if foreground.is_null() {
-            return (None, plume_core::TargetAssessment::Unknown);
+            return focus;
         }
+        focus.foreground = true;
+        focus.shell = class_name(foreground).is_some_and(|class| super::is_shell_class(&class));
 
         let mut process_id = 0;
         let thread_id = unsafe { GetWindowThreadProcessId(foreground, &mut process_id) };
-        let application = process_name(process_id);
+        focus.application = process_name(process_id);
         let mut info = GUITHREADINFO {
             cbSize: size_of::<GUITHREADINFO>() as u32,
             flags: 0,
@@ -209,30 +333,28 @@ mod sys {
             },
         };
         if unsafe { GetGUIThreadInfo(thread_id, &mut info) } == 0 || info.hwndFocus.is_null() {
-            return (application, plume_core::TargetAssessment::Unknown);
+            return focus;
         }
+        focus.focus_window = true;
 
-        let mut class = [0u16; 128];
-        let len = unsafe { GetClassNameW(info.hwndFocus, class.as_mut_ptr(), class.len() as i32) };
-        if len <= 0 {
-            return (application, plume_core::TargetAssessment::Unknown);
-        }
-        let class = String::from_utf16_lossy(&class[..len as usize]).to_ascii_lowercase();
-        if !class.contains("edit") {
-            return (application, plume_core::TargetAssessment::Unknown);
+        let Some(class) = class_name(info.hwndFocus) else {
+            return focus;
+        };
+        if !class.to_ascii_lowercase().contains("edit") {
+            return focus;
         }
 
         let style = unsafe { GetWindowLongW(info.hwndFocus, GWL_STYLE) } as u32;
         const ES_PASSWORD: u32 = 0x0020;
         const ES_READONLY: u32 = 0x0800;
-        let target = if style & ES_PASSWORD != 0 {
-            plume_core::TargetAssessment::Sensitive
+        focus.target = if style & ES_PASSWORD != 0 {
+            TargetAssessment::Sensitive
         } else if style & ES_READONLY != 0 {
-            plume_core::TargetAssessment::NonEditable
+            TargetAssessment::NonEditable
         } else {
-            plume_core::TargetAssessment::Editable
+            TargetAssessment::Editable
         };
-        (application, target)
+        focus
     }
 
     fn process_name(process_id: u32) -> Option<String> {
@@ -427,5 +549,61 @@ mod tests {
             win_strokes(&insert_strokes("\n")),
             vec![WinStroke::ReturnDown, WinStroke::ReturnUp]
         );
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    fn probe(control: Option<(ControlKind, bool)>) -> FocusProbe {
+        FocusProbe {
+            foreground: true,
+            shell: false,
+            focus_window: true,
+            control,
+        }
+    }
+
+    #[test]
+    fn desktop_taskbar_and_no_window_are_unfocused() {
+        assert!(nothing_focused(FocusProbe {
+            foreground: false,
+            ..probe(None)
+        }));
+        assert!(nothing_focused(FocusProbe {
+            shell: true,
+            ..probe(Some((ControlKind::Text, true)))
+        }));
+        assert!(is_shell_class("Progman") && is_shell_class("WorkerW"));
+        assert!(is_shell_class("Shell_TrayWnd"));
+        assert!(!is_shell_class("Notepad") && !is_shell_class("Chrome_WidgetWin_1"));
+    }
+
+    #[test]
+    fn controls_that_never_take_text_are_unfocused() {
+        assert!(nothing_focused(probe(Some((ControlKind::NonText, true)))));
+        assert!(!nothing_focused(probe(Some((ControlKind::Text, true)))));
+    }
+
+    #[test]
+    fn uncertain_targets_still_receive_the_paste() {
+        // Terminals and canvases: a focused pane or custom control.
+        assert!(!nothing_focused(probe(Some((ControlKind::Other, true)))));
+        assert!(!nothing_focused(probe(Some((ControlKind::Other, false)))));
+        // UWP hosts report no focus window but their element is focusable.
+        assert!(!nothing_focused(FocusProbe {
+            focus_window: false,
+            ..probe(Some((ControlKind::Other, true)))
+        }));
+        // Without UI Automation, only the shell signals count.
+        assert!(!nothing_focused(FocusProbe {
+            focus_window: false,
+            ..probe(None)
+        }));
+        assert!(nothing_focused(FocusProbe {
+            focus_window: false,
+            ..probe(Some((ControlKind::Other, false)))
+        }));
     }
 }
