@@ -4429,6 +4429,7 @@ version = "0.1.8"
 dependencies = [
  "core-foundation 0.10.0",
  "core-graphics 0.25.0",
+ "libc",
  "plume-core",
  "tracing",
  "windows-sys 0.59.0",

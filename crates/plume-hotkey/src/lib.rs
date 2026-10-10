@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+mod binding_set;
 mod bindings;
 mod chord;
 pub use bindings::{validate_bindings, BindingEvent, HotkeyAction, HotkeyBinding};

@@ -2,6 +2,7 @@
 
 use crate::chord::{Edge, Mods};
 use crate::shortcut::{KeyId, Trigger};
+#[cfg(test)]
 use plume_core::HotkeyEvent;
 
 const FLAG_SHIFT: u64 = 0x0002_0000;
@@ -127,89 +128,66 @@ pub(crate) fn decode_macos(kind: u32, keycode: u16, flags: u64) -> Option<(Mods,
     Some((mods, id, edge))
 }
 
-#[derive(Default)]
-struct CaptureFilter {
-    tracker: Option<crate::chord::ChordTracker>,
-    swallowed: Option<KeyId>,
-}
-
-impl CaptureFilter {
-    fn register(&mut self, shortcut: crate::shortcut::Shortcut) {
-        self.tracker = Some(crate::chord::ChordTracker::new(shortcut));
-        self.swallowed = None;
-    }
-
-    fn push(&mut self, kind: u32, keycode: u16, flags: u64) -> (Option<HotkeyEvent>, bool) {
-        let Some((mods, id, edge)) = decode_macos(kind, keycode, flags) else {
-            return (None, false);
-        };
-        let Some(tracker) = self.tracker.as_mut() else {
-            return (None, false);
-        };
-        let was_swallowed = self.swallowed == Some(id);
-        let signal = tracker.push_macos(mods, id, edge);
-        // Modifier flags must reach applications; dropping one flags-changed
-        // event leaves their keyboard state out of sync with the physical keys.
-        let can_swallow = matches!(id, KeyId::Trigger(_));
-        if signal == Some(HotkeyEvent::Pressed) && can_swallow {
-            self.swallowed = Some(id);
-        } else if was_swallowed && edge == Edge::Up {
-            self.swallowed = None;
-        }
-        (
-            signal,
-            was_swallowed || (signal == Some(HotkeyEvent::Pressed) && can_swallow),
-        )
-    }
+/// The keycode of a trigger key, for reading its physical state.
+pub(crate) fn macos_keycode(id: KeyId) -> Option<u16> {
+    (0u16..0x80).find(|&keycode| macos_key_id(keycode) == Some(id))
 }
 
 #[derive(Default)]
 struct BindingFilter {
-    filters: Vec<(crate::HotkeyAction, CaptureFilter)>,
-    cancel_active: bool,
-    passthrough: bool,
+    set: crate::binding_set::BindingSet,
+    /// Every tap callback, real key or not. See `BindingSet::reconcile`.
+    edges: u64,
 }
 impl BindingFilter {
     fn register(&mut self, bindings: &[crate::HotkeyBinding]) -> Result<(), plume_core::BoxError> {
-        let mut filters = Vec::new();
-        for b in bindings {
-            let mut f = CaptureFilter::default();
-            f.register(crate::shortcut::Shortcut::parse(&b.shortcut)?);
-            filters.push((b.action, f));
-        }
-        self.filters = filters;
-        Ok(())
+        self.set.register(bindings)
     }
     fn push(&mut self, kind: u32, keycode: u16, flags: u64) -> (Vec<crate::BindingEvent>, bool) {
-        let mut result = Vec::new();
-        let mut swallow = false;
-        for (action, filter) in &mut self.filters {
-            let (event, owns) = filter.push(kind, keycode, flags);
-            if self.passthrough {
-                filter.swallowed = None;
-            }
-            let enabled = *action != crate::HotkeyAction::Cancel || self.cancel_active;
-            swallow |= owns && enabled;
-            if let Some(edge) = event {
-                if enabled {
-                    result.push(crate::BindingEvent {
-                        action: *action,
-                        edge,
-                    });
-                }
-            }
+        self.edges += 1;
+        match decode_macos(kind, keycode, flags) {
+            Some((mods, id, edge)) => self.set.push(Some(mods), id, edge),
+            None => (Vec::new(), false),
         }
-        (result, swallow && !self.passthrough)
+    }
+    /// `key_down` reads the physical state of one keycode.
+    fn reconcile(
+        &mut self,
+        flags: u64,
+        key_down: impl Fn(u16) -> bool,
+    ) -> Vec<crate::BindingEvent> {
+        let released = self
+            .set
+            .engaged_triggers()
+            .into_iter()
+            .filter(|&id| macos_keycode(id).is_some_and(|keycode| !key_down(keycode)))
+            .collect();
+        let physical = crate::binding_set::Physical {
+            mods: macos_mods(flags),
+            trusted: Mods {
+                ctrl: true,
+                alt: true,
+                shift: true,
+                super_key: true,
+                fn_key: true,
+            },
+            released,
+        };
+        self.set.reconcile(self.edges, physical)
     }
 }
 
 #[cfg(target_os = "macos")]
 mod backend {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, MutexGuard};
     use std::thread::{self, JoinHandle};
+    use std::time::Instant;
 
-    use core_foundation::runloop::CFRunLoop;
+    use core_foundation::base::TCFType;
+    use core_foundation::mach_port::CFMachPortRef;
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
         CallbackResult, EventField,
@@ -217,13 +195,31 @@ mod backend {
     use plume_core::{BoxError, GlobalHotkey, HotkeyEvent};
 
     use super::BindingFilter;
+    use crate::binding_set::RECONCILE_INTERVAL;
     use crate::HotkeyError;
+
+    /// `kCGEventSourceStateHIDSystemState`: the hardware state, which a
+    /// session tap dropping an event does not change.
+    const HID_SYSTEM_STATE: i32 = 1;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+        fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
+        fn CGEventSourceFlagsState(state: i32) -> u64;
+    }
 
     pub struct MacosHotkey {
         events: Receiver<crate::BindingEvent>,
+        tx: Sender<crate::BindingEvent>,
         filter: Arc<Mutex<BindingFilter>>,
+        reconciled: Instant,
         runloop: Option<CFRunLoop>,
         thread: Option<JoinHandle<()>>,
+    }
+
+    fn lock(filter: &Mutex<BindingFilter>) -> MutexGuard<'_, BindingFilter> {
+        filter.lock().unwrap_or_else(|err| err.into_inner())
     }
 
     impl MacosHotkey {
@@ -232,7 +228,18 @@ mod backend {
             let (ready_tx, ready_rx) = mpsc::channel();
             let filter = Arc::new(Mutex::new(BindingFilter::default()));
             let thread_filter = Arc::clone(&filter);
+            let thread_tx = tx.clone();
             let thread = thread::spawn(move || {
+                // A filtering tap holds every key event until its callback
+                // returns. Inference saturating the CPU must not delay it, or
+                // macOS disables the tap and typing lags system-wide.
+                unsafe {
+                    libc::pthread_set_qos_class_self_np(
+                        libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE,
+                        0,
+                    );
+                }
+                let tx = thread_tx;
                 // A filtering session tap owns the configured shortcut, so
                 // Finder and other apps cannot act on the same key press.
                 // Keep passive monitoring as a fallback when macOS denies a
@@ -269,7 +276,9 @@ mod backend {
                 .map_err(|err| HotkeyError::Os(err.to_string()))??;
             Ok(MacosHotkey {
                 events: rx,
+                tx,
                 filter,
+                reconciled: Instant::now(),
                 runloop: Some(runloop),
                 thread: Some(thread),
             })
@@ -284,7 +293,11 @@ mod backend {
         filter: Arc<Mutex<BindingFilter>>,
         ready_tx: &Sender<Result<CFRunLoop, HotkeyError>>,
     ) -> bool {
-        CGEventTap::with_enabled(
+        // The callback re-enables its own tap, which only exists once the
+        // callback has been handed over.
+        let port = Arc::new(AtomicUsize::new(0));
+        let callback_port = Arc::clone(&port);
+        let Ok(tap) = CGEventTap::new(
             location,
             CGEventTapPlacement::HeadInsertEventTap,
             options,
@@ -298,36 +311,59 @@ mod backend {
                     CGEventType::KeyDown => super::KIND_KEY_DOWN,
                     CGEventType::KeyUp => super::KIND_KEY_UP,
                     CGEventType::FlagsChanged => super::KIND_FLAGS_CHANGED,
+                    // macOS turns a tap off when a callback was late, and
+                    // keeps it off until asked. Edges in the gap are lost;
+                    // the next reconciliation repairs a held chord.
+                    CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                        let port = callback_port.load(Ordering::Acquire);
+                        if port != 0 {
+                            unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
+                        }
+                        lock(&filter).edges += 1;
+                        tracing::warn!(
+                            "plume-hotkey: macOS {mode} keyboard tap was disabled; re-enabled"
+                        );
+                        return CallbackResult::Keep;
+                    }
                     _ => return CallbackResult::Keep,
                 };
+                let mut filter = lock(&filter);
                 if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == 0x504c554d45
                 {
+                    filter.edges += 1;
                     return CallbackResult::Keep;
                 }
                 let keycode =
                     event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
                 let flags = event.get_flags().bits();
-                let Ok(mut filter) = filter.lock() else {
-                    return CallbackResult::Keep;
-                };
                 let (signal, swallow) = filter.push(kind, keycode, flags);
-                drop(filter);
+                // Sent under the lock, so reconciliation edges stay in order.
                 for signal in signal {
                     let _ = tx.send(signal);
                 }
+                drop(filter);
                 if swallow {
                     CallbackResult::Drop
                 } else {
                     CallbackResult::Keep
                 }
             },
-            || {
-                tracing::debug!("plume-hotkey: macOS {mode} keyboard tap ready");
-                let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
-                CFRunLoop::run_current();
-            },
-        )
-        .is_ok()
+        ) else {
+            return false;
+        };
+        port.store(
+            tap.mach_port().as_concrete_TypeRef() as usize,
+            Ordering::Release,
+        );
+        let Ok(source) = tap.mach_port().create_runloop_source(0) else {
+            return false;
+        };
+        CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
+        tap.enable();
+        tracing::debug!("plume-hotkey: macOS {mode} keyboard tap ready");
+        let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
+        CFRunLoop::run_current();
+        true
     }
 
     impl MacosHotkey {
@@ -335,18 +371,36 @@ mod backend {
             &mut self,
             bindings: &[crate::HotkeyBinding],
         ) -> Result<(), BoxError> {
-            self.filter.lock().unwrap().register(bindings)?;
+            lock(&self.filter).register(bindings)?;
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
         pub fn next_binding_event(&mut self) -> Option<crate::BindingEvent> {
+            if self.reconciled.elapsed() >= RECONCILE_INTERVAL {
+                self.reconciled = Instant::now();
+                self.reconcile();
+            }
             self.events.try_recv().ok()
         }
+        /// A key release can be lost: secure input (a password field) hides
+        /// key events from every tap, and a disabled tap misses them all.
+        /// The HID state still knows which keys are held.
+        fn reconcile(&mut self) {
+            let flags = unsafe { CGEventSourceFlagsState(HID_SYSTEM_STATE) };
+            let mut filter = lock(&self.filter);
+            let released = filter.reconcile(flags, |keycode| unsafe {
+                CGEventSourceKeyState(HID_SYSTEM_STATE, keycode)
+            });
+            for event in released {
+                tracing::info!(action = ?event.action, "plume-hotkey: release recovered from the keyboard state");
+                let _ = self.tx.send(event);
+            }
+        }
         pub fn set_cancel_active(&mut self, active: bool) {
-            self.filter.lock().unwrap().cancel_active = active;
+            lock(&self.filter).set.cancel_active = active;
         }
         pub fn set_passthrough(&mut self, active: bool) {
-            self.filter.lock().unwrap().passthrough = active;
+            lock(&self.filter).set.passthrough = active;
         }
     }
     impl GlobalHotkey for MacosHotkey {
@@ -389,9 +443,9 @@ mod tests {
                 shortcut: "Ctrl+Space".into(),
             }])
             .unwrap();
-        filter.passthrough = true;
+        filter.set.passthrough = true;
         assert!(!filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL).1);
-        filter.passthrough = false;
+        filter.set.passthrough = false;
         assert_eq!(
             filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL),
             (Vec::new(), false)
@@ -445,6 +499,56 @@ mod tests {
     use crate::chord::ChordTracker;
     use crate::shortcut::Shortcut;
     use plume_core::HotkeyEvent;
+
+    /// One hold binding, reported as its edge alone.
+    struct CaptureFilter(BindingFilter);
+    fn capture(shortcut: &str) -> CaptureFilter {
+        let mut filter = BindingFilter::default();
+        filter
+            .register(&[crate::HotkeyBinding {
+                action: crate::HotkeyAction::Hold,
+                shortcut: shortcut.into(),
+            }])
+            .unwrap();
+        CaptureFilter(filter)
+    }
+    impl CaptureFilter {
+        fn push(&mut self, kind: u32, keycode: u16, flags: u64) -> (Option<HotkeyEvent>, bool) {
+            let (events, swallow) = self.0.push(kind, keycode, flags);
+            assert!(events.len() <= 1);
+            (events.first().map(|e| e.edge), swallow)
+        }
+    }
+
+    #[test]
+    fn a_held_chord_ends_when_the_hid_state_shows_its_trigger_up() {
+        let mut filter = capture("Ctrl+Space");
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL),
+            (Some(HotkeyEvent::Pressed), true)
+        );
+        let held = |keycode| keycode == 0x31;
+        assert!(filter.0.reconcile(FLAG_CONTROL, held).is_empty());
+        assert!(filter.0.reconcile(FLAG_CONTROL, held).is_empty());
+        // Secure input hid the key-up from the tap.
+        assert!(filter.0.reconcile(FLAG_CONTROL, |_| false).is_empty());
+        let released = filter.0.reconcile(FLAG_CONTROL, |_| false);
+        assert_eq!(
+            released.iter().map(|e| e.edge).collect::<Vec<_>>(),
+            [HotkeyEvent::Released]
+        );
+        assert_eq!(
+            filter.push(KIND_KEY_DOWN, 0x31, FLAG_CONTROL),
+            (Some(HotkeyEvent::Pressed), true)
+        );
+    }
+
+    #[test]
+    fn trigger_keycodes_round_trip() {
+        for keycode in [0x31, 0x35, 0x22, 0x65, 0x19] {
+            assert_eq!(macos_keycode(macos_key_id(keycode).unwrap()), Some(keycode));
+        }
+    }
 
     #[test]
     fn decode_ctrl_space_keydown() {
@@ -508,8 +612,7 @@ mod tests {
 
     #[test]
     fn filter_consumes_only_the_registered_chord_until_key_up() {
-        let mut filter = CaptureFilter::default();
-        filter.register(Shortcut::parse("Super+Shift+f").unwrap());
+        let mut filter = capture("Super+Shift+f");
         let modifiers = FLAG_COMMAND | FLAG_SHIFT;
         assert_eq!(
             filter.push(KIND_FLAGS_CHANGED, 0x37, FLAG_COMMAND),
@@ -551,8 +654,7 @@ mod tests {
 
     #[test]
     fn three_key_function_chord_ignores_the_implicit_fn_flag() {
-        let mut filter = CaptureFilter::default();
-        filter.register(Shortcut::parse("Ctrl+Shift+F9").unwrap());
+        let mut filter = capture("Ctrl+Shift+F9");
         let flags = FLAG_CONTROL | FLAG_SHIFT | FLAG_SECONDARY_FN;
         assert_eq!(
             filter.push(KIND_KEY_DOWN, 0x65, flags),
@@ -601,8 +703,7 @@ mod tests {
             [2, 0, 1],
             [2, 1, 0],
         ] {
-            let mut filter = CaptureFilter::default();
-            filter.register(Shortcut::parse("Ctrl+Alt+Super").unwrap());
+            let mut filter = capture("Ctrl+Alt+Super");
             let mut flags = 0;
             for (step, index) in order.into_iter().enumerate() {
                 let (keycode, flag) = keys[index];
