@@ -1,0 +1,120 @@
+---
+import Logo from './Logo.astro';
+import { t, type Lang } from '../i18n/strings';
+import { REPO_URL } from '../lib/release';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang).nav;
+const home = lang === 'en' ? '/' : '/fr/';
+const otherLang = lang === 'en' ? { href: '/fr/', label: 'FR', name: 'Français' } : { href: '/', label: 'EN', name: 'English' };
+---
+
+<header class="header">
+  <nav class="container nav" aria-label={s.menu}>
+    <a href={home} class="brand"><Logo /> Plume</a>
+    <div class="links">
+      <a href="#features">{s.features}</a>
+      <a href="#models">{s.models}</a>
+      <a href="#privacy">{s.privacy}</a>
+      <a href="#faq">{s.faq}</a>
+    </div>
+    <div class="actions">
+      <a class="lang" href={otherLang.href} hreflang={lang === 'en' ? 'fr' : 'en'} aria-label={otherLang.name}>{otherLang.label}</a>
+      <button class="icon-btn" type="button" data-theme-toggle aria-label={s.theme}>
+        <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+        </svg>
+        <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path>
+        </svg>
+      </button>
+      <a href={REPO_URL} class="btn btn-secondary btn-sm hide-sm">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
+        GitHub
+      </a>
+      <a href="#download" class="btn btn-primary btn-sm">{s.download}</a>
+    </div>
+  </nav>
+</header>
+
+<style>
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--nav-bg);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-block: 14px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: -0.02em;
+  }
+  .links {
+    display: flex;
+    gap: 28px;
+    font-size: 14px;
+  }
+  .links a,
+  .lang {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .links a:hover,
+  .lang:hover {
+    color: var(--text);
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lang {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px;
+  }
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .moon {
+    display: none;
+  }
+  :global(:root[data-theme='dark']) .sun {
+    display: none;
+  }
+  :global(:root[data-theme='dark']) .moon {
+    display: block;
+  }
+  @media (max-width: 860px) {
+    .links,
+    .hide-sm {
+      display: none;
+    }
+  }
+</style>

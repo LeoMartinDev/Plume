@@ -1,0 +1,237 @@
+---
+import VoicePill from './VoicePill.astro';
+import { t, KEYS, type Lang } from '../i18n/strings';
+import { REPO_URL, type ReleaseInfo } from '../lib/release';
+
+interface Props {
+  lang: Lang;
+  release: ReleaseInfo;
+}
+const { lang, release } = Astro.props;
+const s = t(lang).hero;
+const k = KEYS[lang];
+const names = t(lang).download.platforms;
+---
+
+<section id="top" class="container hero">
+  <div class="glow" aria-hidden="true"></div>
+  <p class="badge">
+    {release.version && <span class="version">{release.version}</span>}
+    {s.badge}
+  </p>
+  <h1 class="title">{s.title1}<br /><span class="dim">{s.title2}</span></h1>
+  <p class="lead">{s.lead}</p>
+  <div class="ctas">
+    <a
+      href="#download"
+      class="btn btn-primary btn-lg"
+      data-smart-download
+      data-mac={release.assets.mac}
+      data-windows={release.assets.windows}
+      data-linux={release.assets.linux}
+      data-label-prefix={s.downloadFor}
+      data-name-mac={names.mac.name}
+      data-name-windows={names.windows.name}
+      data-name-linux={names.linux.name}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"></path></svg>
+      <span data-label>{s.download}</span>
+    </a>
+    <a href={REPO_URL} class="btn btn-secondary btn-lg">{s.source}</a>
+  </div>
+  <p class="hint">
+    {s.hold} <kbd>{k.ctrl}</kbd> <kbd>{k.space}</kbd> {s.toTalk}
+  </p>
+
+  <div class="stage">
+    <div class="window">
+      <div class="chrome">
+        <span></span><span></span><span></span>
+        <em>{s.windowTitle}</em>
+      </div>
+      <div class="doc">
+        <p class="doc-title">{s.docTitle}</p>
+        <p>{s.docLine1}</p>
+        <p><mark>{s.docLine2}</mark><span class="caret" aria-hidden="true"></span></p>
+      </div>
+      <div class="pill-slot">
+        <VoicePill state="listening" lang={lang} />
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    padding-top: clamp(64px, 9vw, 104px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .glow {
+    position: absolute;
+    top: 40px;
+    left: 50%;
+    width: min(760px, 90vw);
+    height: 420px;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    filter: blur(90px);
+    background: var(--accent);
+    opacity: var(--glow-opacity);
+    pointer-events: none;
+  }
+  .badge {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 8px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .badge:not(:has(.version)) {
+    padding-left: 14px;
+  }
+  .version {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .title {
+    position: relative;
+    margin-top: 28px;
+    font-size: clamp(46px, 8vw, 104px);
+    line-height: 0.95;
+    font-weight: 600;
+    letter-spacing: -0.055em;
+    max-width: 980px;
+  }
+  .dim {
+    color: var(--faint);
+  }
+  .lead {
+    position: relative;
+    margin-top: 28px;
+    font-size: clamp(17px, 2vw, 20px);
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 580px;
+  }
+  .ctas {
+    position: relative;
+    margin-top: 36px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+  }
+  .hint {
+    position: relative;
+    margin-top: 22px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--subtle);
+  }
+  .hint kbd {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    color: var(--text);
+  }
+
+  .stage {
+    position: relative;
+    margin-top: 64px;
+    width: 100%;
+    border-radius: 28px;
+    background-color: var(--stage-bg);
+    background-image: radial-gradient(var(--stage-dots) 1px, transparent 1px);
+    background-size: 22px 22px;
+    padding: clamp(20px, 5vw, 64px) clamp(12px, 5vw, 64px) 0;
+    overflow: hidden;
+  }
+  .window {
+    position: relative;
+    max-width: 900px;
+    margin: 0 auto;
+    background: var(--window-bg);
+    border: 1px solid var(--window-border);
+    border-bottom: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+    text-align: left;
+    overflow: hidden;
+  }
+  .chrome {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--window-border);
+  }
+  .chrome span {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--window-chrome);
+  }
+  .chrome em {
+    margin-left: 12px;
+    font-style: normal;
+    font-size: 13px;
+    color: var(--subtle);
+  }
+  .doc {
+    padding: clamp(24px, 4vw, 44px) clamp(20px, 5vw, 56px) 150px;
+    font-size: clamp(15px, 1.6vw, 18px);
+    line-height: 1.65;
+    color: var(--window-text);
+    display: grid;
+    gap: 12px;
+  }
+  .doc-title {
+    font-size: clamp(22px, 2.6vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    color: var(--window-title);
+    margin-bottom: 6px;
+  }
+  mark {
+    border-radius: 4px;
+    padding: 1px 2px;
+    background: var(--highlight);
+    color: var(--window-title);
+  }
+  .pill-slot {
+    position: absolute;
+    left: 50%;
+    bottom: 40px;
+    transform: translateX(-50%);
+  }
+  .btn-lg {
+    height: 52px;
+  }
+  @media (max-width: 520px) {
+    .ctas {
+      width: 100%;
+    }
+    .ctas .btn {
+      width: 100%;
+    }
+  }
+</style>

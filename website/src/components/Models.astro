@@ -1,0 +1,104 @@
+---
+import { t, type Lang } from '../i18n/strings';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang).models;
+---
+
+<section id="models" class="container section">
+  <div class="head">
+    <div>
+      <p class="eyebrow">{s.eyebrow}</p>
+      <h2 class="h2">{s.title}</h2>
+    </div>
+    <p class="lead side">{s.lead}</p>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead>
+        <tr>{s.head.map((h) => <th scope="col">{h}</th>)}</tr>
+      </thead>
+      <tbody>
+        {
+          s.rows.map((r) => (
+            <tr>
+              <th scope="row">{r.name}</th>
+              <td class="mono">{r.size}</td>
+              <td class="mono">{r.langs}</td>
+              <td>
+                <span class:list={['tag', { 'tag--hi': r.highlight }]}>{r.tag}</span>
+              </td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<style>
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+  }
+  .side {
+    max-width: 380px;
+    font-size: 16px;
+  }
+  .table-wrap {
+    margin-top: 48px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 16px;
+  }
+  thead th {
+    text-align: left;
+    padding: 18px 32px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--subtle);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody th,
+  tbody td {
+    text-align: left;
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  tbody th {
+    white-space: nowrap;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  td.mono {
+    color: var(--muted);
+  }
+  .tag {
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .tag--hi {
+    background: var(--accent);
+    color: #fff;
+  }
+</style>

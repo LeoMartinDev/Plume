@@ -1,0 +1,280 @@
+/* ---------- Tokens ---------- */
+:root {
+  color-scheme: light;
+  --accent: #3b6dff;
+  --accent-text: #2d57e0;
+  --accent-ring: rgba(59, 109, 255, 0.3);
+
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --surface-2: #f4f4f2;
+  --border: #e8e8e4;
+  --border-strong: #dcdcd7;
+  --text: #141414;
+  --muted: #55555a;
+  --subtle: #6b6b70;
+  --faint: #86868c;
+  --btn-bg: #141414;
+  --btn-fg: #ffffff;
+  --highlight: #e6ecff;
+  --footer-word: #e4e4e0;
+  --nav-bg: rgba(244, 244, 242, 0.86);
+
+  /* hero stage */
+  --stage-bg: #141414;
+  --stage-dots: rgba(255, 255, 255, 0.07);
+  --window-bg: #fbfbfa;
+  --window-border: #ecece8;
+  --window-text: #2a2a2e;
+  --window-title: #141414;
+  --window-chrome: #dcdcd7;
+  --glow-opacity: 0;
+
+  /* "Works in every app" card */
+  --feature-bg: #141414;
+  --feature-fg: #ffffff;
+  --feature-muted: #b4b4ba;
+  --feature-chip: #2a2a2e;
+  --feature-chip-strong-bg: var(--accent);
+  --feature-chip-strong-fg: #ffffff;
+
+  /* inverted block (privacy) */
+  --invert-bg: #141414;
+  --invert-fg: #ffffff;
+  --invert-muted: #b4b4ba;
+  --invert-cell: #1c1c1f;
+  --invert-line: #2e2e32;
+  --invert-eyebrow: #8fa9ff;
+
+  /* voice pill (dark pill on light page) */
+  --pill-bg: #141414;
+  --pill-fg: #ffffff;
+  --pill-muted: #c9c9ce;
+  --pill-chip: #2a2a2e;
+  --pill-chip-fg: #e4e4e8;
+  --pill-idle: #6e6e76;
+  --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+
+  --radius-lg: 24px;
+  --font-sans: 'Geist Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* Dark values, shared by the system preference and the manual toggle */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --accent-text: #8fa9ff;
+  --bg: #0b0b0c;
+  --surface: #131315;
+  --surface-2: #1f1f22;
+  --border: #222225;
+  --border-strong: #2a2a2e;
+  --text: #f2f2f0;
+  --muted: #a3a3aa;
+  --subtle: #8a8a92;
+  --faint: #6c6c74;
+  --btn-bg: #f2f2f0;
+  --btn-fg: #0b0b0c;
+  --highlight: rgba(59, 109, 255, 0.24);
+  --footer-word: #18181b;
+  --nav-bg: rgba(11, 11, 12, 0.8);
+
+  --stage-bg: transparent;
+  --stage-dots: transparent;
+  --window-bg: #131315;
+  --window-border: #1f1f22;
+  --window-text: #c9c9ce;
+  --window-title: #f2f2f0;
+  --window-chrome: #2e2e33;
+  --glow-opacity: 0.32;
+
+  --feature-bg: var(--accent);
+  --feature-fg: #ffffff;
+  --feature-muted: #e8edff;
+  --feature-chip: rgba(255, 255, 255, 0.16);
+  --feature-chip-strong-bg: #ffffff;
+  --feature-chip-strong-fg: #0b0b0c;
+
+  --invert-bg: #f2f2f0;
+  --invert-fg: #0b0b0c;
+  --invert-muted: #4a4a50;
+  --invert-cell: #fafaf8;
+  --invert-line: #d8d8d3;
+  --invert-eyebrow: #2d57e0;
+
+  --pill-bg: #f2f2f0;
+  --pill-fg: #0b0b0c;
+  --pill-muted: #45454b;
+  --pill-chip: #e2e2df;
+  --pill-chip-fg: #2a2a2e;
+  --pill-idle: #8a8a90;
+  --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* Inside an inverted block, the pill flips back to the other scheme */
+.invert {
+  --pill-bg: #f2f2f0;
+  --pill-fg: #0b0b0c;
+  --pill-muted: #45454b;
+  --pill-chip: #e2e2df;
+  --pill-chip-fg: #2a2a2e;
+  --pill-idle: #8a8a90;
+}
+:root[data-theme='dark'] .invert {
+  --pill-bg: #141414;
+  --pill-fg: #ffffff;
+  --pill-muted: #c9c9ce;
+  --pill-chip: #2a2a2e;
+  --pill-chip-fg: #e4e4e8;
+  --pill-idle: #6e6e76;
+}
+
+/* ---------- Base ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+a {
+  color: inherit;
+}
+img,
+svg {
+  display: block;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+kbd,
+.mono {
+  font-family: var(--font-mono);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Layout helpers ---------- */
+.container {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding-inline: 24px;
+}
+.section {
+  padding-top: clamp(96px, 12vw, 140px);
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-text);
+}
+.h2 {
+  margin-top: 14px;
+  font-size: clamp(36px, 5vw, 60px);
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+.lead {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 24px;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn:hover {
+  transform: translateY(-1px);
+}
+.btn-primary {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+}
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.btn-sm {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* ---------- Motion ---------- */
+@keyframes plume-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  vertical-align: -0.18em;
+  margin-left: 2px;
+  background: var(--accent);
+  animation: plume-blink 1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,103 @@
+---
+import VoicePill from './VoicePill.astro';
+import { t, type Lang } from '../i18n/strings';
+import { REPO_URL, LATEST_URL } from '../lib/release';
+
+interface Props {
+  lang: Lang;
+}
+const { lang } = Astro.props;
+const s = t(lang);
+---
+
+<footer class="container footer">
+  <div class="word" aria-hidden="true">plume</div>
+  <div class="bar">
+    <span>{s.footer.made}</span>
+    <nav aria-label="Footer">
+      <a href={REPO_URL}>GitHub</a>
+      <a href={LATEST_URL}>{s.footer.releases}</a>
+      <a href="#privacy">{s.nav.privacy}</a>
+    </nav>
+  </div>
+</footer>
+
+<!-- Floating voice pill: follows the scroll, lands at the end of the page -->
+<div class="floating" data-floating>
+  <div class="floating-inner">
+    <VoicePill state="idle" lang={lang} />
+    <a href="#download" class="floating-cta">{s.floating.download}</a>
+  </div>
+</div>
+
+<style>
+  .footer {
+    padding-top: clamp(96px, 12vw, 140px);
+    padding-bottom: 32px;
+  }
+  .word {
+    font-size: clamp(80px, 19vw, 260px);
+    line-height: 0.8;
+    font-weight: 600;
+    letter-spacing: -0.07em;
+    color: var(--footer-word);
+    user-select: none;
+  }
+  .bar {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border-strong);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 16px;
+    font-size: 14px;
+    color: var(--subtle);
+  }
+  nav {
+    display: flex;
+    gap: 24px;
+  }
+  nav a {
+    color: var(--subtle);
+    text-decoration: none;
+  }
+  nav a:hover {
+    color: var(--text);
+  }
+  .floating {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+    padding: 0 16px 24px;
+    pointer-events: none;
+  }
+  .floating-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: auto;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  /* Hidden while the hero's own buttons are on screen */
+  .floating.is-hidden .floating-inner {
+    opacity: 0;
+    transform: translateY(16px);
+    pointer-events: none;
+  }
+  .floating-cta {
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding: 0 20px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: var(--pill-shadow);
+  }
+</style>
