@@ -50,7 +50,8 @@ export async function typeWords(typed: HTMLElement, rest: HTMLElement, text: str
   }
 }
 
-export function clearText(typed: HTMLElement, rest: HTMLElement) {
+/** Empties the line but keeps `text` in the layout (transparent), so its height never changes. */
+export function resetText(typed: HTMLElement, rest: HTMLElement, text: string) {
   typed.textContent = '';
-  rest.textContent = '';
+  rest.textContent = text;
 }

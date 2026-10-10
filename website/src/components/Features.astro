@@ -26,7 +26,10 @@ const first = demos[0];
           <span class="field-app" data-field-app>{first.app}</span>
           <span class="field-ctx mono" data-field-ctx>{first.context}</span>
         </p>
-        <p class="field-text" data-line><span data-typed>{first.text}</span><span class="caret"></span><span class="rest" data-rest></span></p>
+        <p class="field-text">
+          {demos.map((d) => <span class="ghost">{d.text}</span>)}
+          <span class="live" data-line><span data-typed>{first.text}</span><span class="caret"></span><span class="rest" data-rest></span></span>
+        </p>
       </div>
       <div>
         <h3 class="wide-title">{s.anyApp.title}</h3>
@@ -76,7 +79,7 @@ const first = demos[0];
     max-width: 720px;
   }
   .dim {
-    color: var(--faint);
+    color: var(--title-dim);
   }
   .grid {
     margin-top: 56px;
@@ -150,18 +153,37 @@ const first = demos[0];
     font-weight: 600;
   }
   .field-ctx {
+    min-width: 0;
     font-size: 12px;
     color: var(--feature-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+  /* Every demo line is laid out invisibly in the same cell, so the field is always
+     as tall as the longest one and the card never resizes while cycling */
   .field-text {
+    display: grid;
     margin-top: 10px;
-    min-height: 3em;
     font-size: clamp(17px, 2vw, 20px);
     line-height: 1.5;
     letter-spacing: -0.01em;
+  }
+  .field-text > * {
+    grid-area: 1 / 1;
+  }
+  .ghost {
+    visibility: hidden;
+  }
+  .ghost::after {
+    content: '';
+    display: inline-block;
+    width: 4px;
+  }
+  .live {
     transition: opacity 0.3s ease;
   }
-  .field-text.is-clearing {
+  .live.is-clearing {
     opacity: 0;
   }
   .field .caret {
@@ -208,7 +230,7 @@ const first = demos[0];
 </style>
 
 <script>
-  import { clearText, motionAllowed, timeline, typeWords } from '../lib/demo';
+  import { motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
 
   // Cycle through the apps: highlight one, dictate a line into its text field.
   const card = document.querySelector<HTMLElement>('[data-apps-demo]');
@@ -228,7 +250,7 @@ const first = demos[0];
         const demo = demos[i];
         line.classList.add('is-clearing');
         await tl.wait(300);
-        clearText(typed, rest);
+        resetText(typed, rest, demo.text);
         line.classList.remove('is-clearing');
         chips.forEach((c) => c.classList.toggle('is-active', c.dataset.app === demo.app));
         app.textContent = demo.app;

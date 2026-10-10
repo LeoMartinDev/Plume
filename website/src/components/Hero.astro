@@ -123,7 +123,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
     max-width: 980px;
   }
   .dim {
-    color: var(--faint);
+    color: var(--title-dim);
   }
   .title .serif {
     font-size: 1.1em;
@@ -283,7 +283,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
 </style>
 
 <script>
-  import { clearText, motionAllowed, timeline, typeWords } from '../lib/demo';
+  import { motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
 
   // Loop the dictation: hold the keys, speak, release, the text lands in the note.
   const stage = document.querySelector<HTMLElement>('[data-hero-demo]');
@@ -302,7 +302,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
       for (;;) {
         line.classList.add('is-clearing');
         await tl.wait(350);
-        clearText(typed, rest);
+        resetText(typed, rest, text);
         line.classList.remove('is-clearing', 'is-settled');
         setPill('idle');
         await tl.wait(1300);

@@ -14,6 +14,8 @@
   --muted: #55555a;
   --subtle: #6b6b70;
   --faint: #86868c;
+  /* Second line of display titles (thin serif italic, needs more contrast than --faint) */
+  --title-dim: #7c7c82;
   --btn-bg: #141414;
   --btn-fg: #ffffff;
   --highlight: #e6ecff;
@@ -80,6 +82,7 @@
   --muted: #a3a3aa;
   --subtle: #8a8a92;
   --faint: #6c6c74;
+  --title-dim: #b4b4bc;
   --btn-bg: #f2f2f0;
   --btn-fg: #0b0b0c;
   --highlight: rgba(59, 109, 255, 0.24);
