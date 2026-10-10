@@ -283,7 +283,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
 </style>
 
 <script>
-  import { motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
+  import { inViewport, motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
 
   // Loop the dictation: hold the keys, speak, release, the text lands in the note.
   const stage = document.querySelector<HTMLElement>('[data-hero-demo]');
@@ -298,20 +298,30 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
     const press = (down: boolean) => keys.forEach((k) => k.classList.toggle('is-down', down));
     const tl = timeline(stage);
 
+    // The server renders the finished frame (no-JS and reduced-motion fallback). When the
+    // demo is still below the fold, swap it for an empty note so people scrolling to it
+    // watch the dictation from the start. If it is already on screen, wind down from the
+    // rendered frame instead of jumping.
+    const startEmpty = !inViewport(line);
+    if (startEmpty) {
+      resetText(typed, rest, text);
+      setPill('idle');
+    }
+
     (async () => {
-      // Each loop starts from the server-rendered frame (line just inserted), so the
-      // first change people see is the natural next step, never a jump.
-      for (;;) {
-        await tl.wait(1800);
-        line.classList.add('is-settled');
-        await tl.wait(1400);
-        setPill('idle');
-        await tl.wait(1400);
-        line.classList.add('is-clearing');
-        await tl.wait(350);
-        resetText(typed, rest, text);
-        line.classList.remove('is-clearing', 'is-settled');
-        await tl.wait(500);
+      for (let first = true; ; first = false) {
+        if (!first || !startEmpty) {
+          await tl.wait(1800);
+          line.classList.add('is-settled');
+          await tl.wait(1400);
+          setPill('idle');
+          await tl.wait(1400);
+          line.classList.add('is-clearing');
+          await tl.wait(350);
+          resetText(typed, rest, text);
+          line.classList.remove('is-clearing', 'is-settled');
+        }
+        await tl.wait(first ? 700 : 500);
         press(true);
         setPill('listening');
         await tl.wait(2600);

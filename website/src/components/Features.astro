@@ -230,7 +230,7 @@ const first = demos[0];
 </style>
 
 <script>
-  import { motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
+  import { inViewport, motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
 
   // Cycle through the apps: highlight one, dictate a line into its text field.
   const card = document.querySelector<HTMLElement>('[data-apps-demo]');
@@ -244,12 +244,19 @@ const first = demos[0];
     const chips = card.querySelectorAll<HTMLElement>('[data-app]');
     const tl = timeline(card);
 
+    // Same as the hero: below the fold, start from an empty field so the first app is typed
+    // in view; already on screen, keep the rendered line for a moment first.
+    const startEmpty = !inViewport(line);
+    if (startEmpty) resetText(typed, rest, demos[0].text);
+
     (async () => {
-      await tl.wait(2400);
-      for (let i = 1; ; i = (i + 1) % demos.length) {
+      if (!startEmpty) await tl.wait(2400);
+      for (let i = startEmpty ? 0 : 1; ; i = (i + 1) % demos.length) {
         const demo = demos[i];
-        line.classList.add('is-clearing');
-        await tl.wait(300);
+        if (typed.textContent) {
+          line.classList.add('is-clearing');
+          await tl.wait(300);
+        }
         resetText(typed, rest, demo.text);
         line.classList.remove('is-clearing');
         chips.forEach((c) => c.classList.toggle('is-active', c.dataset.app === demo.app));

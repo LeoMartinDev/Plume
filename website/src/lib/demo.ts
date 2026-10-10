@@ -6,6 +6,12 @@ export function motionAllowed(): boolean {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/** Whether any part of the element is on screen right now. */
+export function inViewport(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  return r.bottom > 0 && r.top < window.innerHeight;
+}
+
 export interface Timeline {
   /** Resolves after `ms` of on-screen time (waits for the element to be in view first). */
   wait(ms: number): Promise<void>;
@@ -35,8 +41,12 @@ export function timeline(el: Element): Timeline {
   const whenVisible = () => (visible() ? Promise.resolve() : new Promise<void>((r) => (resume = r)));
   return {
     async wait(ms) {
-      await whenVisible();
-      await new Promise((r) => setTimeout(r, ms));
+      // Restart the delay if the demo left the screen meanwhile, so nothing changes out of
+      // sight and nothing jumps the moment it comes back.
+      do {
+        await whenVisible();
+        await new Promise((r) => setTimeout(r, ms));
+      } while (!visible());
     },
   };
 }
