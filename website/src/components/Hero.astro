@@ -53,7 +53,7 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
       <div class="doc">
         <p class="doc-title">{s.docTitle}</p>
         <p>{s.docLine1}</p>
-        <p class="dictated" data-line><mark data-typed>{s.docLine2}</mark><span class="caret" aria-hidden="true"></span><span class="rest" data-rest></span></p>
+        <p class="dictated" data-line data-text={s.docLine2}><mark data-typed>{s.docLine2}</mark><span class="caret" aria-hidden="true"></span><span class="rest" data-rest></span></p>
       </div>
       <div class="pill-slot" aria-hidden="true">
         {
@@ -66,6 +66,16 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
       </div>
     </div>
   </div>
+  <script is:inline>
+    // Runs before the first paint: the markup holds the finished frame (no-JS and
+    // reduced-motion fallback), but when the demo plays it starts from an empty note.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const stage = document.currentScript.previousElementSibling;
+      stage.querySelector('[data-typed]').textContent = '';
+      stage.querySelector('[data-rest]').textContent = stage.querySelector('[data-line]').dataset.text;
+      stage.querySelectorAll('[data-pill]').forEach((f) => f.classList.toggle('is-active', f.dataset.pill === 'idle'));
+    }
+  </script>
 </section>
 
 <style>
@@ -230,15 +240,19 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
     color: var(--window-title);
     margin-bottom: 6px;
   }
+  /* The negative margin cancels the side padding, so the highlight takes no room in the
+     line and the transparent remainder wraps exactly like the finished sentence */
   mark {
     border-radius: 4px;
     padding: 1px 2px;
+    margin: 0 -2px;
     background: var(--highlight);
     color: var(--window-title);
     transition: background 0.8s ease;
   }
   mark:empty {
     padding: 0;
+    margin: 0;
   }
   .dictated {
     transition: opacity 0.35s ease;
@@ -283,34 +297,25 @@ const states = ['idle', 'listening', 'transcribing', 'inserted'] as const;
 </style>
 
 <script>
-  import { inViewport, motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
+  import { motionAllowed, resetText, timeline, typeWords } from '../lib/demo';
 
   // Loop the dictation: hold the keys, speak, release, the text lands in the note.
+  // The inline script above already emptied the note, so the first pass plays in full.
   const stage = document.querySelector<HTMLElement>('[data-hero-demo]');
   const line = stage?.querySelector<HTMLElement>('[data-line]');
   const typed = line?.querySelector<HTMLElement>('[data-typed]');
   const rest = line?.querySelector<HTMLElement>('[data-rest]');
   if (stage && line && typed && rest && motionAllowed()) {
-    const text = typed.textContent ?? '';
+    const text = line.dataset.text ?? '';
     const keys = document.querySelectorAll<HTMLElement>('[data-hero-key]');
     const frames = stage.querySelectorAll<HTMLElement>('[data-pill]');
     const setPill = (state: string) => frames.forEach((f) => f.classList.toggle('is-active', f.dataset.pill === state));
     const press = (down: boolean) => keys.forEach((k) => k.classList.toggle('is-down', down));
     const tl = timeline(stage);
 
-    // The server renders the finished frame (no-JS and reduced-motion fallback). When the
-    // demo is still below the fold, swap it for an empty note so people scrolling to it
-    // watch the dictation from the start. If it is already on screen, wind down from the
-    // rendered frame instead of jumping.
-    const startEmpty = !inViewport(line);
-    if (startEmpty) {
-      resetText(typed, rest, text);
-      setPill('idle');
-    }
-
     (async () => {
       for (let first = true; ; first = false) {
-        if (!first || !startEmpty) {
+        if (!first) {
           await tl.wait(1800);
           line.classList.add('is-settled');
           await tl.wait(1400);

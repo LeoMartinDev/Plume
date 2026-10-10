@@ -19,7 +19,8 @@
   --btn-bg: #141414;
   --btn-fg: #ffffff;
   --highlight: #e6ecff;
-  --footer-word: #d2d2cc;
+  --footer-word: #a9a9a3;
+  --footer-word-end: #e0e0dc;
   --nav-bg: rgba(244, 244, 242, 0.86);
 
   /* hero stage */
@@ -86,7 +87,8 @@
   --btn-bg: #f2f2f0;
   --btn-fg: #0b0b0c;
   --highlight: rgba(59, 109, 255, 0.24);
-  --footer-word: #2a2a2e;
+  --footer-word: #6a6a72;
+  --footer-word-end: #1e1e21;
   --nav-bg: rgba(11, 11, 12, 0.8);
 
   --stage-bg: #101012;
@@ -280,12 +282,15 @@ kbd,
     opacity: 0;
   }
 }
+/* Takes no room in the line (the negative margin cancels its width), so moving it
+   through a sentence never changes where the lines wrap */
 .caret {
   display: inline-block;
   width: 2px;
   height: 1.1em;
   vertical-align: -0.18em;
   margin-left: 2px;
+  margin-right: -4px;
   background: var(--accent);
   animation: plume-blink 1s steps(1) infinite;
 }
