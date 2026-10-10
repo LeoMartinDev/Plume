@@ -3,7 +3,7 @@ use plume_core::SessionState;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(400);
+pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(700);
 pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(320);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

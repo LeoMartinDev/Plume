@@ -150,27 +150,24 @@ impl Render for BubbleView {
                         .child("×"),
                 )
                 .into_any_element()
-        } else if matches!(phase, Phase::NoSpeech | Phase::Success) {
+        } else if phase == Phase::NoSpeech {
+            div()
+                .size_full()
+                .rounded_full()
+                .bg(rgb(0x000000))
+                .into_any_element()
+        } else if phase == Phase::Success {
             BubbleFrame::new(0.0).into_any_element()
         } else if phase == Phase::Recording
             && matches!(
                 self.feedback.bubble.feedback,
-                Feedback::RecordingNotice { silence: true, .. }
-                    | Feedback::RecordingNotice { limit: true, .. }
+                Feedback::RecordingNotice { limit: true, .. }
             )
         {
-            let warning = if matches!(
-                self.feedback.bubble.feedback,
-                Feedback::RecordingNotice { limit: true, .. }
-            ) {
-                "1 minute left"
-            } else {
-                "Mic is on"
-            };
             div()
                 .text_color(rgb(0xf0c47b))
                 .text_size(px(10.))
-                .child(warning)
+                .child("1 minute left")
                 .into_any_element()
         } else if phase == Phase::Recording {
             BubbleFrame::new(0.0).bars(bars).into_any_element()
@@ -197,25 +194,6 @@ impl Render for BubbleView {
                     } else {
                         "Cancelling…"
                     });
-            } else if phase == Phase::Inserting {
-                indicator = indicator.child(
-                    div()
-                        .w(px(40.))
-                        .h(px(3.))
-                        .rounded_full()
-                        .bg(rgb(0x444448))
-                        .child(
-                            div()
-                                .w(px(if self.reduced_motion {
-                                    24.
-                                } else {
-                                    12. + (time * 5.).sin().abs() * 28.
-                                }))
-                                .h(px(3.))
-                                .rounded_full()
-                                .bg(rgb(0xffffff)),
-                        ),
-                );
             } else {
                 indicator = indicator.children((0..3).map(|index| {
                     let opacity = if self.reduced_motion {
@@ -291,7 +269,7 @@ fn terminal_motion(phase: Phase, elapsed: Duration, reduced_motion: bool) -> Ter
     let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.);
     if phase == Phase::NoSpeech {
         // Two small oscillations, settling before the bubble fades away.
-        let shake = (elapsed.as_secs_f32() / 0.22).clamp(0., 1.);
+        let shake = (progress / 0.55).clamp(0., 1.);
         motion.offset_x = (shake * std::f32::consts::TAU * 2.).sin() * 3. * (1. - shake).powi(2);
     } else {
         // A small, smooth release of the pill replaces the completion glyph.
