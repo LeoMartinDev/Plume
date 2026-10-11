@@ -12,7 +12,6 @@ pub type SharedRecordings = Arc<Mutex<RecordingStore>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Recording {
-    #[serde(default)]
     pub ephemeral: bool,
     pub version: u32,
     pub id: RecordId,
@@ -22,9 +21,7 @@ pub struct Recording {
     pub status: String,
     pub text: Option<String>,
     pub error: Option<String>,
-    #[serde(default)]
     pub history_saved: bool,
-    #[serde(default)]
     pub insertion: Option<RecordedInsertion>,
 }
 

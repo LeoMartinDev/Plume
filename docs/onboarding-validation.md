@@ -1,6 +1,6 @@
 # Onboarding validation
 
-Automated coverage runs with `cargo test -p plume-app -p plume-session --lib --locked`. It covers legacy preference migration, setup resumption/completion, shortcut validation, idle destination changes, preview completion and crash cleanup without evicting prior recordings. Workspace Clippy checks all targets.
+Automated coverage runs with `cargo test -p plume-app -p plume-session --lib --locked`. It covers setup resumption/completion, shortcut validation, idle destination changes, preview completion and crash cleanup without evicting prior recordings. Workspace Clippy checks all targets.
 
 ## Native-device acceptance
 

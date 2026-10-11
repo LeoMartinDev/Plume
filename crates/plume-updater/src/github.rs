@@ -142,7 +142,7 @@ mod tests {
         }
     }
     #[test]
-    fn macos_selects_dmg_assets_and_rejects_legacy_packages() {
+    fn macos_selects_dmg_assets_and_rejects_other_packages() {
         let target = "aarch64-apple-darwin";
         assert_eq!(
             installer_name("0.2.0", target),

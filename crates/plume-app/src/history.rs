@@ -9,9 +9,7 @@ use crate::history_policy::HistoryPolicy;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct HistoryEntry {
     pub id: u64,
-    #[serde(default)]
     pub record_id: Option<u64>,
-    #[serde(default)]
     pub transcription_error: Option<String>,
     pub created_at: u64,
     pub text: String,
@@ -509,9 +507,7 @@ mod tests {
 mod recording_history_tests {
     use super::*;
     #[test]
-    fn legacy_entries_default_to_no_audio_and_retry_keeps_insertion_status() {
-        let entry:HistoryEntry=serde_json::from_str(r#"{"id":1,"created_at":1,"text":"old","application":null,"method":null,"status":"Inserted","copied_on_failure":false,"error":null}"#).unwrap();
-        assert_eq!(entry.record_id, None);
+    fn retry_keeps_insertion_status() {
         let root = std::env::temp_dir().join(format!(
             "plume-history-retry-{}",
             SystemTime::now()
@@ -551,7 +547,7 @@ mod recording_history_tests {
         // The original text can expire while its audio remains indefinitely.
         store.clear().unwrap();
         let audio_only: plume_session::Recording = serde_json::from_value(serde_json::json!({
-            "version": 1, "id": 7, "created_at": 1, "has_speech": true,
+            "ephemeral": false, "version": 1, "id": 7, "created_at": 1, "has_speech": true,
             "duration_ms": 1000, "status": "Transcribed", "text": "new recovery",
             "error": null, "history_saved": false,
             "insertion": { "status": "Copied", "method": null, "application": null,

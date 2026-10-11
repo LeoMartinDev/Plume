@@ -179,7 +179,7 @@ impl ModelId {
     }
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "light" | "nemotron-3.5-compact" => Some(Self::Nemotron35Compact),
+            "nemotron-3.5-compact" => Some(Self::Nemotron35Compact),
             "whisper-base" => Some(Self::WhisperBase),
             "whisper-small" => Some(Self::WhisperSmall),
             "whisper-large-v3-turbo" => Some(Self::WhisperLargeV3Turbo),
@@ -266,10 +266,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_light_migrates_but_generic_tiers_do_not_exist() {
-        assert_eq!(ModelId::parse("light"), Some(ModelId::Nemotron35Compact));
-        assert_eq!(ModelId::parse("medium"), None);
-        assert_eq!(ModelId::parse("large"), None);
+    fn model_ids_round_trip_and_unknown_ids_are_rejected() {
+        for entry in entries() {
+            assert_eq!(ModelId::parse(entry.id.as_str()), Some(entry.id));
+        }
+        assert_eq!(ModelId::parse("light"), None);
     }
 
     #[test]

@@ -317,22 +317,23 @@ mod tests {
         dir.join("prefs.toml")
     }
 
-    #[test]
-    fn old_preferences_require_onboarding_without_changing_model_or_shortcuts() {
-        let path = temp_prefs("setup-migration");
-        std::fs::write(
-            &path,
-            "hold='Alt+Space'\ncancel='Esc'\nmodel='whisper-small'\n",
-        )
-        .unwrap();
-        let PrefsLoad::Loaded(prefs) = load_at(&path) else {
-            panic!("valid legacy preferences");
-        };
-        assert!(prefs.needs_onboarding());
-        assert_eq!(prefs.onboarding_step, OnboardingStep::Languages);
-        assert_eq!(prefs.model, ModelId::WhisperSmall);
-        assert_eq!(prefs.hold(), "Alt+Space");
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    /// Saved default preferences with one field replaced by a raw TOML value.
+    fn prefs_with(key: &str, value: &str) -> String {
+        wire::encode(&Prefs::default_fresh())
+            .unwrap()
+            .lines()
+            .map(|line| {
+                if line.starts_with(&format!("{key} =")) {
+                    format!("{key} = {value}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            )
     }
 
     #[test]
@@ -401,7 +402,6 @@ mod tests {
         }
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("model = \"whisper-small\""), "{body}");
-        assert!(!body.contains("pack ="), "{body}");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -423,11 +423,7 @@ mod tests {
     #[test]
     fn fn_chord_is_quarantined() {
         let path = temp_prefs("fn");
-        std::fs::write(
-            &path,
-            "hold = \"Fn+Space\"\ncancel = \"Esc\"\npack = \"light\"\n",
-        )
-        .unwrap();
+        std::fs::write(&path, prefs_with("hold", "\"Fn+Space\"")).unwrap();
         match load_at(&path) {
             PrefsLoad::Quarantined { warning, .. } => {
                 assert!(warning.contains("chords"), "{warning}");
@@ -438,27 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_appearance_key_is_loaded_auto() {
-        let path = temp_prefs("no-appearance");
-        std::fs::write(
-            &path,
-            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\n",
-        )
-        .unwrap();
-        match load_at(&path) {
-            PrefsLoad::Loaded(prefs) => {
-                assert_eq!(prefs.appearance(), AppearancePref::Auto);
-                assert_eq!(prefs.language(), LanguagePref::Auto);
-                assert_eq!(prefs.model, ModelId::Nemotron35Compact);
-                assert_eq!(prefs.hold(), "Ctrl+Space");
-            }
-            _ => panic!("file without appearance must be Loaded"),
-        }
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[test]
-    fn language_round_trips_and_old_files_default_to_auto() {
+    fn language_round_trips() {
         let path = temp_prefs("language-round");
         let mut prefs = Prefs::default_fresh();
         prefs.set_language(LanguagePref::French);
@@ -510,13 +486,7 @@ mod tests {
     fn unknown_destination_inserts_and_does_not_quarantine() {
         for value in ["\"elsewhere\"", "3"] {
             let path = temp_prefs("destination-unknown");
-            std::fs::write(
-                &path,
-                format!(
-                    "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\ndestination = {value}\n"
-                ),
-            )
-            .unwrap();
+            std::fs::write(&path, prefs_with("destination", value)).unwrap();
             match load_at(&path) {
                 PrefsLoad::Loaded(prefs) => {
                     assert_eq!(prefs.destination(), Destination::FocusedField)
@@ -531,11 +501,7 @@ mod tests {
     #[test]
     fn neon_appearance_is_loaded_auto_and_does_not_quarantine() {
         let path = temp_prefs("neon");
-        std::fs::write(
-            &path,
-            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = \"neon\"\n",
-        )
-        .unwrap();
+        std::fs::write(&path, prefs_with("appearance", "\"neon\"")).unwrap();
         match load_at(&path) {
             PrefsLoad::Loaded(prefs) => {
                 assert_eq!(prefs.appearance(), AppearancePref::Auto);
@@ -550,11 +516,7 @@ mod tests {
     #[test]
     fn integer_appearance_is_loaded_auto_and_does_not_quarantine() {
         let path = temp_prefs("int-appearance");
-        std::fs::write(
-            &path,
-            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = 1\n",
-        )
-        .unwrap();
+        std::fs::write(&path, prefs_with("appearance", "1")).unwrap();
         match load_at(&path) {
             PrefsLoad::Loaded(prefs) => {
                 assert_eq!(prefs.appearance(), AppearancePref::Auto);
@@ -563,25 +525,6 @@ mod tests {
             _ => panic!("integer appearance must be Loaded"),
         }
         assert!(!path.with_extension("toml.bad").exists());
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[test]
-    fn appearance_light_is_not_pack_light() {
-        let path = temp_prefs("both-light");
-        std::fs::write(
-            &path,
-            "hold = \"Ctrl+Space\"\ncancel = \"Esc\"\npack = \"light\"\nappearance = \"light\"\n",
-        )
-        .unwrap();
-        match load_at(&path) {
-            PrefsLoad::Loaded(prefs) => {
-                assert_eq!(prefs.appearance(), AppearancePref::Fixed(Scheme::Light));
-                assert_eq!(prefs.model, ModelId::Nemotron35Compact);
-                assert_ne!(prefs.appearance().element_id(), prefs.model.as_str());
-            }
-            _ => panic!("appearance light must be Loaded"),
-        }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

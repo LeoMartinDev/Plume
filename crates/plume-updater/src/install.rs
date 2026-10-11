@@ -33,7 +33,7 @@ pub fn installation() -> Result<Installation> {
 }
 
 fn locate(executable: &Path) -> Result<Installation> {
-    let executable = io(executable.canonicalize())?;
+    let executable = simplify(io(executable.canonicalize())?);
     let directory = executable
         .parent()
         .ok_or("Could not find Plume's installation folder")?;
@@ -66,6 +66,15 @@ fn locate(executable: &Path) -> Result<Installation> {
         executable: relative,
         helper,
     })
+}
+
+// Windows canonical paths are verbatim (`\\?\C:\...`); Inno Setup rejects the
+// `?` in `/DIR=` and exits without installing.
+fn simplify(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if !rest.starts_with(r"UNC\") => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 pub fn prepare(
@@ -541,6 +550,21 @@ mod tests {
             parent_pid: 1,
             work,
         }
+    }
+    #[test]
+    fn strips_verbatim_prefix_from_local_paths_only() {
+        assert_eq!(
+            simplify(PathBuf::from(r"\\?\C:\Users\me\Plume")),
+            PathBuf::from(r"C:\Users\me\Plume")
+        );
+        assert_eq!(
+            simplify(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(
+            simplify(PathBuf::from("/opt/plume")),
+            PathBuf::from("/opt/plume")
+        );
     }
     #[test]
     fn rejects_installer_outside_download_folder_and_unsafe_executable() {

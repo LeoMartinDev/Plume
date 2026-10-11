@@ -286,6 +286,4 @@ the bundle in its current location and restarts Plume. It keeps the old bundle
 until replacement succeeds and restores it if replacement fails. If the app
 folder is not writable, install the DMG manually. Models, preferences and history
 are outside the installation and remain intact. Linux system installs can request
-administrator authentication. Earlier macOS updaters expect `.pkg` assets, so their
-users must install the first DMG release manually from GitHub. The previous 0.1.0
-updater expects archives and also requires a manual installation on all platforms.
+administrator authentication.

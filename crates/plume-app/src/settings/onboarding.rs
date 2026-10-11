@@ -821,7 +821,7 @@ fn model_screen(
                 )),
         );
     }
-    // A legacy selection (e.g. Whisper Small) has no card in this grid.
+    // A model chosen in Settings (e.g. Whisper Small) has no card in this grid.
     if busy && !CHOICES.contains(&selected) {
         body = body.child(model_download_progress(&view.phase, tokens, false));
     }

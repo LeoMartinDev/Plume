@@ -35,8 +35,7 @@ continues to build, test, lint and format the workspace.
   finishes; cancellation after STT persistence does not evict an older recording.
   Promotion retains the final text and insertion result persisted beforehand.
   A corrupt shared VAD is repaired during preparation.
-- History/preferences: legacy entries without audio, default-toggle collision
-  migration, normalized collision refusal and retry without insertion. Recovery
+- History/preferences: normalized collision refusal and retry without insertion. Recovery
   after text expiry keeps the previous insertion outcome and remains copyable.
 - Insertion: Unicode boundary spacing, unchanged internal text, snapshot fallback,
   user-copy preservation and no typing after paste/restore failure. Cancellation

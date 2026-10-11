@@ -7,15 +7,8 @@ use std::path::PathBuf;
 
 struct AppearanceWire(AppearancePref);
 
-impl Default for AppearanceWire {
-    fn default() -> Self {
-        Self(AppearancePref::Auto)
-    }
-}
-
 struct LanguageWire(LanguagePref);
 
-#[derive(Default)]
 struct InterfaceLanguageWire(InterfaceLanguage);
 
 impl<'de> Deserialize<'de> for InterfaceLanguageWire {
@@ -27,12 +20,6 @@ impl<'de> Deserialize<'de> for InterfaceLanguageWire {
                 .and_then(InterfaceLanguage::from_code)
                 .unwrap_or_default(),
         ))
-    }
-}
-
-impl Default for LanguageWire {
-    fn default() -> Self {
-        Self(LanguagePref::Auto)
     }
 }
 
@@ -66,30 +53,20 @@ impl<'de> Deserialize<'de> for AppearanceWire {
 
 #[derive(Deserialize)]
 struct WireIn {
-    #[serde(default)]
     onboarding_version: u32,
-    #[serde(default)]
     onboarding_step: super::OnboardingStep,
-    #[serde(default)]
-    toggle: Option<String>,
-    #[serde(default)]
-    history: Option<toml::Value>,
+    /// Empty means the hands-free shortcut is disabled.
+    toggle: String,
+    history: toml::Value,
     hold: String,
     cancel: String,
-    #[serde(alias = "pack")]
     model: String,
-    #[serde(default)]
     appearance: AppearanceWire,
-    #[serde(default)]
     language: LanguageWire,
-    #[serde(default)]
     interface_language: InterfaceLanguageWire,
     /// Any unknown value or type means the default: insert into the field.
-    #[serde(default)]
-    destination: Option<toml::Value>,
-    #[serde(default = "default_insertion_mode")]
+    destination: toml::Value,
     insertion_mode: String,
-    #[serde(default = "default_copy_on_failure")]
     copy_on_failure: bool,
 }
 
@@ -110,44 +87,21 @@ struct WireOut {
     copy_on_failure: bool,
 }
 
-fn default_insertion_mode() -> String {
-    "auto".to_string()
-}
-
-fn default_copy_on_failure() -> bool {
-    true
-}
-
 pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
     let wire: WireIn = toml::from_str(raw).map_err(|err| format!("prefs corrupt: {err}"))?;
     let model = ModelId::parse(&wire.model)
         .ok_or_else(|| format!("prefs model {} is unknown", wire.model))?;
     plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
         .map_err(|err| format!("prefs chords rejected: {err}"))?;
-    let (history, mut warnings) = parse_history(wire.history);
-    let toggle = match wire.toggle {
-        Some(raw) if raw.is_empty() => None,
-        Some(raw) => {
-            plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
-                .map_err(|e| e.to_string())?
-                .with_toggle(Some(&raw))
-                .map_err(|e| e.to_string())?;
-            Some(raw)
-        }
-        None => {
-            let default = plume_session::Config::DEFAULT_TOGGLE;
-            let config =
-                plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
-                    .map_err(|e| e.to_string())?;
-            if config.with_toggle(Some(default)).is_ok() {
-                Some(default.into())
-            } else {
-                warnings.push(
-                    "Hands-free shortcut disabled because it overlaps an existing shortcut.".into(),
-                );
-                None
-            }
-        }
+    let (history, warnings) = parse_history(wire.history);
+    let toggle = if wire.toggle.is_empty() {
+        None
+    } else {
+        plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
+            .map_err(|e| e.to_string())?
+            .with_toggle(Some(&wire.toggle))
+            .map_err(|e| e.to_string())?;
+        Some(wire.toggle)
     };
     Ok((
         Prefs {
@@ -160,7 +114,7 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
             appearance: wire.appearance.0,
             language: wire.language.0,
             interface_language: wire.interface_language.0,
-            destination: match wire.destination.as_ref().and_then(toml::Value::as_str) {
+            destination: match wire.destination.as_str() {
                 Some("copy") => Destination::Clipboard,
                 _ => Destination::FocusedField,
             },
@@ -223,12 +177,11 @@ pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
     toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))
 }
 
-fn parse_history(value: Option<toml::Value>) -> (HistoryPolicy, Vec<String>) {
+fn parse_history(value: toml::Value) -> (HistoryPolicy, Vec<String>) {
     let mut warnings = Vec::new();
     let table = match value {
-        None => return (HistoryPolicy::default(), warnings),
-        Some(toml::Value::Table(table)) => table,
-        Some(_) => {
+        toml::Value::Table(table) => table,
+        _ => {
             warnings.push("history must be a table; using default limits".into());
             return (HistoryPolicy::default(), warnings);
         }
@@ -293,36 +246,58 @@ mod tests {
         }
     }
 
+    fn fields_with(edit: impl FnOnce(&mut toml::Table)) -> String {
+        let mut value: toml::Value = encode(&Prefs::default_fresh()).unwrap().parse().unwrap();
+        edit(value.as_table_mut().unwrap());
+        toml::to_string(&value).unwrap()
+    }
+    fn prefs_without_history() -> String {
+        fields_with(|table| {
+            table.remove("history");
+        })
+    }
     #[test]
-    fn legacy_or_invalid_interface_language_preserves_dictation_and_setup() {
-        let legacy = "hold='Alt+Space'\ncancel='Esc'\nmodel='whisper-small'\nlanguage='fr'\nonboarding_step='permissions'\nonboarding_version=1\n";
-        for field in [
-            "",
-            "interface_language='zz-unavailable'",
-            "interface_language=42",
-            "interface_language=false",
-        ] {
-            let (loaded, _) = parse_wire(&format!("{legacy}{field}")).unwrap();
+    fn invalid_interface_language_keeps_other_preferences() {
+        let mut prefs = Prefs::default_fresh();
+        prefs.set_language(LanguagePref::French);
+        prefs.model = ModelId::WhisperSmall;
+        let encoded = encode(&prefs).unwrap();
+        for value in ["'zz-unavailable'", "42", "false"] {
+            let raw = encoded
+                .lines()
+                .map(|line| {
+                    if line.starts_with("interface_language") {
+                        format!("interface_language = {value}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            let (loaded, _) = parse_wire(&raw).unwrap();
             assert_eq!(loaded.interface_language(), InterfaceLanguage::ENGLISH);
             assert_eq!(loaded.language(), LanguagePref::French);
             assert_eq!(loaded.model, ModelId::WhisperSmall);
-            assert_eq!(loaded.hold(), "Alt+Space");
-            assert_eq!(
-                loaded.onboarding_step,
-                super::super::OnboardingStep::Permissions
-            );
-            assert!(!loaded.needs_onboarding());
         }
     }
-    fn old_prefs() -> String {
-        let mut value: toml::Value = encode(&Prefs::default_fresh()).unwrap().parse().unwrap();
-        value.as_table_mut().unwrap().remove("history");
-        toml::to_string(&value).unwrap()
+    #[test]
+    fn missing_fields_are_rejected() {
+        for field in ["toggle", "history", "destination", "onboarding_version"] {
+            let raw = fields_with(|table| {
+                table.remove(field);
+            });
+            assert!(parse_wire(&raw).is_err(), "{field}");
+        }
     }
     #[test]
-    fn old_preferences_keep_default_history_without_warnings() {
-        let (prefs, warnings) = parse_wire(&old_prefs()).unwrap();
-        assert_eq!(prefs.history(), HistoryPolicy::default());
+    fn disabled_toggle_round_trips() {
+        let mut prefs = Prefs::default_fresh();
+        prefs.try_set_toggle(None).unwrap();
+        let (loaded, warnings) = parse_wire(&encode(&prefs).unwrap()).unwrap();
+        assert_eq!(loaded.toggle(), None);
         assert!(warnings.is_empty());
     }
     #[test]
@@ -347,7 +322,7 @@ mod tests {
         ] {
             let raw = format!(
                 "{}\n[history]\nretention_days = {invalid}\nmax_entries = 1234\n",
-                old_prefs()
+                prefs_without_history()
             );
             let (prefs, warnings) = parse_wire(&raw).unwrap();
             assert_eq!(
@@ -360,7 +335,7 @@ mod tests {
         for invalid in ["0", "-1", "100001", "\"bad\"", "false", "1.5", "{}"] {
             let raw = format!(
                 "{}\n[history]\nretention_days = 42\nmax_entries = {invalid}\n",
-                old_prefs()
+                prefs_without_history()
             );
             let (prefs, warnings) = parse_wire(&raw).unwrap();
             assert_eq!(
@@ -371,12 +346,16 @@ mod tests {
         }
     }
     #[test]
-    fn malformed_history_table_warns_and_missing_fields_use_defaults() {
-        let (prefs, warnings) = parse_wire(&format!("{}\nhistory = false", old_prefs())).unwrap();
+    fn malformed_history_table_warns_and_missing_limits_use_defaults() {
+        let (prefs, warnings) =
+            parse_wire(&format!("{}\nhistory = false", prefs_without_history())).unwrap();
         assert_eq!(prefs.history(), HistoryPolicy::default());
         assert_eq!(warnings.len(), 1);
-        let (prefs, warnings) =
-            parse_wire(&format!("{}\n[history]\nretention_days = 7", old_prefs())).unwrap();
+        let (prefs, warnings) = parse_wire(&format!(
+            "{}\n[history]\nretention_days = 7",
+            prefs_without_history()
+        ))
+        .unwrap();
         assert_eq!(
             prefs.history(),
             HistoryPolicy::new(Some(7), Some(500)).unwrap()
@@ -394,24 +373,5 @@ mod tests {
             assert_eq!(loaded, prefs);
             assert!(warnings.is_empty());
         }
-    }
-}
-
-#[cfg(test)]
-mod toggle_migration_tests {
-    use super::*;
-    #[test]
-    fn migration_preserves_existing_shortcuts_when_default_collides() {
-        let (prefs, warnings) =
-            parse_wire("hold='Ctrl+Shift+Space'\ncancel='Esc'\nmodel='whisper-base'").unwrap();
-        assert_eq!(prefs.hold(), "Ctrl+Shift+Space");
-        assert_eq!(prefs.toggle(), None);
-        assert_eq!(warnings.len(), 1);
-        let (mut prefs, warnings) =
-            parse_wire("hold='Ctrl+Space'\ncancel='Esc'\nmodel='whisper-base'").unwrap();
-        assert_eq!(prefs.toggle(), Some("Ctrl+Shift+Space"));
-        assert!(warnings.is_empty());
-        assert!(prefs.try_set_toggle(Some("Control+Space")).is_err());
-        assert_eq!(prefs.toggle(), Some("Ctrl+Shift+Space"));
     }
 }
