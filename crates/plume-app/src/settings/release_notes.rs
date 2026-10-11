@@ -62,17 +62,18 @@ pub(super) fn inline_notes(content: &NotesContent, tokens: &Tokens) -> gpui::Any
         .w_full()
         .min_w_0()
         .whitespace_normal()
-        .mt(px(4.))
-        .pt(px(20.))
-        .border_t_1()
-        .border_color(tokens.hairline)
+        .p(px(18.))
+        .rounded(px(18.))
+        .border_1()
+        .border_color(tokens.border)
+        .bg(tokens.surface)
         .flex()
         .flex_col()
         .gap(px(12.))
         .text_color(tokens.text)
         .child(
             div()
-                .text_sm()
+                .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(content.title()),
         )
@@ -135,7 +136,7 @@ impl Block {
 
     fn render(&self, index: usize, tokens: &Tokens) -> gpui::AnyElement {
         if matches!(self.kind, Kind::Rule) {
-            return div().h(px(1.)).bg(tokens.hairline).into_any_element();
+            return div().h(px(1.)).bg(tokens.border).into_any_element();
         }
         let highlights = self.spans.iter().map(|(range, style)| {
             (
@@ -145,10 +146,10 @@ impl Block {
                         .links
                         .iter()
                         .any(|(link, _)| link == range)
-                        .then_some(tokens.accent.into()),
+                        .then_some(tokens.accent_text.into()),
                     font_weight: style.strong.then_some(FontWeight::SEMIBOLD),
                     font_style: style.emphasis.then_some(FontStyle::Italic),
-                    background_color: style.code.then_some(tokens.fill.into()),
+                    background_color: style.code.then_some(tokens.surface_2.into()),
                     ..Default::default()
                 },
             )
@@ -176,10 +177,11 @@ impl Block {
                 el.text_base()
             })
             .when(matches!(self.kind, Kind::Code), |el| {
-                el.font_family("monospace")
-                    .p(px(10.))
-                    .rounded(px(6.))
-                    .bg(tokens.fill)
+                el.font_family(plume_ui::FONT_MONO)
+                    .text_size(px(12.5))
+                    .p(px(12.))
+                    .rounded(px(12.))
+                    .bg(tokens.surface_2)
             })
             .child(text);
         div()
@@ -189,7 +191,9 @@ impl Block {
             .gap(px(8.))
             .pl(px(self.depth as f32 * 14.))
             .when(self.quote, |el| {
-                el.border_l_2().border_color(tokens.hairline).pl(px(12.))
+                el.border_l_2()
+                    .border_color(tokens.border_strong)
+                    .pl(px(12.))
             })
             .children(self.prefix.as_ref().map(|prefix| {
                 div()

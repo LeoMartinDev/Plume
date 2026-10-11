@@ -1,13 +1,15 @@
 use super::i18n::tr;
-use super::view::{settings_divider, settings_group, settings_row};
+use super::view::{
+    menu_option, menu_panel, row_label, select_trigger, settings_divider, settings_group,
+    settings_row,
+};
 use super::SettingsView;
 use crate::prefs::{InterfaceLanguage, LanguagePref};
-use gpui::{
-    anchored, deferred, div, prelude::*, px, svg, AnyElement, Context, FontWeight, SharedString,
-    Window,
-};
+use gpui::{anchored, deferred, div, prelude::*, px, AnyElement, Context, SharedString, Window};
 use plume_ui::Tokens;
 use std::sync::OnceLock;
+
+const SELECT_WIDTH: f32 = 168.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LanguageMenu {
@@ -175,78 +177,56 @@ fn language_row(
     let selected = menu.selected(view);
     let open = enabled && view.language_menu == Some(menu);
     let focus_index = menu.focus_index();
+    let (title, detail) = match menu {
+        LanguageMenu::Interface => ("language.interface", "settings.language.interface_detail"),
+        LanguageMenu::Dictation => ("language.dictation", "settings.language.dictation_detail"),
+    };
     settings_row()
-        .child(div().flex_1().min_w_0().text_sm().child(tr(match menu {
-            LanguageMenu::Interface => "language.interface",
-            LanguageMenu::Dictation => "language.dictation",
-        })))
+        .child(row_label(tokens, tr(title), Some(tr(detail))))
         .child(
             div()
                 .id(menu.id())
                 .relative()
-                .w(px(196.))
                 .flex_shrink_0()
                 .child(
-                    div()
-                        .id(SharedString::from(format!("{}-select", menu.id())))
-                        .track_focus(&view.language_focus[focus_index])
-                        .h(px(32.))
-                        .px(px(10.))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .rounded(px(6.))
-                        .border_1()
-                        .border_color(tokens.hairline)
-                        .bg(tokens.fill)
-                        .text_sm()
-                        .when(!enabled, |el| el.opacity(0.5))
-                        .when(enabled, |el| {
-                            el.tab_index(0)
-                                .cursor_pointer()
-                                .hover(|style| style.bg(tokens.fill_hover))
-                                .on_click(cx.listener(move |view, _, window, cx| {
-                                    window.focus(&view.language_focus[focus_index]);
-                                    if open {
-                                        view.language_menu = None;
-                                        cx.notify();
-                                    } else {
-                                        view.open_language_menu(menu, cx);
-                                    }
-                                }))
-                                .on_key_down(cx.listener(
-                                    move |view, event: &gpui::KeyDownEvent, window, cx| {
-                                        view.language_key(
-                                            menu,
-                                            event.keystroke.key.as_str(),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                ))
-                        })
-                        .child(selected.label())
-                        .child(
-                            svg()
-                                .path("fluent/chevron-down.svg")
-                                .size(px(14.))
-                                .text_color(tokens.muted),
-                        ),
+                    select_trigger(
+                        tokens,
+                        SharedString::from(format!("{}-select", menu.id())),
+                        selected.label(),
+                        SELECT_WIDTH,
+                        enabled,
+                    )
+                    .track_focus(&view.language_focus[focus_index])
+                    .when(enabled, |el| {
+                        el.tab_index(0)
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                window.focus(&view.language_focus[focus_index]);
+                                if open {
+                                    view.language_menu = None;
+                                    cx.notify();
+                                } else {
+                                    view.open_language_menu(menu, cx);
+                                }
+                            }))
+                            .on_key_down(cx.listener(
+                                move |view, event: &gpui::KeyDownEvent, window, cx| {
+                                    view.language_key(
+                                        menu,
+                                        event.keystroke.key.as_str(),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            ))
+                    }),
                 )
                 .when(open, |el| {
                     el.child(
-                        div().absolute().top(px(36.)).left_0().child(
+                        div().absolute().top(px(38.)).left_0().child(
                             deferred(
                                 anchored().snap_to_window().child(
-                                    div()
+                                    menu_panel(tokens, SELECT_WIDTH)
                                         .id(SharedString::from(format!("{}-menu", menu.id())))
-                                        .w(px(196.))
-                                        .p(px(4.))
-                                        .rounded(px(7.))
-                                        .border_1()
-                                        .border_color(tokens.hairline)
-                                        .bg(tokens.elevated)
-                                        .shadow_md()
                                         .on_mouse_down_out(cx.listener(move |view, _, _, cx| {
                                             if view.language_menu == Some(menu) {
                                                 view.language_menu = None;
@@ -267,52 +247,21 @@ fn language_row(
                                                 .children(
                                                     menu.choices().iter().copied().enumerate().map(
                                                         |(index, choice)| {
-                                                            div()
-                                                                .id(SharedString::from(format!(
+                                                            menu_option(
+                                                                tokens,
+                                                                SharedString::from(format!(
                                                                     "{}-{index}",
                                                                     menu.id()
-                                                                )))
-                                                                .h(px(32.))
-                                                                .flex_shrink_0()
-                                                                .px(px(8.))
-                                                                .flex()
-                                                                .items_center()
-                                                                .justify_between()
-                                                                .rounded(px(5.))
-                                                                .text_sm()
-                                                                .cursor_pointer()
-                                                                .when(
-                                                                    index
-                                                                        == view.language_menu_index,
-                                                                    |el| el.bg(tokens.fill),
-                                                                )
-                                                                .when(choice == selected, |el| {
-                                                                    el.font_weight(
-                                                                        FontWeight::MEDIUM,
-                                                                    )
-                                                                })
-                                                                .hover(|style| {
-                                                                    style.bg(tokens.fill_hover)
-                                                                })
-                                                                .on_click(cx.listener(
-                                                                    move |view, _, _, cx| {
-                                                                        view.choose_language(
-                                                                            choice, cx,
-                                                                        )
-                                                                    },
-                                                                ))
-                                                                .child(choice.label())
-                                                                .children(
-                                                                    (choice == selected).then(
-                                                                        || {
-                                                                            div()
-                                                                                .text_color(
-                                                                                    tokens.accent,
-                                                                                )
-                                                                                .child("✓")
-                                                                        },
-                                                                    ),
-                                                                )
+                                                                )),
+                                                                choice.label(),
+                                                                choice == selected,
+                                                                index == view.language_menu_index,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                move |view, _, _, cx| {
+                                                                    view.choose_language(choice, cx)
+                                                                },
+                                                            ))
                                                         },
                                                     ),
                                                 ),
@@ -330,11 +279,6 @@ fn language_row(
 pub(super) fn compatibility_warning(view: &SettingsView, tokens: &Tokens) -> Option<AnyElement> {
     let prefs = view.phase.prefs();
     (!prefs.model.supports(prefs.language())).then(|| {
-        div()
-            .mt(px(12.))
-            .text_sm()
-            .text_color(tokens.muted)
-            .child(tr("models.language_incompatible"))
-            .into_any_element()
+        super::view::error_text(tokens, "models.language_incompatible".into()).into_any_element()
     })
 }

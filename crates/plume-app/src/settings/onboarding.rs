@@ -1,12 +1,14 @@
 use crate::settings::i18n::tr;
 use gpui::{
-    div, prelude::*, px, relative, svg, Animation, AnimationExt, AnyElement, Context, FontWeight,
-    SharedString, Window,
+    canvas, div, fill, prelude::*, px, relative, svg, Animation, AnimationExt, AnyElement, Context,
+    FontWeight, SharedString, Window,
 };
 use plume_engine::Engine;
 use plume_overlay::Feedback;
 use plume_session::{PreviewEvent, SessionMode};
-use plume_ui::Tokens;
+use plume_ui::{eyebrow, keycaps, Button, ButtonSize, KeySize, Tokens, FONT_MONO, FONT_SANS};
+
+use super::view::{display_title, error_text, prose};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
@@ -419,6 +421,13 @@ impl SettingsView {
     }
 }
 
+const STEPS: [(OnboardingStep, &str); 4] = [
+    (OnboardingStep::Languages, "onboarding.step.languages"),
+    (OnboardingStep::Model, "onboarding.step.model"),
+    (OnboardingStep::Shortcuts, "onboarding.step.shortcuts"),
+    (OnboardingStep::Permissions, "onboarding.step.try"),
+];
+
 pub(super) fn render(
     view: &SettingsView,
     tokens: &Tokens,
@@ -433,7 +442,8 @@ pub(super) fn render(
         .flex()
         .flex_col()
         .overflow_hidden()
-        .bg(tokens.chrome)
+        .bg(tokens.bg)
+        .font_family(FONT_SANS)
         .text_color(tokens.text)
         .when(!view.capture.is_listening(), |el| {
             el.track_focus(&view.hold_focus)
@@ -476,16 +486,6 @@ pub(super) fn render(
         });
     #[cfg(target_os = "macos")]
     let shell = shell.child(super::view::macos_titlebar(tokens));
-    let mut content = div()
-        .id("onboarding-panel")
-        .size_full()
-        .flex()
-        .flex_col()
-        .overflow_hidden()
-        .rounded(px(12.))
-        .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.content);
     let body = match step {
         OnboardingStep::Languages => languages_screen(view, tokens, cx),
         OnboardingStep::Model => model_screen(view, tokens, cx),
@@ -508,6 +508,7 @@ pub(super) fn render(
         OnboardingStep::Permissions => view.can_finish(),
     } && !view.is_busy()
         && view.save_error.is_none();
+    let downloads = step == OnboardingStep::Model && !setup.model_ready && !busy;
     let next_label = match step {
         OnboardingStep::Model if busy => tr("ui.preparing_progress"),
         OnboardingStep::Model if !setup.model_ready => {
@@ -523,135 +524,278 @@ pub(super) fn render(
         OnboardingStep::Permissions => tr("common.finish"),
         _ => tr("common.next"),
     };
-    content = content
+    let next = Button::new(*tokens, "onboarding-next", next_label)
+        .primary()
+        .size(ButtonSize::Large)
+        .enabled(next_enabled)
+        .map(|button| {
+            if downloads {
+                button.icon("ui/download.svg")
+            } else if step == OnboardingStep::Permissions {
+                button
+            } else {
+                button.trailing_icon("ui/arrow-right.svg")
+            }
+        })
+        .on_click(cx, move |view, _, cx| match step {
+            OnboardingStep::Languages => view.change_step(OnboardingStep::Model, cx),
+            OnboardingStep::Model if !view.onboarding.as_ref().unwrap().model_ready => {
+                view.download_model(cx)
+            }
+            OnboardingStep::Model => view.change_step(OnboardingStep::Shortcuts, cx),
+            OnboardingStep::Shortcuts => view.change_step(OnboardingStep::Permissions, cx),
+            OnboardingStep::Permissions => view.finish_setup(cx),
+        });
+    let back = (step != OnboardingStep::Languages).then(|| {
+        Button::new(*tokens, "onboarding-back", tr("common.back"))
+            .ghost()
+            .size(ButtonSize::Large)
+            .icon("ui/arrow-left.svg")
+            .enabled(!view.is_busy() && !setup.session_starting)
+            .on_click(cx, move |view, _, cx| {
+                view.change_step(
+                    match step {
+                        OnboardingStep::Permissions => OnboardingStep::Shortcuts,
+                        OnboardingStep::Shortcuts => OnboardingStep::Model,
+                        _ => OnboardingStep::Languages,
+                    },
+                    cx,
+                )
+            })
+    });
+    let header = div()
+        .h(px(56.))
+        .flex_shrink_0()
+        .px(px(24.))
+        .flex()
+        .items_center()
         .child(
             div()
-                .id("onboarding-content")
                 .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .px(px(28.))
-                .py(px(28.))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_col()
-                        .justify_center()
-                        .child(body),
-                )
-                .children(
-                    view.capture
-                        .reject()
-                        .map(|error| super::view::error_text(tokens, error.to_string())),
-                )
-                .children(view.save_error.clone().map(|error| {
-                    div()
-                        .mt(px(12.))
-                        .child(super::view::error_text(tokens, error))
-                        .child(button(
-                            tokens,
-                            "onboarding-save-retry",
-                            tr("ui.retry_saving"),
-                            true,
-                            false,
-                            cx,
-                            |view, _, cx| {
-                                view.save_prefs();
-                                cx.notify();
-                            },
-                        ))
-                })),
-        )
-        .child(
-            div()
-                .h(px(58.))
-                .flex_shrink_0()
-                .px(px(28.))
                 .flex()
                 .items_center()
+                .gap(px(9.))
+                .text_size(px(15.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(super::view::brand_mark(tokens, 24.))
+                .child("Plume"),
+        )
+        .child(step_island(step, tokens))
+        .child(div().flex_1());
+    let content = div()
+        .id("onboarding-content")
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .px(px(32.))
+        .py(px(12.))
+        .child(
+            div()
+                .flex_1()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .child(body),
+        )
+        .children(view.capture.reject().map(|error| {
+            div()
+                .mt(px(12.))
+                .child(error_text(tokens, error.to_string()))
+        }))
+        .children(view.save_error.clone().map(|error| {
+            div()
+                .mt(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(div().flex_1().child(error_text(tokens, error)))
                 .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .children((step != OnboardingStep::Languages).then(|| {
-                            button(
-                                tokens,
-                                "onboarding-back",
-                                tr("common.back"),
-                                !view.is_busy() && !setup.session_starting,
-                                false,
-                                cx,
-                                move |view, _, cx| {
-                                    view.change_step(
-                                        match step {
-                                            OnboardingStep::Permissions => {
-                                                OnboardingStep::Shortcuts
-                                            }
-                                            OnboardingStep::Shortcuts => OnboardingStep::Model,
-                                            _ => OnboardingStep::Languages,
-                                        },
-                                        cx,
-                                    )
-                                },
-                            )
-                        })),
+                    Button::new(*tokens, "onboarding-save-retry", tr("ui.retry_saving"))
+                        .size(ButtonSize::Small)
+                        .on_click(cx, |view, _, cx| {
+                            view.save_prefs();
+                            cx.notify();
+                        }),
                 )
-                .child(progress_indicator(step, tokens))
-                .child(div().flex_1().flex().justify_end().child(button(
-                    tokens,
-                    "onboarding-next",
-                    next_label,
-                    next_enabled,
-                    true,
-                    cx,
-                    move |view, _, cx| match step {
-                        OnboardingStep::Languages => view.change_step(OnboardingStep::Model, cx),
-                        OnboardingStep::Model if !view.onboarding.as_ref().unwrap().model_ready => {
-                            view.download_model(cx)
-                        }
-                        OnboardingStep::Model => view.change_step(OnboardingStep::Shortcuts, cx),
-                        OnboardingStep::Shortcuts => {
-                            view.change_step(OnboardingStep::Permissions, cx)
-                        }
-                        OnboardingStep::Permissions => view.finish_setup(cx),
-                    },
-                ))),
-        );
+        }));
+    let footer = div()
+        .h(px(72.))
+        .flex_shrink_0()
+        .px(px(24.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .border_t_1()
+        .border_color(tokens.border)
+        .child(div().children(back))
+        .child(next);
     shell
-        .child(div().flex_1().min_h_0().p(px(8.)).child(content))
+        .child(header)
+        .child(content)
+        .child(footer)
         .into_any_element()
 }
 
-fn progress_indicator(step: OnboardingStep, tokens: &Tokens) -> AnyElement {
+/// The steps in a floating pill, like the website's navbar island.
+fn step_island(step: OnboardingStep, tokens: &Tokens) -> AnyElement {
+    let current = STEPS
+        .iter()
+        .position(|(item, _)| *item == step)
+        .unwrap_or(0);
     div()
         .id("onboarding-progress")
         .flex()
         .items_center()
-        .gap(px(6.))
-        .children(
-            [
-                OnboardingStep::Languages,
-                OnboardingStep::Model,
-                OnboardingStep::Shortcuts,
-                OnboardingStep::Permissions,
-            ]
-            .into_iter()
-            .map(|item| {
-                let active = item == step;
-                div()
-                    .h(px(6.))
-                    .w(px(if active { 18. } else { 6. }))
-                    .rounded_full()
-                    .bg(if active {
-                        tokens.accent
-                    } else {
-                        tokens.hairline
-                    })
-            }),
+        .gap(px(2.))
+        .p(px(4.))
+        .rounded_full()
+        .border_1()
+        .border_color(tokens.border_strong)
+        .bg(tokens.island)
+        .shadow(tokens.float())
+        .text_size(px(12.5))
+        .children(STEPS.iter().enumerate().map(|(index, (_, name))| {
+            let item = div()
+                .h(px(28.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(7.))
+                .rounded_full();
+            if index < current {
+                item.text_color(tokens.muted)
+                    .child(
+                        svg()
+                            .path("ui/check.svg")
+                            .size(px(11.))
+                            .text_color(tokens.accent_text),
+                    )
+                    .child(tr(name))
+            } else {
+                let active = index == current;
+                // One line of text with two runs, so the number and the name share a baseline.
+                let number = format!("{:02} ", index + 1);
+                let name = tr(name);
+                let mut name_font = gpui::font(FONT_SANS);
+                if active {
+                    name_font.weight = FontWeight::MEDIUM;
+                }
+                let run = |len, font, color: gpui::Rgba| gpui::TextRun {
+                    len,
+                    font,
+                    color: color.into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let runs = vec![
+                    run(
+                        number.len(),
+                        gpui::font(FONT_MONO),
+                        if active {
+                            tokens.accent_text
+                        } else {
+                            tokens.faint
+                        },
+                    ),
+                    run(
+                        name.len(),
+                        name_font,
+                        if active { tokens.text } else { tokens.faint },
+                    ),
+                ];
+                item.when(active, |el| el.bg(tokens.hover))
+                    .child(gpui::StyledText::new(format!("{number}{name}")).with_runs(runs))
+            }
+        }))
+        .into_any_element()
+}
+
+fn step_eyebrow(step: OnboardingStep, tokens: &Tokens) -> impl IntoElement {
+    let index = STEPS
+        .iter()
+        .position(|(item, _)| *item == step)
+        .unwrap_or(0);
+    eyebrow(
+        tr("onboarding.eyebrow")
+            .replace("{step}", &format!("{:02}", index + 1))
+            .replace("{name}", tr(STEPS[index].1)),
+        tokens.accent_text,
+    )
+}
+
+/// Eyebrow and two-line title on the left, a short lead on the right.
+fn step_heading(
+    step: OnboardingStep,
+    tokens: &Tokens,
+    headline: &str,
+    serif: &str,
+    lead: Option<&str>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .items_end()
+        .justify_between()
+        .gap(px(24.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(step_eyebrow(step, tokens))
+                .child(display_title(tokens, headline, serif, 28.)),
+        )
+        .children(lead.map(|lead| {
+            div()
+                .max_w(px(240.))
+                .text_size(px(13.))
+                .line_height(px(19.5))
+                .text_color(tokens.muted)
+                .child(prose(lead))
+        }))
+}
+
+fn languages_screen(
+    view: &SettingsView,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(32.))
+        .px(px(8.))
+        .child(
+            div()
+                .w(px(270.))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(step_eyebrow(OnboardingStep::Languages, tokens))
+                .child(display_title(
+                    tokens,
+                    tr("onboarding.languages.headline"),
+                    tr("onboarding.languages.serif"),
+                    30.,
+                ))
+                .child(
+                    div()
+                        .mt(px(4.))
+                        .text_size(px(14.))
+                        .line_height(px(21.))
+                        .text_color(tokens.muted)
+                        .child(prose(tr("onboarding.languages.description"))),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(super::languages::language_choices(view, tokens, cx)),
         )
         .into_any_element()
 }
@@ -666,196 +810,225 @@ fn model_screen(
     let mut body = div()
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .gap(px(18.))
+        .child(step_heading(
+            OnboardingStep::Model,
+            tokens,
+            tr("onboarding.model.headline"),
+            tr("onboarding.model.serif"),
+            None,
+        ))
         .child(
-            div()
-                .flex()
-                .gap(px(12.))
-                .children(CHOICES.into_iter().enumerate().map(|(index, id)| {
-                    let entry = id.entry();
-                    let supported = id.supports(view.phase.prefs().language());
-                    let chosen = selected == id;
-                    let nvidia = id == ModelId::Nemotron35Compact;
-                    div()
-                        .id(SharedString::from(format!(
-                            "onboarding-model-{}",
-                            id.as_str()
-                        )))
-                        .flex_1()
-                        .min_w_0()
-                        .h(px(292.))
-                        .p(px(16.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(18.))
-                        .rounded(px(10.))
-                        .border_1()
-                        .border_color(if chosen {
-                            tokens.accent
-                        } else {
-                            tokens.hairline
-                        })
-                        .bg(if chosen {
-                            tokens.accent_soft
-                        } else {
-                            tokens.group
-                        })
-                        .when((busy && !chosen) || !supported, |el| el.opacity(0.5))
-                        .when(!busy && supported, |el| {
-                            el.cursor_pointer()
-                                .tab_index(0)
-                                .hover(move |style| {
-                                    style.border_color(if chosen {
-                                        tokens.accent
-                                    } else {
-                                        tokens.muted
-                                    })
-                                })
-                                .on_click(
-                                    cx.listener(move |view, _, _, cx| view.select_model(id, cx)),
-                                )
-                                .on_key_down(cx.listener(
-                                    move |view, event: &gpui::KeyDownEvent, window, cx| {
-                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                                            && !event.is_held
-                                        {
-                                            cx.stop_propagation();
-                                            window.prevent_default();
-                                            view.select_model(id, cx);
-                                        }
-                                    },
-                                ))
-                        })
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child([tr("ui.small"), tr("ui.medium"), tr("ui.large")][index]),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .gap(px(10.))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(
-                                            svg()
-                                                .path(if nvidia {
-                                                    "labs/nvidia.svg"
-                                                } else {
-                                                    "labs/openai.svg"
-                                                })
-                                                .size(px(24.))
-                                                .text_color(tokens.text),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(tokens.muted)
-                                                .child(if nvidia { "NVIDIA" } else { "OpenAI" }),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .h(px(40.))
-                                        .text_sm()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(entry.name),
-                                )
-                                .child(div().text_xs().text_color(tokens.muted).child(entry.size)),
-                        )
-                        .child(if busy && chosen {
-                            model_download_progress(&view.phase, tokens)
-                        } else {
-                            div()
-                                .h(px(76.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(super::model::spec_meter(
-                                    tr("ui.speed"),
-                                    entry.speed,
-                                    tokens,
-                                ))
-                                .child(super::model::spec_meter(
-                                    tr("ui.accuracy"),
-                                    entry.accuracy,
-                                    tokens,
-                                ))
-                                .child(div().flex_1())
-                                .child(div().h(px(16.)).text_xs().text_color(tokens.muted).child(
-                                    if !supported {
-                                        tr("ui.language_not_supported")
-                                    } else if nvidia {
-                                        tr("ui.recommended")
-                                    } else {
-                                        ""
-                                    },
-                                ))
-                                .into_any_element()
-                        })
-                })),
+            div().flex().gap(px(12.)).children(
+                CHOICES
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, id)| model_card(view, tokens, index, id, selected, busy, cx)),
+            ),
         );
     if !CHOICES.contains(&selected) {
-        body = body.child(div().text_xs().text_color(tokens.muted).child(format!(
-            "{} {}",
-            tr("ui.current_model"),
-            selected.entry().name
-        )));
+        body = body.child(
+            div()
+                .text_size(px(12.5))
+                .text_color(tokens.subtle)
+                .child(format!(
+                    "{} {}",
+                    tr("ui.current_model"),
+                    selected.entry().name
+                )),
+        );
     }
     // A legacy selection (e.g. Whisper Small) has no card in this grid.
     if busy && !CHOICES.contains(&selected) {
-        body = body.child(model_download_progress(&view.phase, tokens));
+        body = body.child(model_download_progress(&view.phase, tokens, false));
     }
     if let AppPhase::Onboarding {
         status: OnboardStatus::Failed { reason },
         ..
     } = &view.phase
     {
-        body = body.child(super::view::error_text(tokens, reason.clone()));
+        body = body.child(error_text(tokens, reason.clone()));
     }
     if let AppPhase::Onboarding {
         warning: Some(warning),
         ..
     } = &view.phase
     {
-        body = body.child(super::view::error_text(tokens, warning.clone()));
+        body = body.child(error_text(tokens, warning.clone()));
     }
     body.children(super::languages::compatibility_warning(view, tokens))
         .into_any_element()
 }
 
-fn languages_screen(
+/// One model. The chosen card inverts, like the website's highlighted feature card.
+fn model_card(
     view: &SettingsView,
     tokens: &Tokens,
+    index: usize,
+    id: ModelId,
+    selected: ModelId,
+    busy: bool,
     cx: &mut Context<SettingsView>,
-) -> AnyElement {
+) -> impl IntoElement {
+    let entry = id.entry();
+    let supported = id.supports(view.phase.prefs().language());
+    let chosen = selected == id;
+    let nvidia = id == ModelId::Nemotron35Compact;
+    let (fg, soft) = if chosen {
+        (tokens.invert_fg, tokens.invert_muted)
+    } else {
+        (tokens.text, tokens.subtle)
+    };
+    let tokens_ = *tokens;
     div()
+        .id(SharedString::from(format!(
+            "onboarding-model-{}",
+            id.as_str()
+        )))
+        .flex_1()
+        .min_w_0()
+        .h(px(228.))
+        .pt(px(16.))
+        .px(px(16.))
+        .pb(px(18.))
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .rounded(px(20.))
+        .border_1()
+        .border_color(if chosen {
+            tokens.invert_bg
+        } else {
+            tokens.border
+        })
+        .bg(if chosen {
+            tokens.invert_bg
+        } else {
+            tokens.surface
+        })
+        .text_color(fg)
+        .when((busy && !chosen) || !supported, |el| el.opacity(0.45))
+        .when(!busy && supported, |el| {
+            el.cursor_pointer()
+                .tab_index(0)
+                .when(!chosen, |el| {
+                    el.hover(move |style| style.border_color(tokens_.faint))
+                })
+                .on_click(cx.listener(move |view, _, _, cx| view.select_model(id, cx)))
+                .on_key_down(
+                    cx.listener(move |view, event: &gpui::KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                            && !event.is_held
+                        {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            view.select_model(id, cx);
+                        }
+                    }),
+                )
+        })
         .child(
             div()
-                .text_lg()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .px(px(10.))
+                        .py(px(4.))
+                        .rounded_full()
+                        .bg(if chosen {
+                            tokens.invert_chip
+                        } else {
+                            tokens.surface_2
+                        })
+                        .text_size(px(12.))
+                        .text_color(if chosen {
+                            tokens.invert_fg
+                        } else {
+                            tokens.muted
+                        })
+                        .child(if nvidia {
+                            tr("ui.recommended")
+                        } else {
+                            [tr("ui.small"), tr("ui.medium"), tr("ui.large")][index]
+                        }),
+                )
+                .child(
+                    div()
+                        .size(px(18.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .when(chosen, |el| {
+                            el.bg(tokens.invert_fg).child(
+                                svg()
+                                    .path("ui/check.svg")
+                                    .size(px(10.))
+                                    .text_color(tokens.invert_bg),
+                            )
+                        })
+                        .when(!chosen, |el| {
+                            el.border_1().border_color(tokens.border_strong)
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .mt(px(18.))
+                .font_family(FONT_MONO)
+                .text_size(px(11.))
+                .text_color(soft)
+                .child(if nvidia { "NVIDIA" } else { "OPENAI" }),
+        )
+        .child(
+            div()
+                .mt(px(4.))
+                .min_h(px(42.))
+                .text_size(px(18.))
+                .line_height(px(21.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(tr("onboarding.languages.title")),
+                .child(entry.name),
         )
         .child(
             div()
-                .text_sm()
-                .text_color(tokens.muted)
-                .child(tr("onboarding.languages.description")),
+                .mt(px(6.))
+                .font_family(FONT_MONO)
+                .text_size(px(12.))
+                .text_color(soft)
+                .child(entry.size),
         )
-        .child(super::languages::language_choices(view, tokens, cx))
-        .into_any_element()
+        .child(div().flex_1())
+        .child(if busy && chosen {
+            model_download_progress(&view.phase, tokens, true)
+        } else if !supported {
+            div()
+                .text_size(px(12.))
+                .text_color(soft)
+                .child(tr("ui.language_not_supported"))
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(super::model::spec_meter(
+                    tr("ui.speed"),
+                    entry.speed,
+                    tokens,
+                    chosen,
+                ))
+                .child(super::model::spec_meter(
+                    tr("ui.accuracy"),
+                    entry.accuracy,
+                    tokens,
+                    chosen,
+                ))
+                .into_any_element()
+        })
 }
 
-fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
+fn model_download_progress(phase: &AppPhase, tokens: &Tokens, inverted: bool) -> AnyElement {
     let progress = match phase {
         AppPhase::Onboarding {
             status: OnboardStatus::Fetching { last },
@@ -892,7 +1065,12 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
         },
         None => tr("ui.getting_ready_to_transcribe").into(),
     };
-    let fill = div().h_full().rounded_full().bg(tokens.accent);
+    let (bar, track, soft) = if inverted {
+        (tokens.invert_fg, tokens.invert_track, tokens.invert_muted)
+    } else {
+        (tokens.accent, tokens.track, tokens.subtle)
+    };
+    let fill = div().h_full().rounded_full().bg(bar);
     let fill = if let Some(fraction) = fraction {
         fill.w(relative(fraction)).into_any_element()
     } else {
@@ -906,24 +1084,21 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
     };
     div()
         .id("onboarding-model-download")
-        .h(px(76.))
         .w_full()
         .flex()
         .flex_col()
-        .justify_end()
         .gap(px(8.))
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_between()
-                .text_xs()
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(12.))
                 .child(label)
                 .children(fraction.map(|fraction| {
                     div()
-                        .text_color(tokens.accent)
-                        .child(format!("{:.0}%", fraction * 100.))
+                        .font_family(FONT_MONO)
+                        .child(format!("{:.0} %", fraction * 100.))
                 })),
         )
         .child(
@@ -932,7 +1107,7 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
                 .flex_shrink_0()
                 .rounded_full()
                 .overflow_hidden()
-                .bg(tokens.hairline)
+                .bg(track)
                 .child(fill),
         )
         .child(
@@ -941,8 +1116,9 @@ fn model_download_progress(phase: &AppPhase, tokens: &Tokens) -> AnyElement {
                 .items_center()
                 .justify_between()
                 .gap(px(8.))
+                .font_family(FONT_MONO)
                 .text_size(px(11.))
-                .text_color(tokens.muted)
+                .text_color(soft)
                 .child(div().child(detail))
                 .children(
                     progress
@@ -961,11 +1137,18 @@ fn shortcuts_screen(
     div()
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .gap(px(20.))
+        .child(step_heading(
+            OnboardingStep::Shortcuts,
+            tokens,
+            tr("onboarding.shortcuts.headline"),
+            tr("onboarding.shortcuts.serif"),
+            Some(tr("onboarding.shortcuts.lead")),
+        ))
         .child(
             div()
                 .flex()
-                .gap(px(16.))
+                .gap(px(12.))
                 .child(shortcut_card(view, tokens, false, cx))
                 .child(shortcut_card(view, tokens, true, cx)),
         )
@@ -973,7 +1156,7 @@ fn shortcuts_screen(
             view.onboarding
                 .as_ref()
                 .and_then(|setup| setup.session_error.clone())
-                .map(|error| super::view::error_text(tokens, error)),
+                .map(|error| error_text(tokens, error)),
         )
         .into_any_element()
 }
@@ -986,17 +1169,50 @@ fn shortcut_card(
 ) -> AnyElement {
     let listening = view.capture.is_listening() && view.capture_toggle == toggle;
     let shortcut = if toggle {
-        view.phase.prefs().toggle().unwrap_or(tr("ui.disabled"))
+        view.phase.prefs().toggle()
     } else {
-        view.phase.prefs().hold()
+        Some(view.phase.prefs().hold())
     };
-    let label = if listening {
-        view.capture
-            .preview()
-            .unwrap_or(tr("ui.press_keys_progress"))
-            .to_string()
+    let keys = if listening {
+        div()
+            .h(px(44.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .rounded_full()
+            .bg(tokens.highlight)
+            .border_1()
+            .border_color(tokens.accent_ring)
+            .text_size(px(13.5))
+            .text_color(tokens.accent_text)
+            .child(
+                div()
+                    .size(px(8.))
+                    .rounded_full()
+                    .bg(tokens.accent)
+                    .with_animation(
+                        "onboarding-capture-pulse",
+                        Animation::new(Duration::from_millis(1600)).repeat(),
+                        |el, delta| el.opacity(1. - 0.6 * (delta * std::f32::consts::PI).sin()),
+                    ),
+            )
+            .child(SharedString::from(
+                view.capture
+                    .preview()
+                    .unwrap_or(tr("ui.press_keys_progress"))
+                    .to_string(),
+            ))
+            .into_any_element()
     } else {
-        pretty(shortcut)
+        match shortcut {
+            Some(shortcut) => keycaps(tokens, shortcut, KeySize::Large),
+            None => div()
+                .text_size(px(14.))
+                .text_color(tokens.subtle)
+                .child(tr("ui.disabled"))
+                .into_any_element(),
+        }
     };
     div()
         .id(if toggle {
@@ -1006,157 +1222,103 @@ fn shortcut_card(
         })
         .flex_1()
         .min_w_0()
-        .h(px(232.))
-        .p(px(24.))
+        .h(px(236.))
+        .pt(px(22.))
+        .px(px(20.))
+        .pb(px(16.))
         .flex()
         .flex_col()
-        .items_center()
-        .gap(px(10.))
-        .rounded(px(10.))
+        .rounded(px(20.))
         .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.group)
+        .border_color(if listening {
+            tokens.accent
+        } else {
+            tokens.border
+        })
+        .bg(tokens.surface)
         .when(listening, |el| {
-            el.track_focus(&view.hold_focus)
+            el.shadow(tokens.ring())
+                .track_focus(&view.hold_focus)
                 .on_key_down(cx.listener(SettingsView::on_hold_key))
                 .on_key_up(cx.listener(SettingsView::on_hold_key_up))
                 .on_modifiers_changed(cx.listener(SettingsView::on_hold_modifiers))
         })
         .child(
             div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
+                .h(px(64.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .child(keys),
+        )
+        .child(
+            div()
+                .mt(px(16.))
+                .text_size(px(19.))
+                .font_weight(FontWeight::SEMIBOLD)
                 .child(if toggle {
                     tr("ui.hands_free")
                 } else {
                     tr("ui.push_to_talk")
                 }),
         )
-        .child(div().text_xs().text_color(tokens.muted).child(if toggle {
-            tr("ui.press_to_start_and_stop")
-        } else {
-            tr("ui.hold_to_speak")
-        }))
-        .child(div().flex_1())
         .child(
             div()
-                .id(if toggle {
-                    "onboarding-toggle-change"
+                .mt(px(5.))
+                .min_h(px(39.))
+                .text_size(px(13.))
+                .line_height(px(19.5))
+                .text_color(tokens.muted)
+                .child(prose(if toggle {
+                    tr("onboarding.shortcuts.toggle_text")
                 } else {
-                    "onboarding-hold-change"
-                })
-                .w_full()
-                .min_h(px(64.))
-                .px(px(4.))
-                .py(px(8.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(if listening {
-                    tokens.accent
-                } else {
-                    tokens.group
-                })
-                .bg(tokens.group)
-                .text_sm()
-                .text_center()
-                .cursor_pointer()
-                .hover(|style| style.bg(tokens.fill))
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.edit_onboarding_shortcut(toggle, window, cx);
-                }))
-                .when(!view.capture.is_listening(), |el| {
-                    el.tab_index(0).on_key_down(cx.listener(
-                        move |view, event: &gpui::KeyDownEvent, window, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                                && !event.is_held
-                            {
-                                cx.stop_propagation();
-                                window.prevent_default();
-                                view.edit_onboarding_shortcut(toggle, window, cx);
-                            }
-                        },
-                    ))
-                })
-                .child(if listening {
-                    div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child(SharedString::from(label))
-                        .into_any_element()
-                } else {
-                    shortcut_keys(shortcut, tokens)
-                }),
+                    tr("onboarding.shortcuts.hold_text")
+                })),
         )
         .child(div().flex_1())
         .child(
             div()
-                .id(if toggle {
-                    "onboarding-toggle-reset"
-                } else {
-                    "onboarding-hold-reset"
-                })
-                .h(px(24.))
-                .px(px(8.))
+                .mt(px(16.))
                 .flex()
                 .items_center()
-                .text_xs()
-                .text_color(tokens.muted)
-                .cursor_pointer()
-                .tab_index(0)
-                .hover(|style| style.text_color(tokens.text))
-                .on_click(cx.listener(move |view, _, window, cx| {
-                    view.capture_toggle = toggle;
-                    view.reset_hold(window, cx);
-                }))
-                .on_key_down(
-                    cx.listener(move |view, event: &gpui::KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                            && !event.is_held
-                        {
-                            cx.stop_propagation();
-                            window.prevent_default();
-                            view.capture_toggle = toggle;
-                            view.reset_hold(window, cx);
-                        }
+                .gap(px(4.))
+                .child(
+                    Button::new(
+                        *tokens,
+                        if toggle {
+                            "onboarding-toggle-change"
+                        } else {
+                            "onboarding-hold-change"
+                        },
+                        if listening {
+                            tr("common.cancel")
+                        } else {
+                            tr("ui.change")
+                        },
+                    )
+                    .size(ButtonSize::Small)
+                    .on_click(cx, move |view, window, cx| {
+                        view.edit_onboarding_shortcut(toggle, window, cx);
                     }),
                 )
-                .child(tr("ui.reset")),
+                .child(
+                    Button::new(
+                        *tokens,
+                        if toggle {
+                            "onboarding-toggle-reset"
+                        } else {
+                            "onboarding-hold-reset"
+                        },
+                        tr("ui.reset"),
+                    )
+                    .ghost()
+                    .size(ButtonSize::Small)
+                    .on_click(cx, move |view, window, cx| {
+                        view.capture_toggle = toggle;
+                        view.reset_hold(window, cx);
+                    }),
+                ),
         )
-        .into_any_element()
-}
-
-fn shortcut_keys(shortcut: &str, tokens: &Tokens) -> AnyElement {
-    div()
-        .flex()
-        .flex_wrap()
-        .justify_center()
-        .items_center()
-        .gap(px(6.))
-        .children(shortcut.split('+').map(|key| {
-            let label = match key.trim() {
-                "Super" if cfg!(target_os = "macos") => "⌘",
-                "Ctrl" if cfg!(target_os = "macos") => "⌃",
-                "Alt" if cfg!(target_os = "macos") => "⌥",
-                "Shift" if cfg!(target_os = "macos") => "⇧",
-                key => key,
-            };
-            div()
-                .min_w(px(34.))
-                .h(px(38.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(tokens.hairline)
-                .bg(tokens.content)
-                .text_sm()
-                .child(SharedString::from(label.to_string()))
-        }))
         .into_any_element()
 }
 
@@ -1176,6 +1338,15 @@ impl SettingsView {
     }
 }
 
+/// What the bubble on the test stage shows.
+#[derive(Clone, Copy, PartialEq)]
+enum StagePill {
+    Idle,
+    Listening,
+    Thinking,
+    Done,
+}
+
 fn permissions_screen(
     view: &SettingsView,
     tokens: &Tokens,
@@ -1183,16 +1354,11 @@ fn permissions_screen(
 ) -> AnyElement {
     let setup = view.onboarding.as_ref().unwrap();
     let ready = view.can_finish();
-    let microphone_label = if setup.microphone_checking {
-        tr("ui.checking_progress")
-    } else if setup.permissions.microphone == Permission::Denied {
-        tr("ui.settings")
-    } else {
-        tr("ui.allow")
-    };
-    let microphone_action = if setup.permissions.microphone == Permission::Granted {
+    let microphone = if setup.permissions.microphone == Permission::Granted {
         permission_allowed(
             tokens,
+            "ui/mic.svg",
+            tr("ui.microphone"),
             if setup.microphone_checking {
                 tr("ui.checking_progress")
             } else {
@@ -1200,118 +1366,61 @@ fn permissions_screen(
             },
         )
     } else {
-        button(
-            tokens,
+        let label = if setup.microphone_checking {
+            tr("ui.checking_progress")
+        } else if setup.permissions.microphone == Permission::Denied {
+            tr("ui.settings")
+        } else {
+            tr("ui.allow")
+        };
+        Button::new(
+            *tokens,
             "onboarding-microphone",
-            microphone_label,
+            format!("{} · {}", tr("ui.microphone"), label),
+        )
+        .size(ButtonSize::Small)
+        .icon("ui/mic.svg")
+        .enabled(
             !setup.microphone_checking
                 && setup.microphone_prompt.is_none()
                 && !view.is_busy()
                 && !view.settings_preview,
-            false,
-            cx,
-            |view, _, cx| {
-                let setup = view.onboarding.as_mut().unwrap();
-                if setup.permissions.microphone == Permission::NotRequested {
-                    setup.microphone_prompt = Some(permissions::request_microphone());
-                } else if setup.permissions.microphone == Permission::Denied {
-                    cx.open_url(permissions::microphone_settings_url());
-                }
-                setup.session_error = None;
-                setup.microphone_ready = false;
-                cx.notify();
-            },
         )
+        .on_click(cx, |view, _, cx| {
+            let setup = view.onboarding.as_mut().unwrap();
+            if setup.permissions.microphone == Permission::NotRequested {
+                setup.microphone_prompt = Some(permissions::request_microphone());
+            } else if setup.permissions.microphone == Permission::Denied {
+                cx.open_url(permissions::microphone_settings_url());
+            }
+            setup.session_error = None;
+            setup.microphone_ready = false;
+            cx.notify();
+        })
+        .into_any_element()
     };
-    let mut body = div().flex().flex_col().gap(px(12.)).child(
-        div()
-            .px(px(20.))
-            .py(px(12.))
-            .flex()
-            .flex_col()
-            .gap(px(5.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(tokens.hairline)
-            .bg(tokens.group)
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(tr("ui.permissions")),
+    let accessibility = cfg!(target_os = "macos").then(|| {
+        if setup.permissions.accessibility == Permission::Granted {
+            permission_allowed(
+                tokens,
+                "ui/check.svg",
+                tr("ui.accessibility"),
+                tr("ui.allowed"),
             )
-            .child(permission_row(
-                tokens,
-                tr("ui.microphone"),
-                svg()
-                    .path("fluent/mic.svg")
-                    .size(px(20.))
-                    .text_color(tokens.muted)
-                    .into_any_element(),
-                microphone_action,
-            ))
-            .when(cfg!(target_os = "macos"), |el| {
-                el.child(div().h(px(1.)).flex_shrink_0().bg(tokens.hairline))
-                    .child(permission_row(
-                        tokens,
-                        tr("ui.accessibility"),
-                        div()
-                            .size(px(20.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_sm()
-                            .text_color(tokens.muted)
-                            .child("⌘")
-                            .into_any_element(),
-                        if setup.permissions.accessibility == Permission::Granted {
-                            permission_allowed(tokens, tr("ui.allowed"))
-                        } else {
-                            button(
-                                tokens,
-                                "onboarding-accessibility",
-                                tr("ui.settings"),
-                                setup.permissions.accessibility != Permission::Granted
-                                    && !view.settings_preview,
-                                false,
-                                cx,
-                                |_, _, cx| cx.open_url(permissions::accessibility_settings_url()),
-                            )
-                        },
-                    ))
-            }),
-    );
-    if cfg!(target_os = "macos") && setup.permissions.accessibility != Permission::Granted {
-        body = body.child(
-            div()
-                .text_xs()
-                .text_color(tokens.muted)
-                .child(tr("onboarding.permissions.old_build")),
-        );
-    }
-    if let Some(error) = &setup.session_error {
-        body = body
-            .child(super::view::error_text(tokens, error.clone()))
-            .when(cfg!(target_os = "macos"), |el| {
-                el.child(div().text_xs().text_color(tokens.muted).child(tr(
-                    "Check Privacy & Security, then relaunch Plume if needed.",
-                )))
+        } else {
+            Button::new(
+                *tokens,
+                "onboarding-accessibility",
+                format!("{} · {}", tr("ui.accessibility"), tr("ui.settings")),
+            )
+            .size(ButtonSize::Small)
+            .enabled(!view.settings_preview)
+            .on_click(cx, |_, _, cx| {
+                cx.open_url(permissions::accessibility_settings_url())
             })
-            .child(button(
-                tokens,
-                "onboarding-service-retry",
-                tr("ui.check_again"),
-                !view.is_busy(),
-                false,
-                cx,
-                |view, _, cx| {
-                    let setup = view.onboarding.as_mut().unwrap();
-                    setup.session_error = None;
-                    setup.microphone_ready = false;
-                    cx.notify();
-                },
-            ));
-    }
+            .into_any_element()
+        }
+    });
     let status = match &setup.feedback {
         Feedback::Starting => tr("ui.opening_microphone_progress").to_string(),
         Feedback::RecordingNotice { .. } => tr("ui.listening_progress").into(),
@@ -1335,174 +1444,366 @@ fn permissions_screen(
         _ if setup.microphone_checking => tr("ui.checking_microphone_progress").into(),
         _ if !setup.model_ready => tr("ui.loading_model_progress").into(),
         _ if setup.session_starting => tr("ui.starting_shortcut_service_progress").into(),
-        _ if ready => tr("ui.hold_to_speak").into(),
+        _ if ready => format!(
+            "{} {}",
+            tr("onboarding.try.hold"),
+            view.phase
+                .prefs()
+                .hold()
+                .split('+')
+                .map(|key| plume_ui::key_label(key.trim()))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        ),
         _ if view.save_error.is_some() => tr("ui.save_settings_to_continue").into(),
         _ => tr("ui.preparing_dictation_progress").into(),
     };
-    let active = matches!(
-        setup.feedback,
-        Feedback::Starting
-            | Feedback::RecordingNotice { .. }
-            | Feedback::Transcribing
-            | Feedback::Cancelling
-    );
-    let idle_ready = ready && matches!(setup.feedback, Feedback::Empty | Feedback::NoSpeech);
-    body.child(
-        div()
-            .h(px(180.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .p(px(20.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(if active {
-                tokens.accent
-            } else {
-                tokens.hairline
-            })
-            .bg(tokens.group)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(tr("ui.try_dictation")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.muted)
-                            .child(tr("ui.optional")),
-                    ),
-            )
-            .child(if setup.transcript.is_empty() {
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(12.))
-                    .child(if idle_ready {
-                        shortcut_keys(view.phase.prefs().hold(), tokens)
-                    } else {
-                        svg()
-                            .path("fluent/mic.svg")
-                            .size(px(28.))
-                            .text_color(if active { tokens.accent } else { tokens.muted })
-                            .into_any_element()
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.muted)
-                            .text_center()
-                            .child(status),
-                    )
-                    .into_any_element()
-            } else {
-                div()
-                    .id("onboarding-test-transcript")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .text_sm()
-                    .child(setup.transcript.clone())
-                    .into_any_element()
-            }),
-    )
-    .into_any_element()
-}
-
-fn permission_row(
-    tokens: &Tokens,
-    title: &'static str,
-    icon: AnyElement,
-    action: AnyElement,
-) -> AnyElement {
-    div()
-        .h(px(32.))
+    let pill = match setup.feedback {
+        Feedback::Starting | Feedback::RecordingNotice { .. } => StagePill::Listening,
+        Feedback::Transcribing | Feedback::Cancelling => StagePill::Thinking,
+        Feedback::Success => StagePill::Done,
+        _ => StagePill::Idle,
+    };
+    let mut body = div()
         .flex()
-        .items_center()
-        .gap(px(10.))
-        .child(icon)
+        .flex_col()
+        .gap(px(18.))
         .child(
             div()
-                .flex_1()
-                .text_sm()
-                .text_color(tokens.muted)
-                .child(title),
-        )
-        .child(action)
-        .into_any_element()
-}
-
-fn permission_allowed(tokens: &Tokens, label: &'static str) -> AnyElement {
-    div()
-        .h(px(32.))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .text_xs()
-        .text_color(tokens.muted)
-        .child("✓")
-        .child(label)
-        .into_any_element()
-}
-
-fn pretty(shortcut: &str) -> String {
-    shortcut.split('+').collect::<Vec<_>>().join(" + ")
-}
-
-fn button(
-    tokens: &Tokens,
-    id: &'static str,
-    label: &'static str,
-    enabled: bool,
-    _primary: bool,
-    cx: &mut Context<SettingsView>,
-    handler: impl Fn(&mut SettingsView, &mut Window, &mut Context<SettingsView>) + 'static,
-) -> AnyElement {
-    let handler = std::rc::Rc::new(handler);
-    let click = handler.clone();
-    div()
-        .id(id)
-        .px(px(11.))
-        .h(px(32.))
-        .rounded(px(6.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_sm()
-        .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.fill)
-        .text_color(if enabled { tokens.text } else { tokens.muted })
-        .when(!enabled, |el| el.opacity(0.65))
-        .when(enabled, |el| {
-            el.cursor_pointer()
-                .tab_index(0)
-                .hover(|style| style.bg(tokens.fill_hover))
-                .active(|style| style.bg(tokens.group))
-                .on_click(cx.listener(move |view, _, window, cx| click(view, window, cx)))
-                .on_key_down(
-                    cx.listener(move |view, event: &gpui::KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
-                            && !event.is_held
-                        {
-                            cx.stop_propagation();
-                            window.prevent_default();
-                            handler(view, window, cx);
-                        }
-                    }),
+                .flex()
+                .items_end()
+                .justify_between()
+                .gap(px(24.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .child(step_eyebrow(OnboardingStep::Permissions, tokens))
+                        .child(display_title(
+                            tokens,
+                            tr("onboarding.try.headline"),
+                            tr("onboarding.try.serif"),
+                            28.,
+                        )),
                 )
-        })
-        .child(label)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(8.))
+                        .child(microphone)
+                        .children(accessibility),
+                ),
+        )
+        .child(test_stage(
+            tokens,
+            pill,
+            ready,
+            view.phase.prefs().hold(),
+            &setup.transcript,
+            status,
+        ));
+    if cfg!(target_os = "macos") && setup.permissions.accessibility != Permission::Granted {
+        body = body.child(
+            div()
+                .text_size(px(12.))
+                .text_color(tokens.subtle)
+                .child(prose(tr("onboarding.permissions.old_build"))),
+        );
+    }
+    if let Some(error) = &setup.session_error {
+        body = body
+            .child(error_text(tokens, error.clone()))
+            .when(cfg!(target_os = "macos"), |el| {
+                el.child(div().text_size(px(12.)).text_color(tokens.subtle).child(tr(
+                    "Check Privacy & Security, then relaunch Plume if needed.",
+                )))
+            })
+            .child(
+                div().flex().child(
+                    Button::new(*tokens, "onboarding-service-retry", tr("ui.check_again"))
+                        .size(ButtonSize::Small)
+                        .enabled(!view.is_busy())
+                        .on_click(cx, |view, _, cx| {
+                            let setup = view.onboarding.as_mut().unwrap();
+                            setup.session_error = None;
+                            setup.microphone_ready = false;
+                            cx.notify();
+                        }),
+                ),
+            );
+    }
+    body.into_any_element()
+}
+
+fn permission_allowed(
+    tokens: &Tokens,
+    icon: &'static str,
+    title: &'static str,
+    state: &'static str,
+) -> AnyElement {
+    div()
+        .h(px(28.))
+        .pl(px(10.))
+        .pr(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .rounded_full()
+        .border_1()
+        .border_color(tokens.border)
+        .bg(tokens.surface)
+        .text_size(px(12.5))
+        .text_color(tokens.muted)
+        .child(svg().path(icon).size(px(14.)).text_color(tokens.muted))
+        .child(title)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .text_color(tokens.accent_text)
+                .child(
+                    svg()
+                        .path("ui/check.svg")
+                        .size(px(11.))
+                        .text_color(tokens.accent_text),
+                )
+                .child(state),
+        )
         .into_any_element()
 }
+
+/// The website's hero in miniature: a note on a dark dotted stage, the bubble over it.
+fn test_stage(
+    tokens: &Tokens,
+    pill: StagePill,
+    ready: bool,
+    hold: &str,
+    transcript: &str,
+    status: String,
+) -> impl IntoElement {
+    let dots = tokens.stage_dots;
+    div()
+        .relative()
+        .h(px(236.))
+        .flex_shrink_0()
+        .pt(px(22.))
+        .px(px(44.))
+        .rounded(px(20.))
+        .overflow_hidden()
+        .border_1()
+        .border_color(tokens.stage_border)
+        .bg(tokens.stage)
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |area, _, window, _| {
+                    let step = 22.;
+                    let width: f32 = area.size.width.into();
+                    let height: f32 = area.size.height.into();
+                    let mut y = step / 2.;
+                    while y < height {
+                        let mut x = step / 2.;
+                        while x < width {
+                            window.paint_quad(
+                                fill(
+                                    gpui::bounds(
+                                        area.origin + gpui::point(px(x), px(y)),
+                                        gpui::size(px(1.5), px(1.5)),
+                                    ),
+                                    dots,
+                                )
+                                .corner_radii(px(0.75)),
+                            );
+                            x += step;
+                        }
+                        y += step;
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .child(
+            div()
+                .relative()
+                .size_full()
+                .flex()
+                .flex_col()
+                .rounded_t(px(12.))
+                .overflow_hidden()
+                .border_1()
+                .border_b_0()
+                .border_color(tokens.sheet_border)
+                .bg(tokens.sheet)
+                .child(
+                    div()
+                        .h(px(32.))
+                        .flex_shrink_0()
+                        .px(px(14.))
+                        .flex()
+                        .items_center()
+                        .gap(px(7.))
+                        .border_b_1()
+                        .border_color(tokens.sheet_border)
+                        .children(
+                            (0..3)
+                                .map(|_| div().size(px(9.)).rounded_full().bg(tokens.sheet_chrome)),
+                        )
+                        .child(
+                            div()
+                                .ml(px(10.))
+                                .text_size(px(12.))
+                                .text_color(tokens.faint)
+                                .child(tr("onboarding.try.sheet_title")),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("onboarding-test-transcript")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px(px(26.))
+                        .pt(px(16.))
+                        .pb(px(72.))
+                        .text_size(px(14.))
+                        .line_height(px(22.))
+                        .map(|el| {
+                            if transcript.is_empty() {
+                                el.text_color(tokens.faint).child(status)
+                            } else {
+                                el.text_color(tokens.sheet_title)
+                                    .child(transcript.to_string())
+                            }
+                        }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom(px(18.))
+                        .flex()
+                        .justify_center()
+                        .child(stage_pill(tokens, pill, ready, hold)),
+                ),
+        )
+}
+
+/// The dictation bubble, drawn as on the website.
+fn stage_pill(tokens: &Tokens, state: StagePill, ready: bool, hold: &str) -> impl IntoElement {
+    let pill = div()
+        .h(px(46.))
+        .pl(px(15.))
+        .pr(px(
+            if state == StagePill::Listening || state == StagePill::Idle {
+                8.
+            } else {
+                16.
+            },
+        ))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .rounded_full()
+        .bg(tokens.pill_bg)
+        .text_color(tokens.pill_fg)
+        .text_size(px(13.))
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::hsla(0., 0., 0., 0.35),
+            offset: gpui::point(px(0.), px(12.)),
+            blur_radius: px(40.),
+            spread_radius: px(0.),
+        }])
+        .when(state == StagePill::Idle && !ready, |el| el.opacity(0.6));
+    let chip = |label: String| {
+        div()
+            .h(px(26.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .rounded_full()
+            .bg(tokens.pill_chip)
+            .text_color(tokens.pill_chip_fg)
+            .text_size(px(11.))
+            .child(label)
+    };
+    let label = |text: &'static str| div().text_color(tokens.pill_muted).child(text);
+    match state {
+        StagePill::Idle => pill
+            .child(div().size(px(9.)).rounded_full().bg(tokens.pill_idle))
+            .child(label(tr("ui.ready")))
+            .child(
+                div().flex().gap(px(4.)).children(
+                    hold.split('+')
+                        .map(|key| chip(plume_ui::key_label(key.trim()))),
+                ),
+            ),
+        StagePill::Listening => pill
+            .child(div().size(px(9.)).rounded_full().bg(tokens.accent))
+            .child(div().h(px(22.)).flex().items_center().gap(px(3.)).children(
+                WAVE.iter().enumerate().map(|(index, height)| {
+                    let height = *height;
+                    div()
+                        .w(px(3.))
+                        .h(px(height))
+                        .rounded(px(1.5))
+                        .bg(tokens.pill_fg)
+                        .with_animation(
+                            SharedString::from(format!("onboarding-wave-{index}")),
+                            Animation::new(Duration::from_millis(800 + (index as u64 % 5) * 100))
+                                .repeat(),
+                            move |el, delta| {
+                                let wave = (delta * std::f32::consts::TAU + index as f32 * 0.8)
+                                    .sin()
+                                    * 0.5
+                                    + 0.5;
+                                el.h(px((height * (0.4 + 0.7 * wave)).max(3.)))
+                            },
+                        )
+                }),
+            ))
+            .child(label(tr("ui.listening"))),
+        StagePill::Thinking => pill
+            .child(div().flex().gap(px(4.)).children((0..3).map(|index| {
+                div()
+                    .size(px(6.))
+                    .rounded_full()
+                    .bg(tokens.accent)
+                    .with_animation(
+                        SharedString::from(format!("onboarding-thinking-{index}")),
+                        Animation::new(Duration::from_millis(1000)).repeat(),
+                        move |el, delta| {
+                            let phase = (delta - index as f32 * 0.2).rem_euclid(1.);
+                            el.opacity(1. - 0.75 * (phase * std::f32::consts::PI).sin())
+                        },
+                    )
+            })))
+            .child(label(tr("ui.transcribing_progress"))),
+        StagePill::Done => pill
+            .child(
+                div()
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(tokens.accent)
+                    .child(
+                        svg()
+                            .path("ui/check.svg")
+                            .size(px(12.))
+                            .text_color(tokens.on_accent),
+                    ),
+            )
+            .child(label(tr("ui.inserted"))),
+    }
+}
+
+const WAVE: [f32; 12] = [6., 16., 20., 12., 18., 8., 20., 14., 7., 17., 11., 6.];

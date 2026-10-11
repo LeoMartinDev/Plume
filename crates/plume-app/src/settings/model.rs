@@ -2,13 +2,15 @@ use crate::settings::i18n::tr;
 use gpui::{
     div, prelude::*, px, relative, svg, AnyElement, Context, Div, FontWeight, SharedString,
 };
-use plume_ui::Tokens;
+use plume_ui::{Button, ButtonSize, IconButton, Tokens, FONT_MONO};
 
 use crate::catalog::{self, ModelEntry, ModelId};
 use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::Prefs;
 
-use super::view::{error_text, page, settings_divider, settings_group, settings_section};
+use super::view::{
+    error_text, page, row_label, settings_divider, settings_group, settings_row, settings_section,
+};
 use super::SettingsView;
 
 pub(super) fn model_page(
@@ -18,11 +20,13 @@ pub(super) fn model_page(
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     page(
+        tokens,
         tr("ui.models"),
+        Some((tr("settings.models.lead"), tr("settings.models.serif"))),
         div()
             .flex()
             .flex_col()
-            .gap(px(20.))
+            .gap(px(22.))
             .child(settings_section(
                 tokens,
                 tr("ui.languages"),
@@ -47,34 +51,21 @@ fn model_catalog(
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     let count = catalog::entries().len();
-    settings_group(tokens).flex().flex_col().children(
-        catalog::entries()
-            .iter()
-            .enumerate()
-            .flat_map(|(index, entry)| {
-                let mut rows = vec![catalog_model_row(
-                    entry,
-                    view,
-                    index == 0,
-                    index + 1 == count,
-                    tokens,
-                    prefs,
-                    cx,
-                )
-                .into_any_element()];
-                if index + 1 < catalog::entries().len() {
-                    rows.push(settings_divider(tokens).into_any_element());
-                }
-                rows
-            }),
-    )
+    settings_group(tokens).children(catalog::entries().iter().enumerate().flat_map(
+        |(index, entry)| {
+            let mut rows =
+                vec![catalog_model_row(entry, view, tokens, prefs, cx).into_any_element()];
+            if index + 1 < count {
+                rows.push(settings_divider(tokens).into_any_element());
+            }
+            rows
+        },
+    ))
 }
 
 fn catalog_model_row(
     entry: &ModelEntry,
     view: &SettingsView,
-    is_first: bool,
-    is_last: bool,
     tokens: &Tokens,
     prefs: &Prefs,
     cx: &mut Context<SettingsView>,
@@ -100,110 +91,93 @@ fn catalog_model_row(
         ("ui.unsupported".into(), false)
     };
     let can_delete = installed && !view.downloads.is_active_for(entry.id) && !view.settings_preview;
-    let is_current = view.active_model == Some(entry.id);
-    let detail = entry.size;
-    div()
-        .id(SharedString::from(format!("model-{}", entry.id.as_str())))
-        .w_full()
+    let id = entry.id;
+    settings_row()
+        .id(SharedString::from(format!("model-{}", id.as_str())))
         .relative()
-        .min_h(px(88.))
-        .px(px(14.))
-        .py(px(10.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(16.))
-        // Highlight only the model connected to the running session. A saved
-        // preference or pending download does not mean a model is in use.
-        .when(is_current && supported, |el| {
-            let el = el.bg(tokens.accent_soft);
-            if is_first && is_last {
-                el.rounded(px(10.))
-            } else if is_first {
-                el.rounded_t(px(10.))
-            } else if is_last {
-                el.rounded_b(px(10.))
-            } else {
-                el
-            }
-        })
+        .min_h(px(76.))
         // Pack hors langue épinglée : grisé, non cliquable.
         .when(!supported, |el| el.opacity(0.45))
         .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(px(5.))
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(entry.name),
-                )
-                .child(match downloading {
-                    Some(text) => div()
-                        .text_xs()
-                        .text_color(tokens.muted)
-                        .child(text)
-                        .into_any_element(),
-                    None => div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(5.))
-                        .child(div().text_xs().text_color(tokens.muted).child(detail))
-                        .children((!supported).then(|| {
-                            div()
-                                .text_xs()
-                                .text_color(tokens.muted)
-                                .child(tr("ui.language_not_supported"))
-                        }))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .items_center()
-                                .gap(px(14.))
-                                .child(spec_meter(tr("ui.speed"), entry.speed, tokens))
-                                .child(spec_meter(tr("ui.accuracy"), entry.accuracy, tokens)),
-                        )
-                        .into_any_element(),
-                }),
+            row_label(tokens, entry.name, None).child(match downloading {
+                Some(text) => div()
+                    .mt(px(4.))
+                    .font_family(FONT_MONO)
+                    .text_size(px(11.5))
+                    .text_color(tokens.accent_text)
+                    .child(text)
+                    .into_any_element(),
+                None => div()
+                    .mt(px(4.))
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .text_size(px(11.5))
+                            .text_color(tokens.subtle)
+                            .child(if supported {
+                                entry.size
+                            } else {
+                                tr("ui.language_not_supported")
+                            }),
+                    )
+                    .child(spec_meter(tr("ui.speed"), entry.speed, tokens, false))
+                    .child(spec_meter(tr("ui.accuracy"), entry.accuracy, tokens, false))
+                    .into_any_element(),
+            }),
         )
         .child(
             div()
                 .flex()
                 .flex_shrink_0()
                 .items_center()
-                .gap(px(6.))
-                .child(div().w(px(32.)).flex_shrink_0().children(
-                    can_delete.then(|| catalog_model_delete_button(tokens, entry.id, cx)),
-                ))
-                .child(catalog_model_button(tokens, entry.id, label, enabled, cx)),
+                .gap(px(4.))
+                .children(can_delete.then(|| {
+                    IconButton::new(
+                        *tokens,
+                        SharedString::from(format!("model-{}-delete", id.as_str())),
+                        "ui/delete.svg",
+                    )
+                    .on_click(cx, move |this, _, cx| {
+                        this.capture.cancel();
+                        this.delete_model(id, cx);
+                    })
+                }))
+                .child(catalog_model_button(tokens, id, label, enabled, cx)),
         )
         .children(progress.and_then(|progress| catalog_model_progress(progress, tokens)))
 }
 
-/// 5 uniform rounded bars, neutral theme colors (no accent blue).
+/// Five short bars, ink on a track; on an inverted card they follow its colors.
 /// `value` is 1..=5, more filled bars = faster / more accurate.
-pub(super) fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> impl IntoElement {
+pub(super) fn spec_meter(
+    label: &'static str,
+    value: u8,
+    tokens: &Tokens,
+    inverted: bool,
+) -> impl IntoElement {
     let value = value.clamp(1, 5);
+    let (on, off, text) = if inverted {
+        (tokens.invert_fg, tokens.invert_track, tokens.invert_muted)
+    } else {
+        (tokens.text, tokens.track, tokens.subtle)
+    };
     div()
         .flex()
         .flex_row()
         .flex_shrink_0()
         .items_center()
-        .gap(px(6.))
+        .justify_between()
+        .gap(px(8.))
         .child(
             div()
-                .min_w(px(56.))
                 .flex_shrink_0()
-                .text_xs()
+                .text_size(px(12.))
                 .whitespace_nowrap()
-                .text_color(tokens.muted)
+                .text_color(text)
                 .child(label),
         )
         .child(
@@ -213,11 +187,11 @@ pub(super) fn spec_meter(label: &'static str, value: u8, tokens: &Tokens) -> imp
                 .items_center()
                 .gap(px(3.))
                 .children((0..5).map(move |i| {
-                    div().w(px(3.)).h(px(7.)).rounded(px(1.)).bg(if i < value {
-                        tokens.text
-                    } else {
-                        tokens.hairline
-                    })
+                    div()
+                        .w(px(12.))
+                        .h(px(4.))
+                        .rounded(px(2.))
+                        .bg(if i < value { on } else { off })
                 })),
         )
 }
@@ -276,71 +250,44 @@ fn catalog_model_button(
     label: SharedString,
     enabled: bool,
     cx: &mut Context<SettingsView>,
-) -> impl IntoElement {
-    let status = matches!(label.as_ref(), "ui.in_use" | "ui.in_memory");
-    div()
-        .id(SharedString::from(format!("model-{}-action", id.as_str())))
-        .h(px(32.))
-        .w(px(108.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .when(!status, |el| {
-            el.border_1().border_color(tokens.hairline).bg(tokens.fill)
-        })
-        .text_sm()
-        .text_color(if enabled || status {
-            tokens.text
-        } else {
-            tokens.muted
-        })
-        .when(status, |el| el.font_weight(FontWeight::MEDIUM))
-        .when(enabled, |el| {
-            el.cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover))
-                .active(|style| style.bg(tokens.group))
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    if !id.supports(this.phase.prefs().language()) {
-                        return;
-                    }
-                    this.capture.cancel();
-                    let mut prefs = this.phase.prefs().clone();
-                    prefs.model = id;
-                    let request = this.begin_download(prefs.clone(), cx);
-                    crate::begin_pack(cx, prefs, request);
-                }))
-        })
-        .child(tr(label.as_ref()).to_owned())
-}
-
-fn catalog_model_delete_button(
-    tokens: &Tokens,
-    id: ModelId,
-    cx: &mut Context<SettingsView>,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(format!("model-{}-delete", id.as_str())))
-        .h(px(32.))
-        .w(px(32.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .text_color(tokens.muted)
-        .cursor_pointer()
-        .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
-        .active(|style| style.bg(tokens.fill))
-        .on_click(cx.listener(move |this, _event, _window, cx| {
-            this.capture.cancel();
-            this.delete_model(id, cx);
-        }))
-        .child(
-            svg()
-                .path("fluent/delete.svg")
-                .size(px(16.))
-                .text_color(tokens.muted),
-        )
+) -> AnyElement {
+    if matches!(label.as_ref(), "ui.in_use" | "ui.in_memory") {
+        return div()
+            .h(px(28.))
+            .px(px(4.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(12.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(tokens.accent_text)
+            .child(
+                svg()
+                    .path("ui/check.svg")
+                    .size(px(12.))
+                    .text_color(tokens.accent_text),
+            )
+            .child(tr(label.as_ref()).to_owned())
+            .into_any_element();
+    }
+    Button::new(
+        *tokens,
+        SharedString::from(format!("model-{}-action", id.as_str())),
+        tr(label.as_ref()).to_owned(),
+    )
+    .size(ButtonSize::Small)
+    .enabled(enabled)
+    .on_click(cx, move |this, _, cx| {
+        if !id.supports(this.phase.prefs().language()) {
+            return;
+        }
+        this.capture.cancel();
+        let mut prefs = this.phase.prefs().clone();
+        prefs.model = id;
+        let request = this.begin_download(prefs.clone(), cx);
+        crate::begin_pack(cx, prefs, request);
+    })
+    .into_any_element()
 }
 
 fn catalog_model_progress(progress: &Progress, tokens: &Tokens) -> Option<Div> {
@@ -349,17 +296,17 @@ fn catalog_model_progress(progress: &Progress, tokens: &Tokens) -> Option<Div> {
     Some(
         div()
             .absolute()
-            .left(px(14.))
+            .left(px(18.))
             .right(px(14.))
-            .bottom(px(3.))
+            .bottom(px(6.))
             .h(px(3.))
-            .rounded(px(2.))
-            .bg(tokens.fill)
+            .rounded_full()
+            .bg(tokens.track)
             .child(
                 div()
                     .h_full()
                     .w(relative(fraction))
-                    .rounded(px(2.))
+                    .rounded_full()
                     .bg(tokens.accent),
             ),
     )

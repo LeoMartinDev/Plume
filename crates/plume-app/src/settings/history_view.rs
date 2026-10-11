@@ -1,16 +1,16 @@
 use crate::settings::i18n::tr;
-use gpui::{
-    deferred, div, list, prelude::*, px, svg, AnyElement, Context, ElementId, FontWeight,
-    SharedString,
-};
-use plume_ui::Tokens;
+use gpui::{deferred, div, list, prelude::*, px, AnyElement, Context, SharedString};
+use plume_ui::{Button, ButtonSize, IconButton, Tokens, FONT_MONO};
 
 use super::view::{
-    error_text, page, section_title, settings_divider, settings_group, settings_row,
-    settings_section,
+    error_text, menu_option, menu_panel, page, row_label, section_title, select_trigger,
+    settings_divider, settings_group, settings_row, settings_section, CONTENT_LEFT, CONTENT_RIGHT,
+    CONTENT_TOP, PAGE_WIDTH,
 };
 use super::{HistoryLimitMenu, SettingsView};
 use crate::history_policy::HistoryPolicy;
+
+const LIMIT_WIDTH: f32 = 148.;
 
 pub(super) fn history_page(
     view: &mut SettingsView,
@@ -29,17 +29,23 @@ pub(super) fn history_page(
                 super::i18n::LanguageScope::new(view.phase.prefs().interface_language());
             let item = if index == 0 {
                 div()
-                    .pt(px(24.))
-                    .pb(px(10.))
+                    .pt(px(CONTENT_TOP))
+                    .pb(px(8.))
                     .child(history_header(view, &tokens, cx))
                     .into_any_element()
             } else {
                 div()
-                    .when(index == view.display_history().len(), |el| el.pb(px(24.)))
+                    .max_w(px(PAGE_WIDTH))
+                    .when(index == view.display_history().len(), |el| el.pb(px(28.)))
                     .child(history_entry(view, index - 1, &tokens, cx))
                     .into_any_element()
             };
-            div().w_full().px(px(28.)).child(item).into_any_element()
+            div()
+                .w_full()
+                .pl(px(CONTENT_LEFT))
+                .pr(px(CONTENT_RIGHT))
+                .child(item)
+                .into_any_element()
         })
     })
     .size_full()
@@ -55,13 +61,11 @@ fn history_header(
     let body = div()
         .flex()
         .flex_col()
-        .gap(px(20.))
+        .gap(px(22.))
         .child(settings_section(
             tokens,
             tr("ui.storage"),
             settings_group(tokens)
-                .flex()
-                .flex_col()
                 .child(history_limit_row(
                     view,
                     tokens,
@@ -90,13 +94,12 @@ fn history_header(
                     .items_center()
                     .justify_between()
                     .child(section_title(tokens, tr("ui.transcriptions")))
-                    .child(action_button(
-                        tokens,
-                        "history-clear",
-                        tr("ui.clear_all"),
-                        cx,
-                        |this, cx| this.clear_history(cx),
-                    )),
+                    .child(
+                        Button::new(*tokens, "history-clear", tr("ui.clear_all"))
+                            .ghost()
+                            .size(ButtonSize::Small)
+                            .on_click(cx, |this, _, cx| this.clear_history(cx)),
+                    ),
             )
         })
         .when(entries.is_empty(), |list| {
@@ -104,15 +107,37 @@ fn history_header(
                 tokens,
                 tr("ui.transcriptions"),
                 settings_group(tokens)
-                    .px(px(14.))
-                    .py(px(18.))
-                    .text_sm()
+                    .px(px(18.))
+                    .py(px(20.))
+                    .text_size(px(13.5))
                     .text_color(tokens.muted)
                     .child(tr("ui.no_transcriptions_yet")),
             ))
         });
 
-    page(tr("ui.history"), body)
+    page(
+        tokens,
+        tr("ui.history"),
+        Some((tr("settings.history.lead"), tr("settings.history.serif"))),
+        body,
+    )
+}
+
+/// Only an entry that did not land where it should says so.
+fn failure_badge(entry: &crate::history::HistoryEntry) -> Option<&'static str> {
+    if entry.transcription_error.is_some() {
+        None
+    } else if entry.error.is_some() {
+        Some(if entry.copied_on_failure {
+            tr("ui.not_inserted_copied")
+        } else {
+            tr("ui.not_inserted")
+        })
+    } else if entry.status == "Recovered" {
+        Some(tr("ui.recovered"))
+    } else {
+        None
+    }
 }
 
 fn history_entry(
@@ -132,171 +157,167 @@ fn history_entry(
             .is_some_and(|store| store.lock().unwrap().has_audio(id))
     });
     let copied = view.copied_history_id == Some(id);
+    let first = index == 0;
+    let last = index + 1 == entries.len();
+    let group = SharedString::from(format!("history-entry-{id}"));
+    let tokens_ = *tokens;
+    // Consecutive items draw one card: the sides of each, the top of the first, the bottom of the last.
     div()
         .id(("history-entry", id))
-        .max_w(px(480.))
-        .bg(tokens.group)
-        .border_color(tokens.hairline)
-        .border_x_1()
-        .border_b_1()
-        .when(index == 0, |el| el.border_t_1().rounded_t(px(10.)))
-        .when(index + 1 == view.display_history().len(), |el| {
-            el.rounded_b(px(10.))
-        })
         .w_full()
-        .px(px(14.))
-        .py(px(12.))
-        .flex()
-        .flex_col()
-        .gap(px(7.))
-        .when(audio_available, |row| {
-            let record_id = record_id.unwrap();
-            row.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.muted)
-                            .child(tr("ui.audio_available")),
-                    )
-                    .child(action_button(
-                        tokens,
-                        SharedString::from(format!("retry-{id}")),
-                        tr("ui.retranscribe"),
-                        cx,
-                        move |this, cx| this.retry_recording(record_id, cx),
-                    ))
-                    .child(action_button(
-                        tokens,
-                        SharedString::from(format!("delete-audio-{id}")),
-                        tr("ui.delete_audio"),
-                        cx,
-                        move |this, cx| this.delete_audio(record_id, cx),
-                    )),
-            )
-        })
-        .children(
-            entry
-                .transcription_error
-                .clone()
-                .map(|error| error_text(tokens, error)),
-        )
+        .bg(tokens.surface)
+        .border_color(tokens.border)
+        .border_x_1()
+        .px(px(4.))
+        .when(first, |el| el.border_t_1().rounded_t(px(18.)).pt(px(4.)))
+        .when(last, |el| el.border_b_1().rounded_b(px(18.)).pb(px(4.)))
         .child(
             div()
+                .group(group.clone())
+                .w_full()
+                .px(px(14.))
+                .py(px(12.))
                 .flex()
-                .items_center()
-                .justify_between()
+                .flex_col()
+                .gap(px(8.))
+                .rounded(px(14.))
+                .hover(move |style| style.bg(tokens_.hover))
+                .children(
+                    entry
+                        .transcription_error
+                        .clone()
+                        .map(|error| error_text(tokens, error)),
+                )
                 .child(
                     div()
                         .flex()
-                        .items_center()
-                        .gap(px(7.))
+                        .items_start()
+                        .gap(px(8.))
                         .child(
                             div()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(entry.status.clone()),
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(14.))
+                                .line_height(px(21.))
+                                .max_h(px(63.))
+                                .overflow_hidden()
+                                .child(entry.text.clone()),
                         )
                         .child(
-                            div().text_xs().text_color(tokens.muted).child(
-                                entry
-                                    .application
-                                    .clone()
-                                    .unwrap_or_else(|| tr("ui.unknown_app").into()),
-                            ),
+                            div()
+                                .flex()
+                                .flex_shrink_0()
+                                .gap(px(2.))
+                                .opacity(0.)
+                                .group_hover(group, |style| style.opacity(1.))
+                                .child(
+                                    IconButton::new(*tokens, ("history-copy", id), "ui/copy.svg")
+                                        .size(28.)
+                                        .on_click(cx, move |this, _, cx| {
+                                            this.copy_history(id, copy_text.clone(), cx);
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new(
+                                        *tokens,
+                                        ("history-delete", id),
+                                        "ui/delete.svg",
+                                    )
+                                    .size(28.)
+                                    .on_click(
+                                        cx,
+                                        move |this, _, cx| {
+                                            this.delete_history(id, cx);
+                                        },
+                                    ),
+                                ),
                         ),
                 )
                 .child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap(px(8.))
+                        .text_size(px(12.))
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(if copied { tokens.accent } else { tokens.muted })
+                                .px(px(9.))
+                                .py(px(2.))
+                                .rounded_full()
+                                .bg(tokens.surface_2)
+                                .text_color(tokens.muted)
+                                .child(
+                                    entry
+                                        .application
+                                        .clone()
+                                        .unwrap_or_else(|| tr("ui.unknown_app").into()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .font_family(FONT_MONO)
+                                .text_size(px(11.5))
+                                .text_color(if copied {
+                                    tokens.accent_text
+                                } else {
+                                    tokens.subtle
+                                })
                                 .child(if copied {
                                     tr("ui.copied").to_string()
                                 } else {
                                     super::i18n::age_label(entry.created_at)
                                 }),
                         )
-                        .child(icon_button(
-                            tokens,
-                            ("history-copy", id),
-                            "fluent/copy.svg",
-                            cx,
-                            move |this, cx| {
-                                this.copy_history(id, copy_text.clone(), cx);
-                            },
-                        ))
-                        .child(icon_button(
-                            tokens,
-                            ("history-delete", id),
-                            "fluent/delete.svg",
-                            cx,
-                            move |this, cx| {
-                                this.delete_history(id, cx);
-                            },
-                        )),
-                ),
-        )
-        .child(
-            div()
-                .text_sm()
-                .max_h(px(64.))
-                .overflow_hidden()
-                .child(entry.text.clone()),
+                        .children(failure_badge(entry).map(|label| {
+                            div()
+                                .px(px(9.))
+                                .py(px(2.))
+                                .rounded_full()
+                                .bg(tokens.warn_bg)
+                                .text_color(tokens.warn)
+                                .child(label)
+                        })),
+                )
+                .when(audio_available, |row| {
+                    let record_id = record_id.unwrap();
+                    row.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(12.))
+                                    .text_color(tokens.subtle)
+                                    .child(tr("ui.audio_available")),
+                            )
+                            .child(
+                                Button::new(
+                                    *tokens,
+                                    SharedString::from(format!("retry-{id}")),
+                                    tr("ui.retranscribe"),
+                                )
+                                .size(ButtonSize::Small)
+                                .on_click(cx, move |this, _, cx| {
+                                    this.retry_recording(record_id, cx)
+                                }),
+                            )
+                            .child(
+                                Button::new(
+                                    *tokens,
+                                    SharedString::from(format!("delete-audio-{id}")),
+                                    tr("ui.delete_audio"),
+                                )
+                                .ghost()
+                                .size(ButtonSize::Small)
+                                .on_click(cx, move |this, _, cx| this.delete_audio(record_id, cx)),
+                            ),
+                    )
+                }),
         )
         .into_any_element()
-}
-
-fn action_button(
-    tokens: &Tokens,
-    id: impl Into<ElementId>,
-    label: &'static str,
-    cx: &mut Context<SettingsView>,
-    on_click: impl Fn(&mut SettingsView, &mut Context<SettingsView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .h(px(28.))
-        .px(px(9.))
-        .flex()
-        .items_center()
-        .rounded(px(6.))
-        .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.fill)
-        .text_xs()
-        .cursor_pointer()
-        .hover(|style| style.bg(tokens.fill_hover))
-        .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
-        .child(label)
-}
-
-fn icon_button(
-    tokens: &Tokens,
-    id: impl Into<ElementId>,
-    icon: &'static str,
-    cx: &mut Context<SettingsView>,
-    on_click: impl Fn(&mut SettingsView, &mut Context<SettingsView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .size(px(24.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.))
-        .text_color(tokens.muted)
-        .cursor_pointer()
-        .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
-        .on_click(cx.listener(move |this, _event, _window, cx| on_click(this, cx)))
-        .child(svg().path(icon).size(px(15.)).text_color(tokens.muted))
 }
 
 fn history_limit_row(
@@ -330,51 +351,30 @@ fn history_limit_row(
         }
     };
     let open = view.history_menu == Some(menu);
-    let menu_height = 46. + 30. * options.len() as f32;
+    let menu_height = 34. + 4. + 8. + 32. * options.len() as f32;
     settings_row()
         .relative()
-        .child(div().flex_1().min_w_0().text_sm().child(title))
+        .child(row_label(tokens, title, None))
         .child(
-            div()
-                .id(id)
-                .w(px(156.))
-                .flex_shrink_0()
-                .h(px(32.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(tokens.hairline)
-                .bg(tokens.fill)
-                .text_sm()
-                .cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover))
-                .on_click(cx.listener(move |this, _event, _window, cx| {
+            select_trigger(tokens, id, label(selected), LIMIT_WIDTH, true).on_click(cx.listener(
+                move |this, _event, _window, cx| {
                     this.history_menu = if this.history_menu == Some(menu) {
                         None
                     } else {
                         Some(menu)
                     };
                     cx.notify();
-                }))
-                .child(label(selected))
-                .child(
-                    svg()
-                        .path("fluent/chevron-down.svg")
-                        .size(px(14.))
-                        .text_color(tokens.muted),
-                ),
+                },
+            )),
         )
         .when(open, |row| {
             row.child(
                 div()
                     .id(SharedString::from(format!("{id}-boundary")))
                     .absolute()
-                    .top(px(10.))
+                    .top(px(13.))
                     .right(px(14.))
-                    .w(px(156.))
+                    .w(px(LIMIT_WIDTH))
                     .h(px(menu_height))
                     .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
                         this.history_menu = None;
@@ -383,35 +383,21 @@ fn history_limit_row(
             )
             .child(
                 deferred(
-                    div()
+                    menu_panel(tokens, LIMIT_WIDTH)
                         .id(SharedString::from(format!("{id}-menu")))
                         .absolute()
-                        .top(px(46.))
+                        .top(px(51.))
                         .right(px(14.))
-                        .w(px(156.))
-                        .p(px(4.))
-                        .flex()
-                        .flex_col()
-                        .rounded(px(7.))
-                        .border_1()
-                        .border_color(tokens.hairline)
-                        .bg(tokens.elevated)
-                        .shadow_md()
                         .children(options.into_iter().map(|value| {
-                            div()
-                                .id(SharedString::from(format!("{id}-{value:?}")))
-                                .h(px(30.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(5.))
-                                .text_sm()
-                                .when(value == selected, |option| {
-                                    option.bg(tokens.fill).font_weight(FontWeight::MEDIUM)
-                                })
-                                .cursor_pointer()
-                                .hover(|style| style.bg(tokens.fill_hover))
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                            menu_option(
+                                tokens,
+                                SharedString::from(format!("{id}-{value:?}")),
+                                label(value),
+                                value == selected,
+                                false,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _event, _window, cx| {
                                     this.history_menu = None;
                                     let current = this.phase.prefs().history();
                                     let next = match menu {
@@ -425,8 +411,8 @@ fn history_limit_row(
                                     }
                                     .expect("validated history option");
                                     this.commit_history_policy(next, cx);
-                                }))
-                                .child(label(value))
+                                },
+                            ))
                         })),
                 )
                 .with_priority(1),

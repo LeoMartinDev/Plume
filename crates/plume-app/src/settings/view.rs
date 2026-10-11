@@ -1,9 +1,9 @@
 use crate::settings::i18n::tr;
 use gpui::{
-    bounds, canvas, div, fill, point, prelude::*, px, size, svg, AnyElement, Context, Div,
-    FontWeight, ScrollHandle, SharedString, Window,
+    bounds, canvas, div, fill, font, point, prelude::*, px, size, svg, AnyElement, Context, Div,
+    FontStyle, FontWeight, ScrollHandle, SharedString, Stateful, StyledText, TextRun, Window,
 };
-use plume_ui::{Palette, Segment, Segmented, Tokens};
+use plume_ui::{eyebrow, Palette, Tokens, FONT_SANS, FONT_SERIF};
 
 use crate::prefs::{AppearancePref, Scheme};
 
@@ -36,10 +36,18 @@ fn sync_native_titlebar(window: &Window, palette: Palette) {
         return;
     };
     let hwnd = win.hwnd.get() as HWND;
-    let (dark, chrome, border, text) = match palette {
-        Palette::Light => (0_i32, 0x00f3f3f3_u32, 0x00e5e5e5_u32, 0x00141414_u32),
-        Palette::Dark => (1_i32, 0x00202020_u32, 0x002b2b2b_u32, 0x00e8e8e8_u32),
+    // COLORREF is 0x00BBGGRR.
+    let colorref = |color: gpui::Rgba| {
+        let channel = |value: f32| (value * 255.).round() as u32;
+        channel(color.r) | channel(color.g) << 8 | channel(color.b) << 16
     };
+    let tokens = Tokens::new(palette);
+    let dark = i32::from(palette == Palette::Dark);
+    let (chrome, border, text) = (
+        colorref(tokens.bg),
+        colorref(tokens.bg),
+        colorref(tokens.subtle),
+    );
 
     unsafe {
         let _ = DwmSetWindowAttribute(
@@ -113,7 +121,8 @@ pub(super) fn macos_titlebar(tokens: &Tokens) -> impl IntoElement {
         .flex()
         .items_center()
         .pl(px(84.))
-        .bg(tokens.chrome)
+        .bg(tokens.bg)
+        .text_color(tokens.subtle)
         .text_sm()
         .font_weight(FontWeight::MEDIUM)
         .child(SETTINGS_TITLE)
@@ -164,32 +173,33 @@ impl Render for SettingsView {
             SettingsSection::About => super::updates::about_page(self, &tokens, cx),
         };
 
+        let hold = prefs.hold().to_string();
         let body = div()
             .flex()
             .flex_row()
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .child(sidebar(self.section, &self.update, &tokens, cx))
+            .child(sidebar(self.section, &self.update, &hold, &tokens, cx))
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .h_full()
                     .relative()
-                    .p(px(8.))
                     .child(
                         div()
                             .id("settings-content")
                             .size_full()
                             .when(!is_history, |el| {
-                                el.overflow_y_scroll().track_scroll(&self.content_scroll)
+                                el.overflow_y_scroll()
+                                    .track_scroll(&self.content_scroll)
+                                    .pl(px(CONTENT_LEFT))
+                                    .pr(px(CONTENT_RIGHT))
+                                    .pt(px(CONTENT_TOP))
+                                    .pb(px(28.))
                             })
                             .when(is_history, |el| el.overflow_hidden())
-                            .rounded(px(12.))
-                            .border_1()
-                            .border_color(tokens.hairline)
-                            .bg(tokens.content)
-                            .when(!is_history, |el| el.px(px(28.)).py(px(24.)))
                             .child(content),
                     )
                     .child(scrollbar(scroll, self.scrollbar_drag.clone(), tokens)),
@@ -201,7 +211,8 @@ impl Render for SettingsView {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(tokens.chrome)
+            .bg(tokens.bg)
+            .font_family(FONT_SANS)
             .text_color(tokens.text);
         #[cfg(target_os = "macos")]
         let shell = shell.child(macos_titlebar(&tokens));
@@ -362,46 +373,48 @@ fn scrollbar(
         },
     )
     .absolute()
-    .top(px(20.))
-    .bottom(px(20.))
-    .right(px(12.))
+    .top(px(16.))
+    .bottom(px(16.))
+    .right(px(6.))
     .w(px(14.))
 }
+
+/// Content insets beside the sidebar; the history list applies the same ones per item.
+pub(super) const CONTENT_LEFT: f32 = 12.;
+pub(super) const CONTENT_RIGHT: f32 = 32.;
+pub(super) const CONTENT_TOP: f32 = 16.;
+pub(super) const PAGE_WIDTH: f32 = 500.;
 
 fn sidebar(
     selected: SettingsSection,
     update: &super::updates::UpdateState,
+    hold: &str,
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     div()
-        .w(px(170.))
+        .w(px(196.))
         .h_full()
         .flex_shrink_0()
         .flex()
         .flex_col()
         .px(px(12.))
-        .py(px(18.))
-        .bg(tokens.chrome)
+        .pt(px(14.))
+        .pb(px(14.))
         .child(
             div()
                 .px(px(10.))
-                .pb(px(16.))
+                .pb(px(18.))
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .text_sm()
+                .gap(px(9.))
+                .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(
-                    svg()
-                        .path("brand/plume.svg")
-                        .size(px(28.))
-                        .text_color(tokens.text),
-                )
+                .child(brand_mark(tokens, 26.))
                 .child("Plume"),
         )
         .child(
-            div().flex().flex_col().gap(px(4.)).children(
+            div().flex().flex_col().gap(px(2.)).children(
                 [
                     SettingsSection::Dictation,
                     SettingsSection::Model,
@@ -409,57 +422,141 @@ fn sidebar(
                     SettingsSection::History,
                 ]
                 .into_iter()
-                .map(|section| nav_item(section, selected, tokens, cx)),
+                .map(|section| nav_item(section, selected, false, tokens, cx)),
             ),
         )
         .child(
-            div().mt_auto().child(
-                div()
-                    .relative()
-                    .child(nav_item(SettingsSection::About, selected, tokens, cx))
-                    .when(update.needs_attention(), |row| {
-                        row.child(
-                            div()
-                                .absolute()
-                                .right(px(10.))
-                                .top(px(14.))
-                                .size(px(6.))
-                                .rounded_full()
-                                .bg(tokens.accent),
-                        )
-                    }),
-            ),
+            div()
+                .mt_auto()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(shortcut_card(tokens, hold, cx))
+                .child(nav_item(
+                    SettingsSection::About,
+                    selected,
+                    update.needs_attention(),
+                    tokens,
+                    cx,
+                )),
+        )
+}
+
+/// The app mark: the plume glyph on an ink tile, as on the website.
+pub(super) fn brand_mark(tokens: &Tokens, size: f32) -> impl IntoElement {
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(size / 4.))
+        .bg(tokens.btn_bg)
+        .child(
+            svg()
+                .path("brand/plume.svg")
+                .size(px(size * 0.66))
+                .text_color(tokens.btn_fg),
+        )
+}
+
+/// The push-to-talk shortcut, named and drawn as keys, inverted like the dictation
+/// bubble; opens Dictation to change it.
+fn shortcut_card(tokens: &Tokens, hold: &str, cx: &mut Context<SettingsView>) -> impl IntoElement {
+    let tokens = *tokens;
+    div()
+        .id("sidebar-shortcut")
+        .w_full()
+        .px(px(12.))
+        .pt(px(10.))
+        .pb(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .overflow_hidden()
+        .rounded(px(14.))
+        .bg(tokens.pill_bg)
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.9))
+        .on_click(cx.listener(|this, _event, window, cx| {
+            this.capture.cancel();
+            this.language_menu = None;
+            this.history_menu = None;
+            this.section = SettingsSection::Dictation;
+            window.blur();
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .text_color(tokens.pill_muted)
+                .child(
+                    svg()
+                        .path("ui/mic.svg")
+                        .size(px(13.))
+                        .text_color(tokens.pill_muted),
+                )
+                .child(tr("ui.hold_to_speak")),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(4.))
+                .children(hold.split('+').map(move |key| {
+                    div()
+                        .h(px(24.))
+                        .px(px(7.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(7.))
+                        .border_1()
+                        .border_b_2()
+                        .border_color(tokens.pill_chip_border)
+                        .bg(tokens.pill_chip)
+                        .text_size(px(11.5))
+                        .text_color(tokens.pill_chip_fg)
+                        .whitespace_nowrap()
+                        .child(plume_ui::key_label(key.trim()))
+                })),
         )
 }
 
 fn nav_item(
     section: SettingsSection,
     selected: SettingsSection,
+    attention: bool,
     tokens: &Tokens,
     cx: &mut Context<SettingsView>,
 ) -> impl IntoElement {
     let is_selected = section == selected;
+    let tokens = *tokens;
     div()
         .id(SharedString::from(format!("nav-{:?}", section)))
         .h(px(34.))
-        .px(px(10.))
+        .px(px(12.))
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(9.))
-        .rounded(px(7.))
-        .text_sm()
+        .gap(px(10.))
+        .rounded_full()
+        .text_size(px(13.5))
         .text_color(if is_selected {
             tokens.text
         } else {
             tokens.muted
         })
         .when(is_selected, |el| {
-            el.bg(tokens.fill).font_weight(FontWeight::MEDIUM)
+            el.bg(tokens.surface)
+                .shadow(tokens.raise())
+                .font_weight(FontWeight::MEDIUM)
         })
         .when(!is_selected, |el| {
             el.cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover).text_color(tokens.text))
+                .hover(move |style| style.bg(tokens.hover).text_color(tokens.text))
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.capture.cancel();
                     this.language_menu = None;
@@ -472,52 +569,129 @@ fn nav_item(
                     cx.notify();
                 }))
         })
-        .when(section != SettingsSection::About, |el| {
-            el.child(
-                svg()
-                    .path(section.icon())
-                    .size(px(16.))
-                    .text_color(if is_selected {
-                        tokens.text
-                    } else {
-                        tokens.muted
-                    }),
-            )
+        .children(section.icon().map(|icon| {
+            svg().path(icon).size(px(16.)).text_color(if is_selected {
+                tokens.text
+            } else {
+                tokens.muted
+            })
+        }))
+        .child(div().flex_1().child(section.title()))
+        .when(attention, |el| {
+            el.child(div().size(px(6.)).rounded_full().bg(tokens.accent))
         })
-        .child(section.title())
 }
 
-pub(super) fn page(title: &'static str, body: impl IntoElement) -> AnyElement {
+/// Page title, with an optional lead whose end is set in the serif italic.
+pub(super) fn page(
+    tokens: &Tokens,
+    title: &str,
+    lead: Option<(&str, &str)>,
+    body: impl IntoElement,
+) -> AnyElement {
     div()
         .w_full()
-        .max_w(px(480.))
+        .max_w(px(PAGE_WIDTH))
         .flex()
         .flex_col()
-        .gap(px(16.))
+        .gap(px(22.))
         .child(
             div()
-                .text_lg()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(title),
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_size(px(26.))
+                        .line_height(px(30.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title.to_string()),
+                )
+                .children(lead.map(|(lead, serif)| serif_lead(tokens, lead, serif, 13.5))),
         )
         .child(body)
         .into_any_element()
 }
 
+/// GPUI may wrap a line after a typographic apostrophe ("l’|interface"); the
+/// ASCII one counts as part of the word.
+pub(super) fn prose(text: &str) -> String {
+    text.replace('\u{2019}', "'")
+}
+
+/// "Plain words, *serif words.*" — the website's writing voice.
+pub(super) fn serif_lead(tokens: &Tokens, lead: &str, serif: &str, size: f32) -> impl IntoElement {
+    let (lead, serif) = (prose(lead), prose(serif));
+    let text = if serif.is_empty() {
+        lead.clone()
+    } else {
+        format!("{lead} {serif}")
+    };
+    let sans_len = if serif.is_empty() {
+        text.len()
+    } else {
+        lead.len() + 1
+    };
+    let mut italic = font(FONT_SERIF);
+    italic.style = FontStyle::Italic;
+    let run = |len, font, color: gpui::Rgba| TextRun {
+        len,
+        font,
+        color: color.into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let mut runs = vec![run(sans_len, font(FONT_SANS), tokens.muted)];
+    if !serif.is_empty() {
+        runs.push(run(serif.len(), italic, tokens.title_dim));
+    }
+    div()
+        .text_size(px(size))
+        .line_height(px(size * 1.5))
+        .child(StyledText::new(text).with_runs(runs))
+}
+
+/// A display title: sans first line, serif italic second line.
+pub(super) fn display_title(
+    tokens: &Tokens,
+    first: &str,
+    second: &str,
+    size: f32,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .text_size(px(size))
+                .line_height(px(size * 1.08))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(first.to_string()),
+        )
+        .child(
+            div()
+                .font_family(FONT_SERIF)
+                .italic()
+                .text_size(px(size * 1.12))
+                .line_height(px(size * 1.12))
+                .text_color(tokens.title_dim)
+                .child(second.to_string()),
+        )
+}
+
 pub(super) fn settings_group(tokens: &Tokens) -> Div {
     div()
         .w_full()
-        .rounded(px(10.))
+        .flex()
+        .flex_col()
+        .rounded(px(18.))
         .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.group)
+        .border_color(tokens.border)
+        .bg(tokens.surface)
 }
 
-pub(super) fn settings_section(
-    tokens: &Tokens,
-    title: &'static str,
-    body: impl IntoElement,
-) -> Div {
+pub(super) fn settings_section(tokens: &Tokens, title: &str, body: impl IntoElement) -> Div {
     div()
         .w_full()
         .flex()
@@ -527,32 +701,138 @@ pub(super) fn settings_section(
         .child(body)
 }
 
-pub(super) fn section_title(tokens: &Tokens, title: &'static str) -> Div {
+pub(super) fn section_title(tokens: &Tokens, title: &str) -> Div {
     div()
-        .text_xs()
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(tokens.muted)
-        .child(title)
+        .px(px(4.))
+        .child(eyebrow(title.to_string(), tokens.subtle))
 }
 
 pub(super) fn settings_row() -> Div {
     div()
         .w_full()
-        .min_h(px(58.))
-        .px(px(14.))
-        .py(px(8.))
+        .min_h(px(60.))
+        .pl(px(18.))
+        .pr(px(14.))
+        .py(px(10.))
         .flex()
         .items_center()
         .justify_between()
         .gap(px(14.))
 }
 
+/// The label side of a settings row: a name and an optional one-line explanation.
+pub(super) fn row_label(tokens: &Tokens, title: &str, detail: Option<&str>) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(
+            div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(prose(title)),
+        )
+        .children(detail.map(|detail| {
+            div()
+                .text_size(px(12.5))
+                .text_color(tokens.subtle)
+                .child(prose(detail))
+        }))
+}
+
 pub(super) fn settings_divider(tokens: &Tokens) -> Div {
     div()
         .h(px(1.))
         .flex_shrink_0()
-        .mx(px(14.))
-        .bg(tokens.hairline)
+        .mx(px(18.))
+        .bg(tokens.border)
+}
+
+/// The closed state of a dropdown: a pill with a chevron.
+pub(super) fn select_trigger(
+    tokens: &Tokens,
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    width: f32,
+    enabled: bool,
+) -> Stateful<Div> {
+    let tokens = *tokens;
+    div()
+        .id(id)
+        .w(px(width))
+        .flex_shrink_0()
+        .h(px(34.))
+        .pl(px(14.))
+        .pr(px(12.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.))
+        .rounded_full()
+        .border_1()
+        .border_color(tokens.border_strong)
+        .bg(tokens.surface_2)
+        .text_size(px(13.))
+        .when(!enabled, |el| el.opacity(0.5))
+        .when(enabled, |el| {
+            el.cursor_pointer()
+                .hover(move |style| style.border_color(tokens.faint))
+        })
+        .child(div().truncate().child(label.into()))
+        .child(
+            svg()
+                .path("ui/chevron-down.svg")
+                .size(px(12.))
+                .flex_shrink_0()
+                .text_color(tokens.subtle),
+        )
+}
+
+/// The open state of a dropdown.
+pub(super) fn menu_panel(tokens: &Tokens, width: f32) -> Div {
+    div()
+        .w(px(width))
+        .p(px(4.))
+        .flex()
+        .flex_col()
+        .rounded(px(14.))
+        .border_1()
+        .border_color(tokens.border_strong)
+        .bg(tokens.surface)
+        .shadow(tokens.float())
+}
+
+pub(super) fn menu_option(
+    tokens: &Tokens,
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    highlighted: bool,
+) -> Stateful<Div> {
+    let tokens = *tokens;
+    div()
+        .id(id)
+        .h(px(32.))
+        .flex_shrink_0()
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .rounded(px(10.))
+        .text_size(px(13.))
+        .cursor_pointer()
+        .when(highlighted, |el| el.bg(tokens.hover))
+        .hover(move |style| style.bg(tokens.hover))
+        .when(selected, |el| el.font_weight(FontWeight::MEDIUM))
+        .child(label.into())
+        .children(selected.then(|| {
+            svg()
+                .path("ui/check.svg")
+                .size(px(12.))
+                .text_color(tokens.accent_text)
+        }))
 }
 
 fn appearance_page(
@@ -562,49 +842,138 @@ fn appearance_page(
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     page(
+        tokens,
         tr("interface.title"),
-        settings_section(
-            tokens,
-            tr("interface.title"),
-            settings_group(tokens)
-                .child(super::languages::interface_language_row(view, tokens, cx))
-                .child(settings_divider(tokens))
-                .child(
-                    settings_row()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_sm()
-                                .child(tr("interface.theme")),
-                        )
-                        .child(Segmented::new(
-                            *tokens,
-                            selected,
-                            THEMES.into_iter().map(|(pref, label)| {
-                                Segment::new(pref, pref.element_id(), tr(label)).on_click(
-                                    cx,
-                                    move |this: &mut SettingsView, cx| {
-                                        this.commit_appearance(pref, cx);
-                                    },
-                                )
-                            }),
-                        )),
+        Some((
+            tr("settings.interface.lead"),
+            tr("settings.interface.serif"),
+        )),
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(22.))
+            .child(settings_section(
+                tokens,
+                tr("interface.theme"),
+                div().flex().gap(px(10.)).children(
+                    THEMES
+                        .into_iter()
+                        .map(|(pref, label)| theme_choice(tokens, pref, label, selected, cx)),
                 ),
-        ),
+            ))
+            .child(settings_section(
+                tokens,
+                tr("ui.languages"),
+                settings_group(tokens)
+                    .child(super::languages::interface_language_row(view, tokens, cx))
+                    .child(settings_divider(tokens))
+                    .child(super::languages::dictation_language_row(view, tokens, cx)),
+            )),
     )
+}
+
+/// A theme drawn as a small window: system is half light, half dark.
+fn theme_choice(
+    tokens: &Tokens,
+    pref: AppearancePref,
+    label: &'static str,
+    selected: AppearancePref,
+    cx: &mut Context<SettingsView>,
+) -> impl IntoElement {
+    let active = pref == selected;
+    let light = Tokens::new(Palette::Light);
+    let dark = Tokens::new(Palette::Dark);
+    let (left, right) = match pref {
+        AppearancePref::Auto => (light, dark),
+        AppearancePref::Fixed(Scheme::Light) => (light, light),
+        AppearancePref::Fixed(Scheme::Dark) => (dark, dark),
+    };
+    let half = |side: Tokens, first: bool| {
+        let card = div()
+            .w_full()
+            .h(px(34.))
+            .bg(side.surface)
+            .border_1()
+            .border_color(side.border_strong);
+        let pill = div().w(px(26.)).h(px(10.)).bg(side.pill_bg);
+        div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            .justify_between()
+            .py(px(12.))
+            .bg(side.bg)
+            // GPUI clips children to a rectangle, not to the frame's rounded corners:
+            // each half rounds its own outer corners (frame radius minus its border).
+            .when(first, |el| el.pl(px(12.)).items_end().rounded_l(px(13.)))
+            .when(!first, |el| el.pr(px(12.)).items_start().rounded_r(px(13.)))
+            .child(if first {
+                card.rounded_l(px(10.)).border_r_0()
+            } else {
+                card.rounded_r(px(10.)).border_l_0()
+            })
+            .child(if first {
+                pill.rounded_l(px(5.))
+            } else {
+                pill.rounded_r(px(5.))
+            })
+    };
+    let tokens = *tokens;
+    div()
+        .id(pref.element_id())
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .when(!active, |el| {
+            el.cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.commit_appearance(pref, cx)))
+        })
+        .child(
+            div()
+                .h(px(92.))
+                .flex()
+                .rounded(px(14.))
+                .overflow_hidden()
+                .border_1()
+                .border_color(if active { tokens.accent } else { tokens.border })
+                .when(active, |el| el.shadow(tokens.ring()))
+                .when(!active, |el| {
+                    el.hover(move |style| style.border_color(tokens.faint))
+                })
+                .child(half(left, true))
+                .child(half(right, false)),
+        )
+        .child(
+            div()
+                .pl(px(4.))
+                .text_size(px(13.))
+                .text_color(if active { tokens.text } else { tokens.muted })
+                .when(active, |el| el.font_weight(FontWeight::MEDIUM))
+                .child(tr(label)),
+        )
 }
 
 pub(super) fn error_text(tokens: &Tokens, text: String) -> impl IntoElement {
     div()
         .w_full()
-        .px(px(14.))
-        .py(px(10.))
-        .rounded(px(8.))
+        .px(px(16.))
+        .py(px(12.))
+        .flex()
+        .gap(px(10.))
+        .rounded(px(14.))
         .border_1()
-        .border_color(tokens.hairline)
-        .bg(tokens.accent_soft)
-        .text_xs()
+        .border_color(tokens.border)
+        .bg(tokens.surface)
+        .text_size(px(12.5))
         .text_color(tokens.text)
-        .child(tr(&text).to_owned())
+        .child(
+            svg()
+                .path("ui/info.svg")
+                .size(px(15.))
+                .flex_shrink_0()
+                .text_color(tokens.warn),
+        )
+        .child(div().flex_1().min_w_0().child(prose(tr(&text))))
 }

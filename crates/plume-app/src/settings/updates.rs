@@ -2,8 +2,8 @@ use crate::settings::i18n::tr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use gpui::{div, prelude::*, px, relative, AnyElement, Context, ElementId, FontWeight};
-use plume_ui::Tokens;
+use gpui::{div, prelude::*, px, relative, AnyElement, Context, ElementId};
+use plume_ui::{Button, ButtonSize, Tokens};
 use plume_updater::{InstallPlan, Release};
 
 use super::SettingsView;
@@ -291,11 +291,10 @@ pub(super) fn about_page(
     let available = matches!(view.update, UpdateState::Available(_));
     let downloading = matches!(view.update, UpdateState::Downloading { .. });
     let status = view.update.status();
-    let software_update = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(16.))
+    let software_update = super::view::settings_group(tokens)
+        .px(px(18.))
+        .py(px(14.))
+        .gap(px(12.))
         .child(
             div()
                 .flex()
@@ -306,7 +305,7 @@ pub(super) fn about_page(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_sm()
+                        .text_size(px(13.5))
                         .text_color(tokens.muted)
                         .child(status),
                 )
@@ -314,13 +313,14 @@ pub(super) fn about_page(
                     div()
                         .flex()
                         .flex_shrink_0()
-                        .gap(px(8.))
+                        .gap(px(6.))
                         .items_center()
                         .child(button(
                             tokens,
                             "update-check",
                             "ui.check_for_updates",
                             !busy && !ready,
+                            false,
                             cx,
                             |view, cx| view.check_updates(cx),
                         ))
@@ -330,6 +330,7 @@ pub(super) fn about_page(
                                 "update-download",
                                 "ui.download_update",
                                 available && !view.settings_preview,
+                                true,
                                 cx,
                                 |view, cx| view.download_update(cx),
                             ))
@@ -340,6 +341,7 @@ pub(super) fn about_page(
                                 "update-install",
                                 "ui.restart_plume",
                                 !view.settings_preview,
+                                true,
                                 cx,
                                 |view, cx| view.install_update(cx),
                             ))
@@ -358,11 +360,12 @@ pub(super) fn about_page(
                     .w_full()
                     .h(px(3.))
                     .rounded_full()
-                    .bg(tokens.fill)
+                    .bg(tokens.track)
                     .overflow_hidden()
                     .child(
                         div()
                             .h_full()
+                            .rounded_full()
                             .w(relative(download_percent(*received, *total) as f32 / 100.))
                             .bg(tokens.accent),
                     ),
@@ -377,38 +380,26 @@ pub(super) fn about_page(
                     .id("update-error-detail")
                     .max_h(px(64.))
                     .overflow_y_scroll()
-                    .text_xs()
-                    .text_color(tokens.muted)
+                    .text_size(px(12.))
+                    .text_color(tokens.subtle)
                     .child(error.clone()),
             )
         });
-    div()
-        .w_full()
-        .max_w(px(480.))
-        .flex()
-        .flex_col()
-        .gap(px(20.))
-        .child(
-            div()
-                .flex()
-                .justify_between()
-                .items_center()
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(tr("ui.about")),
-                )
-                .child(div().text_xs().text_color(tokens.muted).child(
-                    tr("updates.installed_version").replace("{version}", env!("CARGO_PKG_VERSION")),
-                )),
-        )
-        .child(software_update)
-        .child(super::release_notes::inline_notes(
-            &view.update.notes_content(),
-            tokens,
-        ))
-        .into_any_element()
+    let version = tr("updates.installed_version").replace("{version}", env!("CARGO_PKG_VERSION"));
+    super::view::page(
+        tokens,
+        tr("ui.about"),
+        Some((&version, "")),
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(software_update)
+            .child(super::release_notes::inline_notes(
+                &view.update.notes_content(),
+                tokens,
+            )),
+    )
 }
 
 fn download_percent(received: u64, total: u64) -> u64 {
@@ -424,27 +415,19 @@ fn button(
     id: impl Into<ElementId>,
     label: &'static str,
     enabled: bool,
+    primary: bool,
     cx: &mut Context<SettingsView>,
     action: impl Fn(&mut SettingsView, &mut Context<SettingsView>) + 'static,
 ) -> impl IntoElement {
-    div()
-        .id(id)
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(px(6.))
-        .bg(tokens.fill)
-        .border_1()
-        .border_color(tokens.hairline)
-        .text_xs()
-        .whitespace_nowrap()
-        .flex_shrink_0()
-        .when(!enabled, |el| el.opacity(0.45))
-        .when(enabled, |el| {
-            el.cursor_pointer()
-                .hover(|style| style.bg(tokens.fill_hover))
-                .on_click(cx.listener(move |view, _, _, cx| action(view, cx)))
-        })
-        .child(tr(label))
+    let button = Button::new(*tokens, id, tr(label))
+        .size(ButtonSize::Small)
+        .enabled(enabled)
+        .on_click(cx, move |view, _, cx| action(view, cx));
+    if primary {
+        button.primary()
+    } else {
+        button
+    }
 }
 
 #[cfg(test)]

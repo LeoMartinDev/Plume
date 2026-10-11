@@ -30,7 +30,9 @@ fn controller(cx: &App) -> Option<Entity<SettingsView>> {
 }
 
 const CLOSE_DISPATCH_DELAY: Duration = Duration::from_millis(1);
-const SETTINGS_CONTENT_HEIGHT: f32 = 410.;
+const SETTINGS_WIDTH: f32 = 760.;
+const SETTINGS_CONTENT_HEIGHT: f32 = 480.;
+const ONBOARDING_CONTENT_HEIGHT: f32 = 500.;
 
 pub fn open_settings(cx: &mut App, phase: AppPhase, downloads: DownloadRequestTracker) {
     open_settings_in(cx, phase, downloads, crate::dirs::AppDirs::resolve());
@@ -108,6 +110,7 @@ fn open_settings_window(
     settings_preview: bool,
     onboarding_preview: bool,
 ) {
+    plume_ui::register_fonts(cx);
     let mut arguments = std::env::args();
     let show_about = std::env::args().any(|argument| argument == "--about");
     let update_error = arguments
@@ -116,6 +119,21 @@ fn open_settings_window(
         .map(|error| error.chars().take(4096).collect::<String>());
     let preview_update = settings_preview
         .then(super::updates::preview_state)
+        .flatten();
+    // Previews can open on any page: --section=dictation|model|interface|history|about.
+    let preview_section = settings_preview
+        .then(|| {
+            std::env::args().find_map(|argument| {
+                Some(match argument.strip_prefix("--section=")? {
+                    "dictation" => SettingsSection::Dictation,
+                    "model" => SettingsSection::Model,
+                    "interface" => SettingsSection::Appearance,
+                    "history" => SettingsSection::History,
+                    "about" => SettingsSection::About,
+                    _ => return None,
+                })
+            })
+        })
         .flatten();
     let onboarding = onboarding_preview || (!settings_preview && phase.prefs().needs_onboarding());
     if onboarding
@@ -126,11 +144,11 @@ fn open_settings_window(
         phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Model;
     }
     let height = if onboarding {
-        450.
+        ONBOARDING_CONTENT_HEIGHT
     } else {
         SETTINGS_CONTENT_HEIGHT
     } + if cfg!(target_os = "macos") { 32. } else { 0. };
-    let bounds = Bounds::centered(None, size(px(720.), px(height)), cx);
+    let bounds = Bounds::centered(None, size(px(SETTINGS_WIDTH), px(height)), cx);
     let history_path = dirs.history_path();
     let prefs_path = dirs.prefs_path();
     let (history, history_error) =
@@ -200,6 +218,8 @@ fn open_settings_window(
                         section: if show_about || update_error.is_some() || preview_update.is_some()
                         {
                             SettingsSection::About
+                        } else if let Some(section) = preview_section {
+                            section
                         } else if settings_preview {
                             SettingsSection::History
                         } else {
@@ -432,7 +452,7 @@ pub(super) fn finish_onboarding_window(cx: &mut App) {
     let bounds = Bounds::centered(
         None,
         size(
-            px(720.),
+            px(SETTINGS_WIDTH),
             px(SETTINGS_CONTENT_HEIGHT + if cfg!(target_os = "macos") { 32. } else { 0. }),
         ),
         cx,

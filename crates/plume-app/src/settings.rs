@@ -53,13 +53,13 @@ impl SettingsSection {
         }
     }
 
-    fn icon(self) -> &'static str {
+    fn icon(self) -> Option<&'static str> {
         match self {
-            Self::Dictation => "fluent/mic.svg",
-            Self::Model => "fluent/cube.svg",
-            Self::Appearance => "fluent/theme.svg",
-            Self::History => "fluent/history.svg",
-            Self::About => "brand/plume.svg",
+            Self::Dictation => Some("ui/mic.svg"),
+            Self::Model => Some("ui/cube.svg"),
+            Self::Appearance => Some("ui/theme.svg"),
+            Self::History => Some("ui/history.svg"),
+            Self::About => None,
         }
     }
 }
