@@ -13,12 +13,12 @@ pub(crate) const CHUNK_MEL: usize = 56;
 pub(crate) const CACHE_MEL: usize = 9;
 
 const N_FFT: usize = 512;
-const HOP: usize = 160;
+pub(crate) const HOP: usize = 160;
 const WIN: usize = 400;
-const N_MELS: usize = 128;
+pub(crate) const N_MELS: usize = 128;
 const PREEMPH: f32 = 0.97;
 const LOG_GUARD: f32 = 5.960_464_5e-8;
-const MAX_SYMBOLS: usize = 10;
+pub(crate) const MAX_SYMBOLS: usize = 10;
 fn samples_needed(chunk: usize) -> usize {
     (chunk + 1) * CHUNK_SAMPLES
 }
@@ -64,6 +64,11 @@ fn is_lang_tag(piece: &str) -> bool {
     }
 }
 
+/// Control tokens such as `<|nospeech|>` or `<|fr|>` in Parakeet's vocabulary.
+fn is_control_token(piece: &str) -> bool {
+    piece.len() > 4 && piece.starts_with("<|") && piece.ends_with("|>")
+}
+
 pub(crate) struct Vocab {
     pieces: Vec<String>,
     emit: Vec<bool>,
@@ -71,6 +76,7 @@ pub(crate) struct Vocab {
 }
 
 impl Vocab {
+    /// Nemotron's vocabulary: one piece per line, ending with `<blank>`.
     pub fn load(path: &Path, joint_dim: usize) -> Result<Self, BoxError> {
         let text = std::fs::read_to_string(path)?;
         let pieces: Vec<String> = text.lines().map(str::to_string).collect();
@@ -81,19 +87,49 @@ impl Vocab {
             )
             .into());
         }
-        let Some(blank) = pieces.iter().position(|p| p == "<blank>") else {
-            return Err("vocab has no <blank> piece".into());
+        Self::from_pieces(pieces, "<blank>")
+    }
+
+    /// Parakeet's vocabulary: `piece id` per line, ids in order, ending with `<blk>`.
+    pub fn load_indexed(path: &Path) -> Result<Self, BoxError> {
+        let text = std::fs::read_to_string(path)?;
+        let mut pieces = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let (piece, id) = line
+                .rsplit_once(' ')
+                .ok_or_else(|| format!("vocab line {} has no id", index + 1))?;
+            if id.parse::<usize>().ok() != Some(index) {
+                return Err(format!("vocab line {} has id {id}, want {index}", index + 1).into());
+            }
+            pieces.push(piece.to_string());
+        }
+        Self::from_pieces(pieces, "<blk>")
+    }
+
+    fn from_pieces(pieces: Vec<String>, blank: &str) -> Result<Self, BoxError> {
+        let Some(blank) = pieces.iter().position(|p| p == blank) else {
+            return Err(format!("vocab has no {blank} piece").into());
         };
         let emit = pieces
             .iter()
             .enumerate()
-            .map(|(i, p)| i != blank && p != "<unk>" && !is_lang_tag(p))
+            .map(|(i, p)| {
+                i != blank
+                    && p != "<unk>"
+                    && p != "<pad>"
+                    && !is_lang_tag(p)
+                    && !is_control_token(p)
+            })
             .collect();
         Ok(Self {
             pieces,
             emit,
             blank,
         })
+    }
+
+    pub fn len(&self) -> usize {
+        self.pieces.len()
     }
 
     pub fn decode(&self, ids: &[usize]) -> String {
@@ -176,11 +212,17 @@ impl Mel {
     }
 
     fn chunk_frames(&self, pcm: &[f32], chunk: usize) -> Vec<f32> {
+        self.frames(pcm, chunk * CHUNK_MEL, CHUNK_MEL)
+    }
+
+    /// Log-mel frames `first..first + count`, row-major (`count` x `N_MELS`).
+    /// Frame `f` is centered on sample `f * HOP`.
+    pub fn frames(&self, pcm: &[f32], first: usize, count: usize) -> Vec<f32> {
         let bins = N_FFT / 2 + 1;
         // The 400-sample Hann window is centered inside the 512-point FFT.
         // With the FFT's 256-sample centering pad, its first sample therefore
         // starts 200 samples before the frame center, not 256 samples before it.
-        let base = chunk as isize * CHUNK_SAMPLES as isize - (WIN / 2) as isize;
+        let base = (first * HOP) as isize - (WIN / 2) as isize;
         let at = |i: isize| -> f32 {
             if i < 0 || i >= pcm.len() as isize {
                 0.0
@@ -188,10 +230,10 @@ impl Mel {
                 pcm[i as usize]
             }
         };
-        let mut frames = vec![0.0f32; CHUNK_MEL * N_MELS];
+        let mut frames = vec![0.0f32; count * N_MELS];
         let mut buf = vec![Complex::new(0.0f32, 0.0); N_FFT];
         let mut scratch = vec![Complex::new(0.0f32, 0.0); self.fft.get_inplace_scratch_len()];
-        for r in 0..CHUNK_MEL {
+        for r in 0..count {
             let start = base + (r * HOP) as isize;
             for (n, slot) in buf.iter_mut().enumerate().take(WIN) {
                 let i = start + n as isize;
@@ -535,5 +577,38 @@ mod tests {
         assert_eq!(vocab.decode(&[1, 2]), "bonjour");
         assert_eq!(vocab.decode(&[0, 3, 9]), "");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn indexed_vocab_skips_control_tokens_and_checks_ids() {
+        let dir = std::env::temp_dir().join(format!("plume-engine-ivocab-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vocab.txt");
+        std::fs::write(
+            &path,
+            "<unk> 0\n<|fr|> 1\n\u{2581}bon 2\njour 3\n<pad> 4\n<blk> 5\n",
+        )
+        .unwrap();
+        let vocab = Vocab::load_indexed(&path).unwrap();
+        assert_eq!(vocab.blank, 5);
+        assert_eq!(vocab.len(), 6);
+        assert_eq!(vocab.decode(&[1, 2, 3, 0, 4, 5]), "bonjour");
+        std::fs::write(&path, "<unk> 0\n<blk> 2\n").unwrap();
+        assert!(Vocab::load_indexed(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn frames_at_any_offset_match_chunk_frames() {
+        let pcm: Vec<f32> = (0..20_000)
+            .map(|i| ((i * 7919) % 211) as f32 / 211.0 - 0.5)
+            .collect();
+        let mel = Mel::new();
+        let chunk = mel.chunk_frames(&pcm, 1);
+        assert_eq!(mel.frames(&pcm, CHUNK_MEL, CHUNK_MEL), chunk);
+        assert_eq!(
+            mel.frames(&pcm, CHUNK_MEL + 3, 2),
+            chunk[3 * N_MELS..5 * N_MELS]
+        );
     }
 }

@@ -40,7 +40,7 @@ Plume handles one take at a time. Wait while the bubble shows starting, transcri
 
 Plume stays in your menu bar or system tray. Click its icon to reopen settings; right-click it for the menu. Closing settings keeps dictation available in the background.
 
-Setup runs once, including for existing installations, and preserves your model and shortcuts. If interrupted, it resumes where you left off. All four models remain available afterward in **Settings → Model**.
+Setup runs once, including for existing installations, and preserves your model and shortcuts. If interrupted, it resumes where you left off. All five models remain available afterward in **Settings → Model**.
 
 ## What you can do
 
@@ -56,16 +56,17 @@ Setup runs once, including for existing installations, and preserves your model 
 
 ## Available models
 
-All four models run locally and support French and English. Download and manage them directly in **Settings → Model**.
+All five models run locally and support French and English. Download and manage them directly in **Settings → Model**.
 
 | Model | Download size | Language coverage | Profile |
 | --- | --- | --- | --- |
 | **Nemotron 3.5 Compact** | 793 MB | 35 languages | Prioritizes fast responses |
 | **Whisper Base** | 142 MB | 99 languages | Smallest download; a lightweight starting point |
 | **Whisper Small** | 466 MB | 99 languages | Balanced speed and accuracy |
+| **Parakeet TDT v3** | 639 MB | 25 European languages | Fast and accurate on European languages |
 | **Whisper Large-v3-Turbo** | 1.5 GB | 99 languages | Prioritizes accuracy, with a larger download |
 
-Sizes are approximate. Speed and recognition quality depend on your computer, microphone, language and recording conditions.
+Sizes are approximate. Parakeet TDT v3 is [NVIDIA's model](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), licensed under CC BY 4.0, in the [ONNX conversion by Ilya Stupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx). Speed and recognition quality depend on your computer, microphone, language and recording conditions.
 
 The language picker currently offers **Automatic**, **French** and **English**. The language counts describe each model's broader coverage.
 

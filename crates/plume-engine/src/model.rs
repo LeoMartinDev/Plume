@@ -45,7 +45,11 @@ impl ModelDir {
     }
 }
 
-fn tensor_shape(session: &Session, port: &str, name: &str) -> Result<Vec<i64>, BoxError> {
+pub(crate) fn tensor_shape(
+    session: &Session,
+    port: &str,
+    name: &str,
+) -> Result<Vec<i64>, BoxError> {
     let outlet = session
         .inputs()
         .iter()
@@ -109,6 +113,7 @@ impl LanguageTarget {
 pub(crate) enum EngineBackend {
     Nemotron(Arc<OrtInner>),
     Whisper(Arc<WhisperContext>),
+    Parakeet(Arc<crate::parakeet::ParakeetInner>),
 }
 
 #[derive(Clone)]
@@ -213,6 +218,16 @@ impl Engine {
         let context = WhisperContext::new_with_params(path, WhisperContextParameters::default())?;
         Ok(Self {
             backend: EngineBackend::Whisper(Arc::new(context)),
+            language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
+        })
+    }
+
+    /// Opens a Parakeet TDT directory (`encoder.onnx`, `decoder_joint.onnx`,
+    /// `vocab.txt`). Parakeet detects the spoken language itself.
+    pub fn open_parakeet(dir: impl AsRef<Path>) -> Result<Self, BoxError> {
+        let inner = crate::parakeet::open(dir.as_ref())?;
+        Ok(Self {
+            backend: EngineBackend::Parakeet(Arc::new(inner)),
             language: Arc::new(AtomicI64::new(Language::Auto.encoder_id())),
         })
     }

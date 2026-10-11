@@ -87,7 +87,7 @@ retention_days = 30
 max_entries = 500
 ```
 
-`appearance` accepts `auto`, `light` or `dark`; `language` accepts `auto`, `fr` or `en`; insertion accepts `auto`, `clipboard` or `typing`. Models are `nemotron-3.5-compact`, `whisper-base` `whisper-small` and `whisper-large-v3-turbo`. The old model name `light` still loads.
+`appearance` accepts `auto`, `light` or `dark`; `language` accepts `auto`, `fr` or `en`; insertion accepts `auto`, `clipboard` or `typing`. Models are `nemotron-3.5-compact`, `whisper-base`, `whisper-small`, `parakeet-tdt-v3` and `whisper-large-v3-turbo`.
 
 History settings accept 1–3,650 days and 1–100,000 entries, or `"unlimited"` for either limit independently. Missing keys use 30 days and 500 entries. Invalid history fields individually use their default and produce a warning, preserving other preferences. The UI offers exactly three finite choices per setting: 7/30/90 days and 100/500/5,000 entries, plus Unlimited for each. A valid custom TOML value remains visible on the selector without adding another menu option.
 

@@ -1,5 +1,6 @@
 mod decode;
 mod model;
+mod parakeet;
 mod wav;
 
 pub use model::{Engine, Language, LanguageTarget, ModelDir};
@@ -35,6 +36,13 @@ impl AsrEngine for Engine {
                 let context = context.clone();
                 Box::new(std::iter::once_with(move || {
                     transcribe_whisper(&context, audio, language, cancel)
+                        .map(|text| Hypothesis::Final(Transcript { text }))
+                }))
+            }
+            model::EngineBackend::Parakeet(inner) => {
+                let inner = inner.clone();
+                Box::new(std::iter::once_with(move || {
+                    parakeet::transcribe(&inner, audio, cancel)
                         .map(|text| Hypothesis::Final(Transcript { text }))
                 }))
             }

@@ -9,12 +9,14 @@ pub enum ModelId {
     WhisperBase,
     WhisperSmall,
     WhisperLargeV3Turbo,
+    ParakeetTdtV3,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EngineKind {
     Nemotron,
     Whisper,
+    Parakeet,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,6 +111,24 @@ const WHISPER_LARGE_V3_TURBO_FILES: &[ModelFile] = &[ModelFile {
     bytes: 1_624_555_275,
 }];
 
+const PARAKEET_FILES: &[ModelFile] = &[
+    ModelFile {
+        remote: "encoder-model.int8.onnx",
+        local: "encoder.onnx",
+        bytes: 652_183_999,
+    },
+    ModelFile {
+        remote: "decoder_joint-model.int8.onnx",
+        local: "decoder_joint.onnx",
+        bytes: 18_202_004,
+    },
+    ModelFile {
+        remote: "vocab.txt",
+        local: "vocab.txt",
+        bytes: 93_939,
+    },
+];
+
 const CATALOG: &[ModelEntry] = &[
     ModelEntry {
         id: ModelId::Nemotron35Compact,
@@ -153,6 +173,20 @@ const CATALOG: &[ModelEntry] = &[
         files: WHISPER_SMALL_FILES,
     },
     ModelEntry {
+        id: ModelId::ParakeetTdtV3,
+        name: "Parakeet TDT v3",
+        size: "639 MB",
+        languages: "25 European languages",
+        guidance: "Fast and accurate",
+        speed: 4,
+        accuracy: 4,
+        streaming: false,
+        engine: EngineKind::Parakeet,
+        repo: "istupakov/parakeet-tdt-0.6b-v3-onnx",
+        revision: "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
+        files: PARAKEET_FILES,
+    },
+    ModelEntry {
         id: ModelId::WhisperLargeV3Turbo,
         name: "Whisper Large-v3-Turbo",
         size: "1.5 GB",
@@ -175,6 +209,7 @@ impl ModelId {
             Self::WhisperBase => "whisper-base",
             Self::WhisperSmall => "whisper-small",
             Self::WhisperLargeV3Turbo => "whisper-large-v3-turbo",
+            Self::ParakeetTdtV3 => "parakeet-tdt-v3",
         }
     }
     pub fn parse(raw: &str) -> Option<Self> {
@@ -183,6 +218,7 @@ impl ModelId {
             "whisper-base" => Some(Self::WhisperBase),
             "whisper-small" => Some(Self::WhisperSmall),
             "whisper-large-v3-turbo" => Some(Self::WhisperLargeV3Turbo),
+            "parakeet-tdt-v3" => Some(Self::ParakeetTdtV3),
             _ => None,
         }
     }
@@ -195,8 +231,8 @@ impl ModelId {
     }
 
     /// True when the model covers the pinned settings language.
-    /// All four current packs cover French and English (Nemotron: 35
-    /// languages, Whisper: 99), so this only dims future packs that
+    /// All current packs cover French and English (Nemotron: 35 languages,
+    /// Whisper: 99, Parakeet: 25), so this only dims future packs that
     /// are English-only or French-only.
     pub fn supports(self, language: crate::prefs::LanguagePref) -> bool {
         use crate::prefs::LanguagePref;
@@ -206,7 +242,8 @@ impl ModelId {
                 Self::Nemotron35Compact
                 | Self::WhisperBase
                 | Self::WhisperSmall
-                | Self::WhisperLargeV3Turbo => true,
+                | Self::WhisperLargeV3Turbo
+                | Self::ParakeetTdtV3 => true,
             },
         }
     }
@@ -236,6 +273,7 @@ pub fn open(id: ModelId, dir: &Path) -> Result<Engine, String> {
         EngineKind::Whisper => {
             Engine::open_whisper(dir.join("model.bin")).map_err(|err| err.to_string())
         }
+        EngineKind::Parakeet => Engine::open_parakeet(dir).map_err(|err| err.to_string()),
     }
 }
 
@@ -245,7 +283,7 @@ mod tests {
 
     #[test]
     fn catalog_has_named_models_with_choice_metadata() {
-        assert_eq!(entries().len(), 4);
+        assert_eq!(entries().len(), 5);
         for entry in entries() {
             assert!(!entry.name.is_empty());
             assert!(!entry.size.is_empty());

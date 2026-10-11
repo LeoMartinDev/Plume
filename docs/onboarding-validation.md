@@ -14,7 +14,7 @@ Use a development app bundle with an isolated config/data root or a disposable u
 6. After readiness, hold the configured shortcut and speak. The setup screen shows recording, transcription and the final text. No other app receives text, the clipboard is unchanged, and no history entry or saved recording is created. Repeat with silence, Esc and an input device disconnected during capture.
 7. Quit during a voiced test, then relaunch. Preview audio and metadata are removed; previous recordings survive. The permission step resumes after revalidating the model.
 8. Finish without doing a test. Finish must be disabled while an operation is active or a required permission/service is unavailable. Confirm setup completion is persisted and the native setup window closes immediately from the permissions/test step, without a confirmation screen or delay. Verify normal dictation works in a text editor.
-9. Close/reopen setup through the tray while incomplete. Progress survives. After completion the tray opens ordinary settings, with all four models. Without a usable tray, completion reveals settings rather than leaving an inaccessible background app.
+9. Close/reopen setup through the tray while incomplete. Progress survives. After completion the tray opens ordinary settings, with all five models. Without a usable tray, completion reveals settings rather than leaving an inaccessible background app.
 10. After completion, make the chosen model unavailable in the disposable environment. Settings must expose the unavailable state and a model repair action, including on the Dictation page.
 
 ### Microphone prompt focus (macOS)
