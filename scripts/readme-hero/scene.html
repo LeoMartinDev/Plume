@@ -1,0 +1,529 @@
+<!doctype html>
+<!--
+  The README hero: the website's dictation demo as a deterministic scene.
+  Nothing moves on its own. render(t) draws the exact frame at t milliseconds,
+  so capture.mjs can record a seamless loop frame by frame.
+  ?theme=light|dark picks the scheme.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plume README hero</title>
+    <style>
+      @font-face {
+        font-family: 'Geist';
+        font-weight: 400;
+        src: url('../../crates/plume-ui/assets/fonts/Geist-400.ttf');
+      }
+      @font-face {
+        font-family: 'Geist';
+        font-weight: 500;
+        src: url('../../crates/plume-ui/assets/fonts/Geist-500.ttf');
+      }
+      @font-face {
+        font-family: 'Geist';
+        font-weight: 600;
+        src: url('../../crates/plume-ui/assets/fonts/Geist-600.ttf');
+      }
+      @font-face {
+        font-family: 'Geist Mono';
+        src: url('../../crates/plume-ui/assets/fonts/GeistMono-400.ttf');
+      }
+      @font-face {
+        font-family: 'Instrument Serif';
+        font-style: italic;
+        src: url('../../crates/plume-ui/assets/fonts/InstrumentSerif-Italic.ttf');
+      }
+
+      /* Tokens from website/src/styles/global.css */
+      :root {
+        --accent: #3b6dff;
+        --bg: #f4f4f2;
+        --surface: #ffffff;
+        --border-strong: #dcdcd7;
+        --text: #141414;
+        --muted: #55555a;
+        --subtle: #6b6b70;
+        --title-dim: #7c7c82;
+        --highlight: 230, 236, 255;
+        --highlight-alpha: 1;
+        --accent-text: #2d57e0;
+        --stage-bg: #141414;
+        --stage-dots: rgba(255, 255, 255, 0.07);
+        --stage-border: transparent;
+        --window-bg: #fbfbfa;
+        --window-border: #ecece8;
+        --window-text: #2a2a2e;
+        --window-title: #141414;
+        --window-chrome: #dcdcd7;
+        --glow-opacity: 0;
+        --pill-bg: #141414;
+        --pill-fg: #ffffff;
+        --pill-muted: #c9c9ce;
+        --pill-chip: #2a2a2e;
+        --pill-chip-fg: #e4e4e8;
+        --pill-idle: #6e6e76;
+        --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+        --app-bg: #f4f4f2;
+      }
+      :root[data-theme='dark'] {
+        --bg: #0b0b0c;
+        --surface: #131315;
+        --border-strong: #2a2a2e;
+        --text: #f2f2f0;
+        --muted: #a3a3aa;
+        --subtle: #8a8a92;
+        --title-dim: #b4b4bc;
+        --highlight: 59, 109, 255;
+        --highlight-alpha: 0.24;
+        --accent-text: #8fa9ff;
+        --stage-bg: #101012;
+        --stage-dots: rgba(255, 255, 255, 0.05);
+        --stage-border: #1f1f22;
+        --window-bg: #161618;
+        --window-border: #2a2a2e;
+        --window-text: #c9c9ce;
+        --window-title: #f2f2f0;
+        --window-chrome: #2e2e33;
+        --glow-opacity: 0.32;
+        --pill-bg: #f2f2f0;
+        --pill-fg: #0b0b0c;
+        --pill-muted: #45454b;
+        --pill-chip: #e2e2df;
+        --pill-chip-fg: #2a2a2e;
+        --pill-idle: #8a8a90;
+        --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        --app-bg: #0b0b0c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 760px;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Geist', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      .scene {
+        position: relative;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 52px;
+        text-align: center;
+      }
+      .glow {
+        position: absolute;
+        top: 40px;
+        left: 50%;
+        width: 760px;
+        height: 420px;
+        transform: translateX(-50%);
+        border-radius: 50%;
+        filter: blur(90px);
+        background: var(--accent);
+        opacity: var(--glow-opacity);
+      }
+      h1 {
+        position: relative;
+        margin: 0;
+        font-size: 64px;
+        line-height: 0.95;
+        font-weight: 600;
+        letter-spacing: -0.055em;
+      }
+      .serif {
+        font-family: 'Instrument Serif', serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 1.1em;
+        letter-spacing: -0.02em;
+        color: var(--title-dim);
+      }
+      .hint {
+        position: relative;
+        margin-top: 22px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 15px;
+        color: var(--subtle);
+      }
+      .hint kbd {
+        font-family: 'Geist Mono', monospace;
+        font-size: 13px;
+        padding: 3px 9px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-bottom-width: 2px;
+        color: var(--text);
+      }
+      .stage {
+        position: relative;
+        margin-top: 36px;
+        width: 1152px;
+        flex: 1;
+        border-radius: 28px 28px 0 0;
+        background-color: var(--stage-bg);
+        background-image: radial-gradient(var(--stage-dots) 1px, transparent 1px);
+        background-size: 22px 22px;
+        border: 1px solid var(--stage-border);
+        border-bottom: 0;
+        padding: 40px 48px 0;
+        display: flex;
+        gap: 28px;
+        overflow: hidden;
+      }
+      .window {
+        position: relative;
+        height: 100%;
+        background: var(--window-bg);
+        border: 1px solid var(--window-border);
+        border-bottom: 0;
+        border-radius: 14px 14px 0 0;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+        text-align: left;
+        overflow: hidden;
+      }
+      .chrome {
+        height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--window-border);
+      }
+      .chrome span {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: var(--window-chrome);
+      }
+      .chrome em {
+        margin-left: 12px;
+        font-style: normal;
+        font-size: 13px;
+        color: var(--subtle);
+      }
+      /* Plume itself: a real capture of the onboarding, cut above its footer */
+      .app {
+        width: 560px;
+        flex: none;
+        background: var(--app-bg);
+      }
+      .app-shot {
+        height: 315px;
+        overflow: hidden;
+      }
+      .app-shot img {
+        display: block;
+        width: 560px;
+      }
+      .note {
+        flex: 1;
+        margin-top: 40px;
+        height: calc(100% - 40px);
+      }
+      .doc {
+        padding: 28px 36px 0;
+        font-size: 16px;
+        line-height: 1.65;
+        color: var(--window-text);
+        display: grid;
+        gap: 12px;
+      }
+      .doc-title {
+        margin: 0 0 4px;
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--window-title);
+      }
+      .doc p {
+        margin: 0;
+      }
+      mark {
+        border-radius: 4px;
+        padding: 1px 2px;
+        margin: 0 -2px;
+        color: var(--window-title);
+      }
+      mark:empty {
+        padding: 0;
+        margin: 0;
+      }
+      .rest {
+        color: transparent;
+      }
+      .caret {
+        display: inline-block;
+        width: 2px;
+        height: 1.1em;
+        vertical-align: -0.18em;
+        margin-left: 2px;
+        margin-right: -4px;
+        background: var(--accent);
+      }
+      .pill-slot {
+        position: absolute;
+        left: 50%;
+        bottom: 36px;
+        transform: translateX(-50%);
+        display: grid;
+        place-items: center;
+      }
+      .pill-frame {
+        grid-area: 1 / 1;
+      }
+
+      /* website/src/components/VoicePill.astro */
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        height: 46px;
+        padding: 0 8px 0 15px;
+        border-radius: 999px;
+        white-space: nowrap;
+        font-size: 13px;
+        background: var(--pill-bg);
+        color: var(--pill-fg);
+        box-shadow: var(--pill-shadow);
+      }
+      .label {
+        color: var(--pill-muted);
+      }
+      .label--end {
+        padding-right: 8px;
+      }
+      .pill kbd {
+        font-family: inherit;
+        font-size: 11px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: var(--pill-chip);
+        color: var(--pill-chip-fg);
+      }
+      .keys {
+        display: flex;
+        gap: 4px;
+      }
+      .dot {
+        position: relative;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        flex: none;
+      }
+      .dot--idle {
+        background: var(--pill-idle);
+      }
+      .dot--live {
+        background: var(--accent);
+      }
+      .ping {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .wave {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        height: 22px;
+      }
+      .wave span {
+        width: 3px;
+        border-radius: 3px;
+        background: var(--pill-fg);
+      }
+      .dots {
+        display: flex;
+        gap: 4px;
+      }
+      .dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .check {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent);
+        flex: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div class="glow"></div>
+      <h1>Speak. Release.<br /><span class="serif">Keep writing.</span></h1>
+      <p class="hint">Hold <kbd data-key>Ctrl</kbd> + <kbd data-key>Space</kbd> to talk</p>
+      <div class="stage">
+        <div class="window app">
+          <div class="chrome"><span></span><span></span><span></span></div>
+          <div class="app-shot"><img id="app" alt="" /></div>
+        </div>
+        <div class="window note">
+          <div class="chrome"><span></span><span></span><span></span><em>Notes — Product sync</em></div>
+          <div class="doc">
+            <p class="doc-title">Product sync</p>
+            <p>Ship the onboarding behind a flag first, then open it to everyone.</p>
+            <p id="line"><mark id="typed"></mark><span class="caret" id="caret"></span><span class="rest" id="rest"></span></p>
+          </div>
+          <div class="pill-slot">
+            <span class="pill-frame" data-pill="idle">
+              <span class="pill"><span class="dot dot--idle"></span><span class="label">Ready</span><span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd></span></span>
+            </span>
+            <span class="pill-frame" data-pill="listening">
+              <span class="pill"><span class="dot dot--live"><span class="ping" id="ping"></span></span><span class="wave" id="wave"></span><span class="label">Listening</span><kbd>Esc</kbd></span>
+            </span>
+            <span class="pill-frame" data-pill="transcribing">
+              <span class="pill"><span class="dots" id="dots"><span></span><span></span><span></span></span><span class="label label--end">Transcribing on-device</span></span>
+            </span>
+            <span class="pill-frame" data-pill="inserted">
+              <span class="pill">
+                <span class="check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>
+                <span class="label label--end">Inserted</span>
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const theme = new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = theme;
+      document.getElementById('app').src = `app-${theme}.png`;
+
+      const LOOP = 8000;
+      const FADE = 300; // the website cross-fades pill states over 0.3s
+      const TEXT =
+        "Let's also add a short video on the download page so people see how the shortcut works before they install it";
+      const WORDS = TEXT.match(/\S+\s*/g);
+
+      // Timeline (ms), after the website's hero demo, folded into one seamless loop.
+      const LISTEN = 700;
+      const TRANSCRIBE = 3300;
+      const INSERT = 4400;
+      const SETTLE = 6300; // the highlight fades out
+      const IDLE = 7000; // the pill returns to Ready
+      const CLEAR = 7450; // the line fades away, ready to start over
+      const CLEARED = 7800;
+
+      // Word times: 45ms per word with the website's jitter, from a fixed seed.
+      let seed = 7;
+      const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const wordAt = [];
+      let at = INSERT;
+      for (let i = 0; i < WORDS.length; i++) {
+        at += 45 + random() * 27;
+        wordAt.push(at);
+      }
+
+      const clamp = (v) => Math.min(1, Math.max(0, v));
+      const ease = (v) => v * v * (3 - 2 * v);
+      // Opacity of a state shown on [from, to), fading in and out like the website.
+      const shown = (t, from, to) => {
+        const visible = (u) =>
+          u < from ? 0 : u < to ? ease(clamp((u - from) / FADE)) : 1 - ease(clamp((u - to) / FADE));
+        return Math.max(visible(t), visible(t + LOOP), visible(t - LOOP));
+      };
+
+      const bars = [6, 16, 20, 12, 18, 8, 20, 14, 7, 17, 11, 6];
+      const wave = document.getElementById('wave');
+      for (const _ of bars) wave.append(document.createElement('span'));
+      const frames = [...document.querySelectorAll('[data-pill]')];
+      const keys = [...document.querySelectorAll('[data-key]')];
+      const typed = document.getElementById('typed');
+      const rest = document.getElementById('rest');
+      const line = document.getElementById('line');
+      const caret = document.getElementById('caret');
+      const ping = document.getElementById('ping');
+      const thinking = [...document.getElementById('dots').children];
+      const style = getComputedStyle(document.documentElement);
+      const highlight = style.getPropertyValue('--highlight').trim();
+      const highlightAlpha = parseFloat(style.getPropertyValue('--highlight-alpha'));
+
+      window.render = (time) => {
+        const t = ((time % LOOP) + LOOP) % LOOP;
+        const s = t / 1000;
+
+        const spans = {
+          idle: [IDLE, LOOP + LISTEN],
+          listening: [LISTEN, TRANSCRIBE],
+          transcribing: [TRANSCRIBE, INSERT],
+          inserted: [INSERT, IDLE],
+        };
+        for (const frame of frames) {
+          const [from, to] = spans[frame.dataset.pill];
+          const o = shown(t, from, to);
+          frame.style.opacity = o;
+          frame.style.transform = `translateY(${4 * (1 - o)}px) scale(${0.96 + 0.04 * o})`;
+        }
+
+        // The hint's keys go down while the shortcut is held.
+        const down = t >= LISTEN && t < TRANSCRIBE;
+        for (const key of keys) {
+          key.style.transform = down ? 'translateY(1px)' : '';
+          key.style.background = down ? `rgba(${highlight}, ${highlightAlpha})` : '';
+          key.style.borderColor = down ? 'var(--accent)' : '';
+          key.style.color = down ? 'var(--accent-text)' : '';
+        }
+
+        // Live dot ping: 1.6s, ease-out.
+        const p = (s % 1.6) / 1.6;
+        const out = 1 - (1 - p) * (1 - p);
+        ping.style.transform = `scale(${1 + 1.4 * out})`;
+        ping.style.opacity = 0.5 * (1 - out);
+
+        // Voice bars: scaleY 0.4 → 1.1 → 0.4, each with its own period and offset.
+        wave.childNodes.forEach((bar, i) => {
+          const d = 0.8 + (i % 5) * 0.1;
+          const o = -(i % 4) * 0.25;
+          const phase = (((s - o) % d) + d) % d / d;
+          const v = 0.4 + 0.7 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase));
+          bar.style.height = `${bars[i] * v}px`;
+        });
+
+        // Thinking dots fade to 0.25 at half period, staggered by 0.2s.
+        thinking.forEach((dot, i) => {
+          const phase = (((s - 0.2 * i) % 1) + 1) % 1;
+          dot.style.opacity = 1 - 0.75 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase));
+        });
+
+        // Typed text; the untyped rest keeps its place, so lines never reflow.
+        const count = t < INSERT ? 0 : wordAt.filter((w) => w <= t).length;
+        typed.textContent = WORDS.slice(0, count).join('');
+        rest.textContent = WORDS.slice(count).join('');
+        const settle = ease(clamp((t - SETTLE) / 800));
+        typed.style.background = `rgba(${highlight}, ${highlightAlpha * (1 - settle)})`;
+        line.style.opacity = t < CLEAR ? 1 : 1 - ease(clamp((t - CLEAR) / (CLEARED - CLEAR)));
+        if (t >= CLEARED) {
+          typed.textContent = '';
+          rest.textContent = TEXT;
+          line.style.opacity = 1;
+          typed.style.background = '';
+        }
+        caret.style.visibility = s % 1 < 0.5 ? 'visible' : 'hidden';
+      };
+      window.render(0);
+    </script>
+  </body>
+</html>

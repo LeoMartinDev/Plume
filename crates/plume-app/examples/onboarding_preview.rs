@@ -32,6 +32,11 @@ fn main() {
             plume_app::prefs::Scheme::Dark,
         ));
     }
+    if std::env::args().any(|arg| arg == "--light") {
+        prefs.set_appearance(plume_app::prefs::AppearancePref::Fixed(
+            plume_app::prefs::Scheme::Light,
+        ));
+    }
     let root =
         std::env::temp_dir().join(format!("plume-onboarding-preview-{}", std::process::id()));
     Application::new()

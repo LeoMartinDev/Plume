@@ -4,13 +4,14 @@
 
 # Plume
 
-**Speak. Release. Keep writing.**
-
 Plume turns your voice into text in the app you're already using. Hold a shortcut, speak, and release to insert your words. Transcription runs on your computer, so your audio stays with you.
 
 **[Get Plume →](https://github.com/LeoMartinDev/Plume/releases)** · [Report an issue](https://github.com/LeoMartinDev/Plume/issues)
 
-![Plume in dark mode, showing the model picker and download options](docs/images/plume.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/plume-hero-dark.webp">
+  <img src="docs/images/plume-hero-light.webp" alt="Holding Ctrl + Space, speaking, and releasing: Plume listens, transcribes on-device, and types the sentence into a note">
+</picture>
 
 ## Get Plume
 
