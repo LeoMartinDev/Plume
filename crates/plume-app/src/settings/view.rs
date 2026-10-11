@@ -45,7 +45,7 @@ fn sync_native_titlebar(window: &Window, palette: Palette) {
     let dark = i32::from(palette == Palette::Dark);
     let (chrome, border, text) = (
         colorref(tokens.bg),
-        colorref(tokens.bg),
+        colorref(tokens.border_strong),
         colorref(tokens.subtle),
     );
 
