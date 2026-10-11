@@ -199,6 +199,29 @@ mod contract_tests {
         }
     }
     #[test]
+    fn esc_during_a_hold_cancels_and_the_late_release_is_ignored() {
+        let mut c = Controller::new();
+        assert_eq!(
+            c.event(event(HotkeyAction::Hold, HotkeyEvent::Pressed)),
+            Some(Action::Start(Mode::Hold))
+        );
+        c.phase = Phase::Recording(Mode::Hold);
+        assert_eq!(
+            c.event(event(HotkeyAction::Cancel, HotkeyEvent::Pressed)),
+            Some(Action::Cancel)
+        );
+        assert_eq!(
+            c.event(event(HotkeyAction::Hold, HotkeyEvent::Released)),
+            None
+        );
+        assert_eq!(c.phase, Phase::Cancelling);
+        assert!(c.finish(true, true, true));
+        assert_eq!(
+            c.event(event(HotkeyAction::Hold, HotkeyEvent::Pressed)),
+            Some(Action::Start(Mode::Hold))
+        );
+    }
+    #[test]
     fn toggle_owns_its_stop_and_other_gestures_are_consumed() {
         let mut c = Controller::new();
         assert_eq!(

@@ -141,6 +141,7 @@ impl BindingSet {
 
     /// The hook stopped observing the keyboard: every key it believes held
     /// may have been released unseen. Held chords end now.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn forget(&mut self) -> Vec<BindingEvent> {
         let mut released = Vec::new();
         for entry in &mut self.entries {
@@ -320,10 +321,10 @@ mod tests {
     fn shortcut_editing_reports_nothing_hidden() {
         let mut set = set(&[(Hold, "Ctrl+Space")]);
         set.passthrough = true;
-        assert_eq!(press(&mut set, &[CTRL, SPACE]).1, false);
+        assert!(!press(&mut set, &[CTRL, SPACE]).1);
         set.passthrough = false;
         assert_eq!(set.push(None, SPACE, Edge::Down), (Vec::new(), false));
-        assert_eq!(set.push(None, SPACE, Edge::Up).1, false);
+        assert!(!set.push(None, SPACE, Edge::Up).1);
         assert_eq!(press(&mut set, &[SPACE]), (vec![ev(Hold, Pressed)], true));
     }
 }

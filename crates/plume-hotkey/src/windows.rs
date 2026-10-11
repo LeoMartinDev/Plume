@@ -67,50 +67,97 @@ fn should_block_windows_key(vk: u32, block_super: bool, super_down: bool) -> boo
     block_super && (super_down || matches!(windows_key_id(vk), Some(KeyId::Super)))
 }
 
+/// Modifiers whose OS key state is physical. A Windows key the hook blocks
+/// never reaches that state.
+fn trusted_mods(blocks_super: bool) -> crate::chord::Mods {
+    crate::chord::Mods {
+        ctrl: true,
+        alt: true,
+        shift: true,
+        super_key: !blocks_super,
+        fn_key: false,
+    }
+}
+
 #[cfg(windows)]
 mod backend {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use std::thread::{self, JoinHandle};
+    use std::time::Instant;
 
     use plume_core::{BoxError, GlobalHotkey, HotkeyEvent};
-    use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::System::StationsAndDesktops::{
+        CloseDesktop, OpenInputDesktop, DESKTOP_SWITCHDESKTOP,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentProcessId, GetCurrentThread, GetCurrentThreadId, OpenProcess,
+        OpenProcessToken, SetThreadPriority, PROCESS_QUERY_LIMITED_INFORMATION,
+        THREAD_PRIORITY_TIME_CRITICAL,
+    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_QUIT,
+        CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+        GetWindowThreadProcessId, PostThreadMessageW, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_QUIT,
     };
 
-    use super::{decode_windows, should_block_windows_key};
-    use crate::chord::ChordTracker;
+    use super::{decode_windows, should_block_windows_key, trusted_mods};
+    use crate::binding_set::{BindingSet, Physical, RECONCILE_INTERVAL};
+    use crate::chord::Mods;
     use crate::shortcut::Shortcut;
     use crate::HotkeyError;
 
-    struct WinRaw {
-        vk: u32,
-        flags: u32,
-        msg: u32,
-    }
-
     static HOOK_TX: OnceLock<Mutex<Option<Sender<crate::BindingEvent>>>> = OnceLock::new();
-    type TrackedBinding = (crate::HotkeyAction, ChordTracker, bool);
-    static TRACKERS: OnceLock<Mutex<Vec<TrackedBinding>>> = OnceLock::new();
+    static BINDINGS: OnceLock<Mutex<BindingSet>> = OnceLock::new();
     static CANCEL_ACTIVE: AtomicBool = AtomicBool::new(false);
     static PASSTHROUGH: AtomicBool = AtomicBool::new(false);
     static CANCEL_SUPER: AtomicBool = AtomicBool::new(false);
     static BLOCK_SUPER: AtomicBool = AtomicBool::new(false);
     static SUPER_DOWN: AtomicBool = AtomicBool::new(false);
+    /// Every hook callback, injected or not. See `BindingSet::reconcile`.
+    static EDGES: AtomicU64 = AtomicU64::new(0);
 
     fn hook_tx() -> &'static Mutex<Option<Sender<crate::BindingEvent>>> {
         HOOK_TX.get_or_init(|| Mutex::new(None))
+    }
+
+    fn bindings() -> MutexGuard<'static, BindingSet> {
+        let set = BINDINGS.get_or_init(|| Mutex::new(BindingSet::default()));
+        let mut set = set.lock().unwrap_or_else(|err| err.into_inner());
+        set.cancel_active = CANCEL_ACTIVE.load(Ordering::Relaxed);
+        set.passthrough = PASSTHROUGH.load(Ordering::Relaxed);
+        set
+    }
+
+    /// Callers hold the bindings lock, so the hook and reconciliation never
+    /// reorder the edges of one binding.
+    fn send(events: Vec<crate::BindingEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        if let Ok(guard) = hook_tx().lock() {
+            if let Some(tx) = guard.as_ref() {
+                for event in events {
+                    let _ = tx.send(event);
+                }
+            }
+        }
     }
 
     pub struct WindowsHotkey {
         events: Receiver<crate::BindingEvent>,
         thread_id: u32,
         hook_thread: Option<JoinHandle<()>>,
+        reconciled: Instant,
+        sight: Sight,
     }
 
     impl WindowsHotkey {
@@ -129,6 +176,10 @@ mod backend {
             let (ready_tx, ready_rx) = mpsc::channel();
             // The hook callback and GetMessageW share this thread. MSG is written by GetMessageW first.
             let hook_thread = thread::spawn(move || unsafe {
+                // Every key on the desktop waits for this thread. Windows
+                // silently removes a hook that answers late, and inference
+                // can saturate every core.
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
                 let module = GetModuleHandleW(std::ptr::null());
                 let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_proc), module, 0);
                 if hook.is_null() {
@@ -151,6 +202,8 @@ mod backend {
                     events: rx,
                     thread_id,
                     hook_thread: Some(hook_thread),
+                    reconciled: Instant::now(),
+                    sight: Sight::new(),
                 }),
                 Ok(Err(err)) => Err(err.into()),
                 Err(err) => Err(HotkeyError::Os(err.to_string()).into()),
@@ -165,6 +218,7 @@ mod backend {
         l_param: LPARAM,
     ) -> LRESULT {
         if n_code == 0 && l_param != 0 {
+            EDGES.fetch_add(1, Ordering::Relaxed);
             let info = &*(l_param as *const KBDLLHOOKSTRUCT);
             // Text insertion uses SendInput. Its synthetic Ctrl/trigger
             // events must never start or end a physical dictation hold.
@@ -173,38 +227,10 @@ mod backend {
             }
             let mut consumed = false;
             if let Some((id, edge)) = decode_windows(info.vkCode, info.flags, w_param as u32) {
-                if let Ok(mut trackers) = TRACKERS.get_or_init(|| Mutex::new(Vec::new())).lock() {
-                    for (action, tracker, owned) in trackers.iter_mut() {
-                        let enabled = *action != crate::HotkeyAction::Cancel
-                            || CANCEL_ACTIVE.load(Ordering::Relaxed);
-                        let signal = tracker.push(id, edge);
-                        let trigger =
-                            matches!(id, super::KeyId::Trigger(_)) && tracker.owns_trigger(id);
-                        if enabled
-                            && trigger
-                            && signal == Some(HotkeyEvent::Pressed)
-                            && !PASSTHROUGH.load(Ordering::Relaxed)
-                        {
-                            *owned = true;
-                        }
-                        consumed |= trigger && *owned;
-                        if trigger && edge == super::Edge::Up {
-                            *owned = false;
-                        }
-                        if enabled {
-                            if let Some(edge) = signal {
-                                if let Ok(guard) = hook_tx().lock() {
-                                    if let Some(tx) = guard.as_ref() {
-                                        let _ = tx.send(crate::BindingEvent {
-                                            action: *action,
-                                            edge,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let mut set = bindings();
+                let (events, swallow) = set.push(None, id, edge);
+                consumed = swallow;
+                send(events);
             }
             let is_super = matches!(
                 super::windows_key_id(info.vkCode),
@@ -216,9 +242,7 @@ mod backend {
             }
             let block = should_block_windows_key(
                 info.vkCode,
-                BLOCK_SUPER.load(Ordering::Relaxed)
-                    || CANCEL_ACTIVE.load(Ordering::Relaxed)
-                        && CANCEL_SUPER.load(Ordering::Relaxed),
+                blocks_super(),
                 SUPER_DOWN.load(Ordering::Relaxed),
             );
             if is_super && is_up {
@@ -231,6 +255,117 @@ mod backend {
         CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
     }
 
+    fn blocks_super() -> bool {
+        BLOCK_SUPER.load(Ordering::Relaxed)
+            || CANCEL_ACTIVE.load(Ordering::Relaxed) && CANCEL_SUPER.load(Ordering::Relaxed)
+    }
+
+    /// Modifier state as Windows reports it. The hook never hides a
+    /// modifier, so this is the physical state, except for a Windows key the
+    /// hook is blocking.
+    fn async_mods() -> Mods {
+        let down = |vk: u32| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0;
+        Mods {
+            ctrl: down(super::VK_CONTROL),
+            alt: down(super::VK_MENU),
+            shift: down(super::VK_SHIFT),
+            super_key: down(super::VK_LWIN) || down(super::VK_RWIN),
+            fn_key: false,
+        }
+    }
+
+    /// Whether the hook can observe the keyboard. User Interface Privilege
+    /// Isolation hides every key from it while a window of a more privileged
+    /// process (Task Manager, an elevated terminal) is in front, and the
+    /// secure desktop (UAC prompt, lock screen) hides them all.
+    struct Sight {
+        own: Option<u32>,
+        window: usize,
+        pid: u32,
+        blind: bool,
+    }
+
+    impl Sight {
+        fn new() -> Self {
+            Sight {
+                own: unsafe { token_integrity(GetCurrentProcess()) },
+                window: 0,
+                pid: 0,
+                blind: false,
+            }
+        }
+
+        fn blind(&mut self) -> bool {
+            unsafe {
+                let desktop = OpenInputDesktop(0, 0, DESKTOP_SWITCHDESKTOP);
+                if desktop.is_null() {
+                    self.blind = true;
+                    // Re-read the foreground once the desktop is back.
+                    self.window = 0;
+                    return true;
+                }
+                CloseDesktop(desktop);
+                let window = GetForegroundWindow();
+                if window.is_null() {
+                    // Focus is moving between windows.
+                    return self.blind;
+                }
+                let mut pid = 0;
+                GetWindowThreadProcessId(window, &mut pid);
+                if window as usize != self.window || pid != self.pid {
+                    self.window = window as usize;
+                    self.pid = pid;
+                    self.blind = pid != 0
+                        && pid != GetCurrentProcessId()
+                        && matches!(
+                            (self.own, process_integrity(pid)),
+                            (Some(own), Some(theirs)) if theirs > own
+                        );
+                }
+                self.blind
+            }
+        }
+    }
+
+    /// An unreadable process (a service, a protected process) counts as
+    /// visible: a false "blind" would end every hold in that window.
+    unsafe fn process_integrity(pid: u32) -> Option<u32> {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let level = token_integrity(process);
+        CloseHandle(process);
+        level
+    }
+
+    unsafe fn token_integrity(process: HANDLE) -> Option<u32> {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+            return None;
+        }
+        // TOKEN_MANDATORY_LABEL followed by its SID, u64-aligned.
+        let mut buffer = [0u64; 16];
+        let mut written = 0u32;
+        let read = GetTokenInformation(
+            token,
+            TokenIntegrityLevel,
+            buffer.as_mut_ptr().cast(),
+            std::mem::size_of_val(&buffer) as u32,
+            &mut written,
+        );
+        CloseHandle(token);
+        if read == 0 {
+            return None;
+        }
+        let sid = (*buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid;
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return None;
+        }
+        Some(*GetSidSubAuthority(sid, u32::from(count) - 1))
+    }
+
     impl WindowsHotkey {
         pub fn set_passthrough(&mut self, active: bool) {
             PASSTHROUGH.store(active, Ordering::Relaxed);
@@ -239,7 +374,8 @@ mod backend {
             &mut self,
             bindings: &[crate::HotkeyBinding],
         ) -> Result<(), BoxError> {
-            let mut trackers = Vec::new();
+            let mut set = BindingSet::default();
+            set.register(bindings)?;
             let mut block_super = false;
             let mut cancel_super = false;
             for b in bindings {
@@ -249,14 +385,10 @@ mod backend {
                 } else {
                     block_super |= key.super_key;
                 }
-                trackers.push((b.action, ChordTracker::new(key), false));
             }
             BLOCK_SUPER.store(block_super, Ordering::Relaxed);
             CANCEL_SUPER.store(cancel_super, Ordering::Relaxed);
-            *TRACKERS
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .unwrap() = trackers;
+            *self::bindings() = set;
             while self.events.try_recv().is_ok() {}
             Ok(())
         }
@@ -264,7 +396,39 @@ mod backend {
             CANCEL_ACTIVE.store(active, Ordering::Relaxed);
         }
         pub fn next_binding_event(&mut self) -> Option<crate::BindingEvent> {
+            if self.reconciled.elapsed() >= RECONCILE_INTERVAL {
+                self.reconciled = Instant::now();
+                self.reconcile();
+            }
             self.events.try_recv().ok()
+        }
+
+        /// Repair what the hook missed. A blocked trigger never reaches the
+        /// OS key state, so only blindness reveals its lost release; the
+        /// modifiers are read back directly.
+        fn reconcile(&mut self) {
+            let was_blind = self.sight.blind;
+            let blind = self.sight.blind();
+            let edges = EDGES.load(Ordering::Relaxed);
+            let physical = Physical {
+                mods: async_mods(),
+                trusted: trusted_mods(blocks_super()),
+                released: Vec::new(),
+            };
+            let mut set = bindings();
+            let events = if blind && !was_blind {
+                SUPER_DOWN.store(false, Ordering::Relaxed);
+                tracing::info!(
+                    "plume-hotkey: the keyboard is hidden from the hook (elevated window or secure desktop)"
+                );
+                set.forget()
+            } else {
+                set.reconcile(edges, physical)
+            };
+            for event in &events {
+                tracing::info!(action = ?event.action, "plume-hotkey: release recovered from the keyboard state");
+            }
+            send(events);
         }
     }
     impl GlobalHotkey for WindowsHotkey {
@@ -286,6 +450,7 @@ mod backend {
             CANCEL_SUPER.store(false, Ordering::Relaxed);
             BLOCK_SUPER.store(false, Ordering::Relaxed);
             SUPER_DOWN.store(false, Ordering::Relaxed);
+            *bindings() = BindingSet::default();
             {
                 let mut slot = hook_tx().lock().unwrap_or_else(|err| err.into_inner());
                 *slot = None;

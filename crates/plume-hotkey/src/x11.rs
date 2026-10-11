@@ -9,6 +9,9 @@ use x11rb::rust_connection::RustConnection;
 #[cfg(test)]
 use x11rb::NONE;
 
+use std::time::Instant;
+
+use crate::binding_set::RECONCILE_INTERVAL;
 use crate::chord::{Edge, RepeatFilter};
 use crate::shortcut::{Shortcut, Trigger};
 use crate::HotkeyError;
@@ -31,11 +34,17 @@ pub struct X11Hotkey {
     cancel_active: bool,
     pending: std::collections::VecDeque<crate::BindingEvent>,
     passthrough: bool,
+    /// Key events read from the server. See `reconcile_held`.
+    edges: u64,
+    reading: Option<(u64, Vec<bool>)>,
+    reconciled: Instant,
 }
 struct Grabbed {
     action: crate::HotkeyAction,
     trigger: u8,
     base: ModMask,
+    /// Every modifier bit the chord holds, its trigger's included.
+    chord: u16,
     masks: Vec<ModMask>,
     filter: RepeatFilter,
     held: bool,
@@ -50,7 +59,14 @@ struct Grabbed {
     super_key: Option<u8>,
 }
 impl Grabbed {
-    fn push(&mut self, detail: u8, state: u16, edge: Edge) -> Option<crate::BindingEvent> {
+    /// `tolerated` modifier bits may be held on top of the chord.
+    fn push(
+        &mut self,
+        detail: u8,
+        state: u16,
+        edge: Edge,
+        tolerated: u16,
+    ) -> Option<crate::BindingEvent> {
         if detail != self.trigger {
             return None;
         }
@@ -61,7 +77,9 @@ impl Grabbed {
         // differ. Repeats after changing modifiers cannot become a new press.
         let signal = self.filter.push(edge)?;
         match signal {
-            HotkeyEvent::Pressed if state == u16::from(self.base) => self.held = true,
+            HotkeyEvent::Pressed if mask_matches(state, u16::from(self.base), tolerated) => {
+                self.held = true
+            }
             HotkeyEvent::Released if self.held => self.held = false,
             _ => return None,
         }
@@ -106,6 +124,9 @@ impl X11Hotkey {
             cancel_active: false,
             pending: Default::default(),
             passthrough: false,
+            edges: 0,
+            reading: None,
+            reconciled: Instant::now(),
         })
     }
     fn keycode(&self, sym: u32) -> Result<u8, BoxError> {
@@ -150,10 +171,18 @@ impl X11Hotkey {
             }
             masks.push(mask);
         }
+        let held_trigger = match key.trigger {
+            Trigger::Ctrl => ModMask::CONTROL,
+            Trigger::Alt => ModMask::M1,
+            Trigger::Shift => ModMask::SHIFT,
+            Trigger::Super => ModMask::M4,
+            _ => ModMask::from(0u16),
+        };
         self.grabs.push(Grabbed {
             action: binding.action,
             trigger,
             base,
+            chord: u16::from(base | held_trigger),
             masks,
             filter: RepeatFilter::new(),
             held: false,
@@ -188,6 +217,7 @@ impl X11Hotkey {
     }
     fn ungrab(&mut self) {
         self.pending.clear();
+        self.reading = None;
         for g in self.grabs.drain(..) {
             for mask in g.masks {
                 if let Ok(cookie) = self.conn.ungrab_key(g.trigger, self.root, mask) {
@@ -264,15 +294,17 @@ impl X11Hotkey {
             if let Ok(cookie) = self.conn.query_keymap() {
                 if let Ok(keys) = cookie.reply() {
                     for g in &mut self.grabs {
-                        if g.rearm_pending
-                            && keys.keys[usize::from(g.trigger / 8)] & (1 << (g.trigger % 8)) == 0
-                        {
+                        if g.rearm_pending && !key_down(&keys.keys, g.trigger) {
                             g.filter.push(Edge::Up);
                             g.rearm_pending = false;
                         }
                     }
                 }
             }
+        }
+        if self.reconciled.elapsed() >= RECONCILE_INTERVAL {
+            self.reconciled = Instant::now();
+            self.reconcile_held();
         }
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
@@ -283,10 +315,23 @@ impl X11Hotkey {
                 Event::KeyRelease(e) => (e.detail, e.state, Edge::Up),
                 _ => continue,
             };
+            self.edges += 1;
             let state = u16::from(state)
                 & !(u16::from(ModMask::LOCK) | u16::from(ModMask::M2) | u16::from(ModMask::M5));
+            // While a held chord grabs the keyboard, Esc arrives with that
+            // chord's modifiers. They must not stop it from cancelling.
+            let held_chords = self
+                .grabs
+                .iter()
+                .filter(|g| g.held && g.action != crate::HotkeyAction::Cancel)
+                .fold(0, |mask, g| mask | g.chord);
             for g in &mut self.grabs {
-                if let Some(event) = g.push(detail, state, edge) {
+                let tolerated = if g.action == crate::HotkeyAction::Cancel {
+                    held_chords
+                } else {
+                    0
+                };
+                if let Some(event) = g.push(detail, state, edge, tolerated) {
                     self.pending.push_back(event);
                 }
             }
@@ -295,6 +340,38 @@ impl X11Hotkey {
             }
         }
         None
+    }
+    /// The server reports the release of a held trigger to the grabbing
+    /// client, but a VT switch or a client stealing the grab can still lose
+    /// it. The server keymap knows whether the trigger is down.
+    fn reconcile_held(&mut self) {
+        if !self.grabs.iter().any(|g| g.held) {
+            self.reading = None;
+            return;
+        }
+        let Ok(Ok(keys)) = self.conn.query_keymap().map(|cookie| cookie.reply()) else {
+            return;
+        };
+        let released: Vec<bool> = self
+            .grabs
+            .iter()
+            .map(|g| g.held && !key_down(&keys.keys, g.trigger))
+            .collect();
+        // Like `BindingSet::reconcile`: only a reading stable across two
+        // polls with no key event in between overrides the event stream.
+        let stable = self.reading.as_ref() == Some(&(self.edges, released.clone()));
+        self.reading = Some((self.edges, released.clone()));
+        if !stable {
+            return;
+        }
+        for (g, released) in self.grabs.iter_mut().zip(released) {
+            if released {
+                if let Some(event) = g.push(g.trigger, 0, Edge::Up, 0) {
+                    tracing::info!(action = ?event.action, "plume-hotkey: release recovered from the keyboard state");
+                    self.pending.push_back(event);
+                }
+            }
+        }
     }
     pub fn set_passthrough(&mut self, active: bool) -> Result<(), BoxError> {
         if active == self.passthrough {
@@ -308,7 +385,7 @@ impl X11Hotkey {
             self.register_bindings(&bindings)?;
             let keys = self.conn.query_keymap()?.reply()?;
             for g in &mut self.grabs {
-                if keys.keys[usize::from(g.trigger / 8)] & (1 << (g.trigger % 8)) != 0 {
+                if key_down(&keys.keys, g.trigger) {
                     g.filter.push(Edge::Down);
                     g.rearm_pending = true;
                 }
@@ -362,6 +439,16 @@ impl Drop for X11Hotkey {
 
 fn drain(conn: &RustConnection) {
     while let Ok(Some(_)) = conn.poll_for_event() {}
+}
+
+/// `keys` is a QueryKeymap bit vector indexed by keycode.
+fn key_down(keys: &[u8; 32], keycode: u8) -> bool {
+    keys[usize::from(keycode / 8)] & (1 << (keycode % 8)) != 0
+}
+
+/// Every modifier of the chord is held, and any other held one is tolerated.
+fn mask_matches(state: u16, base: u16, tolerated: u16) -> bool {
+    state & base == base && state & !base & !tolerated == 0
 }
 
 #[cfg(test)]
@@ -434,12 +521,12 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    #[test]
-    fn shared_trigger_does_not_rearm_when_modifiers_change_during_repeat() {
-        let make = |action, base| Grabbed {
+    fn grabbed(action: crate::HotkeyAction, trigger: u8, base: ModMask) -> Grabbed {
+        Grabbed {
             action,
-            trigger: 65,
+            trigger,
             base,
+            chord: u16::from(base),
             masks: Vec::new(),
             filter: RepeatFilter::new(),
             held: false,
@@ -448,7 +535,47 @@ mod tests {
             alt: None,
             shift: None,
             super_key: None,
-        };
+        }
+    }
+
+    #[test]
+    fn esc_cancels_with_the_held_chord_modifiers_only() {
+        let held = u16::from(ModMask::CONTROL | ModMask::SHIFT);
+        let mut cancel = grabbed(crate::HotkeyAction::Cancel, 9, ModMask::from(0u16));
+        assert!(cancel.push(9, held, Edge::Down, 0).is_none());
+        cancel.push(9, held, Edge::Up, 0);
+        assert_eq!(
+            cancel.push(9, held, Edge::Down, held).unwrap().edge,
+            HotkeyEvent::Pressed
+        );
+        cancel.push(9, held, Edge::Up, held);
+        // Alt is not part of the held chord.
+        let alt = held | u16::from(ModMask::M1);
+        assert!(cancel.push(9, alt, Edge::Down, held).is_none());
+    }
+
+    #[test]
+    fn modifier_masks_require_the_chord_and_tolerate_only_extras() {
+        let ctrl = u16::from(ModMask::CONTROL);
+        let shift = u16::from(ModMask::SHIFT);
+        assert!(mask_matches(ctrl, ctrl, 0));
+        assert!(!mask_matches(ctrl | shift, ctrl, 0));
+        assert!(mask_matches(ctrl | shift, ctrl, shift));
+        assert!(mask_matches(ctrl, ctrl, ctrl));
+        assert!(!mask_matches(0, ctrl, ctrl));
+    }
+
+    #[test]
+    fn keymap_bits_are_indexed_by_keycode() {
+        let mut keys = [0u8; 32];
+        keys[8] = 1 << 1;
+        assert!(key_down(&keys, 65));
+        assert!(!key_down(&keys, 64));
+    }
+
+    #[test]
+    fn shared_trigger_does_not_rearm_when_modifiers_change_during_repeat() {
+        let make = |action, base| grabbed(action, 65, base);
         let mut hold = make(crate::HotkeyAction::Hold, ModMask::CONTROL);
         let mut toggle = make(
             crate::HotkeyAction::Toggle,
@@ -456,20 +583,20 @@ mod tests {
         );
         let combined = u16::from(ModMask::CONTROL | ModMask::SHIFT);
         let control = u16::from(ModMask::CONTROL);
-        assert!(hold.push(65, combined, Edge::Down).is_none());
+        assert!(hold.push(65, combined, Edge::Down, 0).is_none());
         assert_eq!(
-            toggle.push(65, combined, Edge::Down).unwrap().edge,
+            toggle.push(65, combined, Edge::Down, 0).unwrap().edge,
             HotkeyEvent::Pressed
         );
-        assert!(hold.push(65, control, Edge::Down).is_none());
-        assert!(toggle.push(65, control, Edge::Down).is_none());
-        assert!(hold.push(65, control, Edge::Up).is_none());
+        assert!(hold.push(65, control, Edge::Down, 0).is_none());
+        assert!(toggle.push(65, control, Edge::Down, 0).is_none());
+        assert!(hold.push(65, control, Edge::Up, 0).is_none());
         assert_eq!(
-            toggle.push(65, control, Edge::Up).unwrap().edge,
+            toggle.push(65, control, Edge::Up, 0).unwrap().edge,
             HotkeyEvent::Released
         );
         assert_eq!(
-            hold.push(65, control, Edge::Down).unwrap().edge,
+            hold.push(65, control, Edge::Down, 0).unwrap().edge,
             HotkeyEvent::Pressed
         );
     }

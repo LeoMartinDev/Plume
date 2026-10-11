@@ -13,10 +13,11 @@ Closing Settings hides the window while the global dictation shortcut, downloads
 3. Speak. The bubble appears and reacts to microphone levels. Partial hypotheses are not inserted into the target application.
 4. Release the shortcut. Capture ends; the bubble switches to three dots while transcription finishes, then a small progress indicator during insertion. On completion, the black bubble gently contracts and fades away in 320 ms. Normal dictation never displays transcript text in the bubble.
 5. One operation occupies Plume until insertion finishes. Presses during starting, transcription, insertion or cancellation are ignored; release and press again when ready. Completion indicates dispatch, rather than an acknowledgment from every target application.
+6. A release Plume cannot observe still ends the capture. Plume compares the keys it believes held with the OS keyboard state every 50 ms. On Windows, a capture also ends when a window of a more privileged process comes to the front or the secure desktop appears (UAC prompt, lock screen), because keys are then hidden from the hook.
 
 ## Cancel a session
 
-Press `Esc` during microphone opening, capture, transcription or manual retranscription. Capture stops without the normal 120 ms release tail, the worker aborts and the audio is deleted. The bubble remains busy until microphone closure, worker return and deletion are confirmed. A paste already dispatched is not cancelled. No late result is inserted.
+Press `Esc` during microphone opening, capture, transcription or manual retranscription. `Esc` also cancels while the hold-to-talk shortcut is still down, despite its modifiers, and never reaches the target application (on Windows, `Ctrl+Shift+Esc` would open Task Manager). Capture stops without the normal 120 ms release tail, the worker aborts and the audio is deleted. The bubble remains busy until microphone closure, worker return and deletion are confirmed. A paste already dispatched is not cancelled. No late result is inserted.
 
 ## Insertion and history
 
