@@ -81,12 +81,12 @@ impl RecordingStore {
                 Ok(record) => record,
                 Err(_) => {
                     tracing::warn!("recording metadata corrupt");
-                    fs::rename(&path, path.with_extension("json.corrupt"))?;
+                    rename(&path, &path.with_extension("json.corrupt"))?;
                     continue;
                 }
             };
             if record.version != 1 {
-                fs::rename(&path, path.with_extension("json.unsupported"))?;
+                rename(&path, &path.with_extension("json.unsupported"))?;
                 continue;
             }
             store.next_id = store.next_id.max(record.id);
@@ -98,7 +98,7 @@ impl RecordingStore {
             {
                 let _ = fs::remove_file(&temp);
                 let _ = fs::remove_file(store.audio_path(record.id));
-                fs::remove_file(path)?;
+                remove(&path)?;
                 remove_if_exists(&store.cancel_path(record.id))?;
                 continue;
             }
@@ -106,9 +106,9 @@ impl RecordingStore {
                 // Header is flushed periodically, so uncommitted tail bytes are intentionally ignored.
                 let valid = hound::WavReader::open(&temp).is_ok_and(|wav| wav.duration() > 0);
                 if valid {
-                    fs::rename(&temp, store.audio_path(record.id))?;
+                    rename(&temp, &store.audio_path(record.id))?;
                 } else {
-                    fs::remove_file(&temp)?;
+                    remove(&temp)?;
                 }
             }
             if record.status == "Recording" || record.status == "Transcribing" {
@@ -290,7 +290,7 @@ impl RecordingStore {
         self.save(&record)?;
         let partial = self.partial_path(record.id);
         if partial.exists() {
-            fs::rename(partial, self.audio_path(record.id))?;
+            rename(&partial, &self.audio_path(record.id))?;
         }
         self.records.retain(|r| r.id != record.id);
         self.records.push(record);
@@ -510,10 +510,44 @@ fn private_file(path: &Path) -> std::io::Result<File> {
     options.open(path)
 }
 fn remove_if_exists(path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(path) {
+    match remove(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+fn remove(path: &Path) -> std::io::Result<()> {
+    retry_transient(|| fs::remove_file(path))
+}
+fn rename(source: &Path, destination: &Path) -> std::io::Result<()> {
+    retry_transient(|| fs::rename(source, destination))
+}
+/// Antivirus and indexing services open a file right after it is written
+/// and briefly hold it without delete sharing. Replacing, renaming or
+/// deleting it fails meanwhile although nothing is wrong, so retry for
+/// up to about a second.
+fn retry_transient<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut delay = std::time::Duration::from_millis(5);
+    for _ in 0..8 {
+        match operation() {
+            Err(error) if is_transient(&error) => {
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(std::time::Duration::from_millis(200));
+            }
+            result => return result,
+        }
+    }
+    operation()
+}
+#[cfg(windows)]
+fn is_transient(error: &std::io::Error) -> bool {
+    // ERROR_ACCESS_DENIED (a delete is pending), ERROR_SHARING_VIOLATION,
+    // ERROR_LOCK_VIOLATION, ERROR_UNABLE_TO_REMOVE_REPLACED and
+    // ERROR_UNABLE_TO_MOVE_REPLACEMENT.
+    matches!(error.raw_os_error(), Some(5 | 32 | 33 | 1175 | 1176))
+}
+#[cfg(not(windows))]
+fn is_transient(_: &std::io::Error) -> bool {
+    false
 }
 fn save_record(root: &Path, record: &Recording) -> Result<(), BoxError> {
     let dest = root.join(format!("{}.json", record.id));
@@ -528,6 +562,15 @@ fn save_record(root: &Path, record: &Recording) -> Result<(), BoxError> {
 }
 #[cfg(windows)]
 fn replace_file(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    // Without a backup name, ERROR_UNABLE_TO_MOVE_REPLACEMENT has already
+    // removed the destination, so a retry starts again from the top.
+    retry_transient(|| replace_file_once(source, destination))
+}
+#[cfg(windows)]
+fn replace_file_once(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
 
@@ -613,6 +656,28 @@ fn test_root(prefix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn a_file_held_by_a_scanner_is_retried_and_other_errors_are_not() {
+        let mut attempts = 0;
+        let result = retry_transient(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::io::Error::from_raw_os_error(1175))
+            } else {
+                Ok(attempts)
+            }
+        });
+        assert_eq!(result.unwrap(), 3);
+
+        let mut attempts = 0;
+        let result: std::io::Result<()> = retry_transient(|| {
+            attempts += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
     fn root() -> PathBuf {
         test_root("plume-recordings")
     }
