@@ -16,7 +16,6 @@
     "language.dictation": "Langue de dictée",
     "language.interface": "Langue de l’interface",
     "models.language_incompatible": "Ce modèle ne prend pas en charge votre langue de dictée. Choisissez un modèle compatible pour continuer.",
-    "onboarding.eyebrow": "Étape {step} · {name}",
     "onboarding.languages.description": "La langue de dictée est utilisée par le modèle vocal. La langue de l’interface change les menus de l’application.",
     "onboarding.languages.headline": "Choisissez vos langues,",
     "onboarding.languages.serif": "Plume fait le reste.",

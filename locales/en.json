@@ -16,7 +16,6 @@
     "language.dictation": "Dictation language",
     "language.interface": "Interface language",
     "models.language_incompatible": "This model does not support your dictation language. Choose a compatible model to continue.",
-    "onboarding.eyebrow": "Step {step} · {name}",
     "onboarding.languages.description": "Your dictation language is used by the speech model. Interface language only changes the app's menus.",
     "onboarding.languages.headline": "Choose your languages,",
     "onboarding.languages.serif": "Plume does the rest.",

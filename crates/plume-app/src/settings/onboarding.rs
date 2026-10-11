@@ -6,7 +6,7 @@ use gpui::{
 use plume_engine::Engine;
 use plume_overlay::Feedback;
 use plume_session::{PreviewEvent, SessionMode};
-use plume_ui::{eyebrow, keycaps, Button, ButtonSize, KeySize, Tokens, FONT_MONO, FONT_SANS};
+use plume_ui::{keycaps, Button, ButtonSize, KeySize, Tokens, FONT_MONO, FONT_SANS};
 
 use super::view::{display_title, error_text, prose};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -714,22 +714,8 @@ fn step_island(step: OnboardingStep, tokens: &Tokens) -> AnyElement {
         .into_any_element()
 }
 
-fn step_eyebrow(step: OnboardingStep, tokens: &Tokens) -> impl IntoElement {
-    let index = STEPS
-        .iter()
-        .position(|(item, _)| *item == step)
-        .unwrap_or(0);
-    eyebrow(
-        tr("onboarding.eyebrow")
-            .replace("{step}", &format!("{:02}", index + 1))
-            .replace("{name}", tr(STEPS[index].1)),
-        tokens.accent_text,
-    )
-}
-
-/// Eyebrow and two-line title on the left, a short lead on the right.
+/// Two-line title on the left, a short lead on the right.
 fn step_heading(
-    step: OnboardingStep,
     tokens: &Tokens,
     headline: &str,
     serif: &str,
@@ -745,7 +731,6 @@ fn step_heading(
                 .flex()
                 .flex_col()
                 .gap(px(10.))
-                .child(step_eyebrow(step, tokens))
                 .child(display_title(tokens, headline, serif, 28.)),
         )
         .children(lead.map(|lead| {
@@ -775,7 +760,6 @@ fn languages_screen(
                 .flex()
                 .flex_col()
                 .gap(px(12.))
-                .child(step_eyebrow(OnboardingStep::Languages, tokens))
                 .child(display_title(
                     tokens,
                     tr("onboarding.languages.headline"),
@@ -812,7 +796,6 @@ fn model_screen(
         .flex_col()
         .gap(px(18.))
         .child(step_heading(
-            OnboardingStep::Model,
             tokens,
             tr("onboarding.model.headline"),
             tr("onboarding.model.serif"),
@@ -1139,7 +1122,6 @@ fn shortcuts_screen(
         .flex_col()
         .gap(px(20.))
         .child(step_heading(
-            OnboardingStep::Shortcuts,
             tokens,
             tr("onboarding.shortcuts.headline"),
             tr("onboarding.shortcuts.serif"),
@@ -1474,19 +1456,12 @@ fn permissions_screen(
                 .items_end()
                 .justify_between()
                 .gap(px(24.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(step_eyebrow(OnboardingStep::Permissions, tokens))
-                        .child(display_title(
-                            tokens,
-                            tr("onboarding.try.headline"),
-                            tr("onboarding.try.serif"),
-                            28.,
-                        )),
-                )
+                .child(div().flex().flex_col().gap(px(10.)).child(display_title(
+                    tokens,
+                    tr("onboarding.try.headline"),
+                    tr("onboarding.try.serif"),
+                    28.,
+                )))
                 .child(
                     div()
                         .flex()
