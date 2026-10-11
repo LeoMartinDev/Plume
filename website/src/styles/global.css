@@ -158,6 +158,13 @@
 *::after {
   box-sizing: border-box;
 }
+/* No scroll anchoring: on iOS, Safari 27's anchoring throws the page back to the top
+   when the web fonts swap in while people are already scrolling. The layout is built
+   not to shift, so there is nothing for it to compensate anyway. */
+html,
+body {
+  overflow-anchor: none;
+}
 html {
   scroll-behavior: smooth;
   scroll-padding-top: 80px;
