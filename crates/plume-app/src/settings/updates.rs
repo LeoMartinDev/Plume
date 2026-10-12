@@ -239,7 +239,12 @@ pub(super) fn preview_state() -> Option<UpdateState> {
 pub(super) fn preview_state_for(state: &str) -> UpdateState {
     let release = Release {
         version: "0.2.0".into(),
-        notes: String::new(),
+        notes: include_str!(concat!(
+            "../../../../releases/v",
+            env!("CARGO_PKG_VERSION"),
+            ".md"
+        ))
+        .into(),
         url: plume_updater::RELEASES_URL.into(),
         installer_name: String::new(),
         installer_url: String::new(),

@@ -166,9 +166,7 @@ impl Block {
             },
         );
         let content = div()
-            .w(px(0.))
-            .flex_grow()
-            .min_w_0()
+            .w_full()
             .text_sm()
             .when(matches!(self.kind, Kind::Heading(_)), |el| {
                 el.font_weight(FontWeight::SEMIBOLD).pt(px(6.))
@@ -184,20 +182,26 @@ impl Block {
                     .bg(tokens.surface_2)
             })
             .child(text);
+        // Block flow rather than a flex row: gpui keeps the lines of a text's
+        // last measurement, and a zero-width flex probe can land after the
+        // final layout, painting one character per line.
+        let indent = if self.quote {
+            12.
+        } else {
+            self.depth as f32 * 14.
+        };
         div()
             .w_full()
-            .min_w_0()
-            .flex()
-            .gap(px(8.))
-            .pl(px(self.depth as f32 * 14.))
+            .relative()
+            .pl(px(indent + if self.prefix.is_some() { 18. } else { 0. }))
             .when(self.quote, |el| {
-                el.border_l_2()
-                    .border_color(tokens.border_strong)
-                    .pl(px(12.))
+                el.border_l_2().border_color(tokens.border_strong)
             })
             .children(self.prefix.as_ref().map(|prefix| {
                 div()
-                    .flex_shrink_0()
+                    .absolute()
+                    .top_0()
+                    .left(px(indent))
                     .text_sm()
                     .text_color(tokens.muted)
                     .child(prefix.clone())
