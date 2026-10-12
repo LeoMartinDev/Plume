@@ -103,7 +103,7 @@ cargo run -p plume-app --example settings_preview -- /tmp/plume-settings-preview
 
 ## Logging
 
-App diagnostics use `tracing`. Development builds default to `debug` for the app's crates and `warn` for dependencies. Release builds (`cargo run --release -p plume-app`) default to warnings and errors. `RUST_LOG` overrides either default at startup; an empty or invalid filter uses the build's default.
+App diagnostics use `tracing`. Development builds default to `debug` for the app's crates and `warn` for dependencies. Release builds (`cargo run --release -p plume-app`) default to `info` for the app's crates and `warn` for dependencies. `RUST_LOG` overrides either default at startup; an empty or invalid filter uses the build's default.
 
 Use `RUST_LOG=warn` for quiet development, or `RUST_LOG=warn,plume_app=debug,plume_audio=debug,plume_engine=debug,plume_session=trace,plume_overlay=debug,plume_hotkey=debug,plume_inject=debug` for detailed diagnosis in either build. For example, in PowerShell:
 
@@ -113,7 +113,7 @@ $env:PLUME_LOG_FILE = "$PWD\plume-diagnostic.log"
 cargo run --release -p plume-app
 ```
 
-Logs go to stderr unless `PLUME_LOG_FILE` specifies a file to append to. This also makes diagnostics available in Windows release builds without a console. If the file cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
+The app logs to stderr and appends to `~/Library/Logs/Plume/plume.log` on macOS, or `plume/logs/plume.log` in the local data directory elsewhere, so an app started from Finder, a desktop entry or a Windows shortcut still leaves diagnostics. A file over 5 MB is renamed to `plume.old.log` at the next launch. `PLUME_LOG_FILE` replaces that file; if it cannot be opened, logging falls back to stderr. Restart the app after changing the environment variables; unset them to restore defaults.
 
 Session logs contain identifiers, registered dictation shortcuts, recognized shortcut press/release actions, state transitions, durations and errors. Unrelated keystrokes are never logged. They never include audio, transcripts, adjacent-field text or clipboard snapshots. Whisper/GGML log bodies are suppressed because native debug builds can include decoded tokens; the session reports typed engine errors. The version probe remains ordinary output.
 
