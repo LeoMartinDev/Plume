@@ -178,6 +178,31 @@ jobs:
           if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler is missing' }
           Add-Content $env:GITHUB_ENV "ISCC=$compiler"
       - run: cargo build --locked --release -p plume-app -p plume-updater
+      - if: runner.os == 'macOS'
+        name: Import the macOS signing certificate
+        env:
+          P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          # A stable certificate lets macOS keep Plume's permissions across
+          # updates. Never fall back to ad hoc for a release.
+          if [ -z "$P12" ] || [ -z "$P12_PASSWORD" ]; then
+            echo "::error::MACOS_SIGNING_P12 and MACOS_SIGNING_P12_PASSWORD secrets are required"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/plume-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/plume-signing.p12"
+          security import "$RUNNER_TEMP/plume-signing.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/plume-signing.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-certificate -a -Z "$keychain" | awk '/SHA-1 hash:/ { print $3; exit }')"
+          test -n "$identity"
+          echo "PLUME_MACOS_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Bundle runtimes, build installers, verify installation and checksum
         run: node scripts/package-release.mjs
       - if: runner.os == 'macOS'
@@ -211,6 +236,8 @@ jobs:
           test -f "$mount/.DS_Store"
           ditto "$mount/Plume.app" /Applications/Plume.app
           codesign --verify --deep --strict /Applications/Plume.app
+          # The designated requirement must name the certificate, not a cdhash.
+          codesign -d -r- /Applications/Plume.app 2>&1 | grep -q 'certificate leaf = H"'
           /Applications/Plume.app/Contents/MacOS/plume --version
       - uses: actions/upload-artifact@v4
         with:

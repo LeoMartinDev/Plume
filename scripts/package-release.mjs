@@ -21,6 +21,11 @@ function walk(dir) {
   });
 }
 const platform = process.platform;
+// A stable identity lets macOS keep Accessibility and Microphone permissions
+// across updates; an ad-hoc signature changes with every build. Releases set it
+// from CI; local packaging falls back to ad hoc. See docs/development.md.
+const signingIdentity = process.env.PLUME_MACOS_SIGNING_IDENTITY || '-';
+const sign = file => run('codesign', ['--force', '--timestamp=none', '--sign', signingIdentity, file]);
 const targets = {
   'linux-x64': 'x86_64-unknown-linux-gnu',
   'win32-x64': 'x86_64-pc-windows-msvc',
@@ -135,10 +140,10 @@ for (const [basename, deps] of graph) {
   }
 }
 if (platform === 'darwin') {
-  // Mach-O edits invalidate linker ad-hoc signatures, required on Apple Silicon.
-  // This uses no identity/certificate and is not publisher signing/notarization.
+  // Mach-O edits invalidate linker signatures, required on Apple Silicon.
+  // This is not publisher signing/notarization.
   for (const basename of [...copied.keys()].sort((a, b) => Number(!libraryPattern.test(a)) - Number(!libraryPattern.test(b)))) {
-    run('codesign', ['--force', '--sign', '-', path.join(stage, basename)]);
+    sign(path.join(stage, basename));
     run('codesign', ['--verify', '--strict', path.join(stage, basename)]);
   }
 }
@@ -149,7 +154,7 @@ fs.mkdirSync(brand, { recursive: true });
 fs.copyFileSync('crates/plume-app/assets/brand/plume.png', path.join(brand, 'plume.png'));
 fs.copyFileSync(`releases/v${version}.md`, path.join(stage, 'RELEASE-NOTES.md'));
 fs.writeFileSync(path.join(stage, 'RUNTIME-LIBRARIES.txt'), [...copied.keys()].filter(n => libraryPattern.test(n)).join('\n') + '\n');
-fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), 'These installers are not publisher-signed or notarized. macOS binaries use only local ad-hoc signatures after relocation. Models are downloaded separately. See README.md.\n');
+fs.writeFileSync(path.join(stage, 'UNSIGNED.txt'), `These installers are not publisher-signed or notarized. macOS binaries use ${signingIdentity === '-' ? 'only local ad-hoc signatures' : 'a self-signed certificate, not a verified publisher identity'}. Models are downloaded separately. See README.md.\n`);
 if (platform === 'darwin') {
   const app = path.join(stage, 'Plume.app');
   const contents = path.join(app, 'Contents');
@@ -167,7 +172,7 @@ if (platform === 'darwin') {
     const source = path.join(stage, file);
     if (fs.existsSync(source)) fs.cpSync(source, path.join(contents, 'Resources', file), { recursive: true });
   }
-  run('codesign', ['--force', '--sign', '-', app]);
+  sign(app);
   run('codesign', ['--verify', '--deep', '--strict', app]);
 }
 // Preserve license notices supplied alongside native runtimes where available.
@@ -192,7 +197,7 @@ for (const [basename, source] of copied) {
 if (platform === 'darwin') {
   const app = path.join(stage, 'Plume.app');
   if (fs.existsSync(licenseDir)) fs.cpSync(licenseDir, path.join(app, 'Contents/Resources/runtime-licenses'), { recursive: true });
-  run('codesign', ['--force', '--sign', '-', app]);
+  sign(app);
   run('codesign', ['--verify', '--deep', '--strict', app]);
 }
 const archive = buildInstaller({ platform, version, target, stage, dist, run });

@@ -62,7 +62,7 @@ python3 scripts/package-app.py
 
 Outputs are `target/package/Plume.app` on macOS, `target/package/plume-windows` on Windows (executable and Vulkan loader), and `target/package/plume-linux` on Linux (`bin` and `share` directories). `CARGO_TARGET_DIR` is respected. Use `--profile dev --skip-build` to package an existing debug build.
 
-On macOS, open `Plume.app` or copy it to Applications to see the icon in Finder/Launchpad. The local bundle is ad-hoc signed; public distribution requires signing and notarization. On Linux, copy the package's `bin` and `share` contents into a prefix such as `~/.local`, with its `bin` on `PATH`, and refresh the desktop icon cache if needed. On Windows, Explorer and shortcuts use the embedded icon without a separate icon file.
+On macOS, open `Plume.app` or copy it to Applications to see the icon in Finder/Launchpad. The local bundle is ad-hoc signed, so macOS asks for permissions again after each rebuild, unless `PLUME_MACOS_SIGNING_IDENTITY` is set (see [macOS signing certificate](#macos-signing-certificate)). On Linux, copy the package's `bin` and `share` contents into a prefix such as `~/.local`, with its `bin` on `PATH`, and refresh the desktop icon cache if needed. On Windows, Explorer and shortcuts use the embedded icon without a separate icon file.
 
 Icon sources and platform exports are kept in `crates/plume-app/assets/brand`. Regenerate the native icons with `node scripts/generate-icons.mjs` (requires `sharp`; macOS also uses `iconutil` for ICNS).
 
@@ -245,14 +245,48 @@ the annotated tag before validation; the tag is not moved. The native DMG fixtur
 comes from the workflow revision, while its installer imports and application
 binaries remain those of the tag. Rerunning refreshes that draft and its
 assets; a published release is refused. Review the draft before publishing it
-manually. Only the repository's automatic `GITHUB_TOKEN` is used; no signing
-secrets are required.
+manually. Besides the repository's automatic `GITHUB_TOKEN`, the macOS job
+needs the self-signed certificate described below and fails without it.
 
-**Installers are not signed by a publisher and are not notarized.** macOS applies
-only local ad-hoc signatures after relocation (needed for Apple Silicon), with no
-certificate or verified publisher identity. Gatekeeper/SmartScreen may block or
-warn about downloads; review the source/checksums and follow your organization's
-policy. Checksums detect corruption; they do not establish publisher identity.
+**Installers are not signed by a publisher and are not notarized.** macOS
+bundles are signed with a self-signed certificate, not a verified publisher
+identity. Gatekeeper/SmartScreen may block or warn about downloads; review the
+source/checksums and follow your organization's policy. Checksums detect
+corruption; they do not establish publisher identity.
+
+### macOS signing certificate
+
+macOS ties Accessibility and Microphone permissions to an app's designated
+requirement. An ad-hoc signature makes that requirement the build's own hash,
+so every update would lose both permissions. Signing every release with the
+same certificate makes it `identifier "app.plume.desktop" and certificate leaf
+= H"…"`, which stays the same across versions.
+
+The certificate is self-signed (code signing usage, 20-year validity). Its
+`.p12` is stored base64-encoded in the `MACOS_SIGNING_P12` repository secret,
+with its password in `MACOS_SIGNING_P12_PASSWORD`. CI imports it into a
+temporary keychain and exports its SHA-1 as `PLUME_MACOS_SIGNING_IDENTITY`,
+which `scripts/package-release.mjs` and `scripts/package-app.py` pass to
+`codesign`; without it they sign ad hoc. Keep a backup of the `.p12`: a new
+certificate changes the requirement, and users must grant permissions again
+once. To create one:
+
+```sh
+openssl req -x509 -newkey rsa:3072 -nodes -days 7300 \
+  -keyout plume-signing.key -out plume-signing.pem \
+  -subj "/CN=Plume Code Signing" \
+  -addext "basicConstraints=critical,CA:false" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=critical,codeSigning"
+openssl pkcs12 -export -legacy -name "Plume Code Signing" \
+  -inkey plume-signing.key -in plume-signing.pem -out plume-signing.p12
+base64 -i plume-signing.p12 | gh secret set MACOS_SIGNING_P12
+gh secret set MACOS_SIGNING_P12_PASSWORD
+```
+
+To sign a local bundle the same way, import the `.p12` into the login keychain
+and set `PLUME_MACOS_SIGNING_IDENTITY` to its SHA-1 before
+`scripts/package-app.py`.
 
 ## Rust verification
 

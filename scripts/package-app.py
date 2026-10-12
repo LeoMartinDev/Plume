@@ -51,10 +51,13 @@ def package(profile, skip_build):
         info.update(CFBundleShortVersionString=version, CFBundleVersion=version)
         with (contents / "Info.plist").open("wb") as output:
             plistlib.dump(info, output)
-        # Distribution signing and notarization require publisher credentials.
+        # Ad hoc unless a stable identity is set; see docs/development.md.
+        # Notarization requires publisher credentials.
+        identity = os.environ.get("PLUME_MACOS_SIGNING_IDENTITY") or "-"
+        sign = ["codesign", "--force", "--timestamp=none", "--sign", identity]
         for native in (contents / "MacOS").iterdir():
-            subprocess.run(["codesign", "--force", "--sign", "-", str(native)], check=True)
-        subprocess.run(["codesign", "--force", "--sign", "-", str(destination)], check=True)
+            subprocess.run([*sign, str(native)], check=True)
+        subprocess.run([*sign, str(destination)], check=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(destination)], check=True)
     elif platform == "windows":
         loader = binary.parent / "vulkan-1.dll"
