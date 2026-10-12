@@ -35,7 +35,7 @@ impl Chord {
     pub fn bind(config: &crate::Config) -> Result<Self, BoxError> {
         let mut hotkey = global_hotkey()?;
         hotkey.register_bindings(&config.bindings())?;
-        tracing::debug!(
+        tracing::info!(
             hold = config.hold.as_str(),
             toggle = config.toggle.as_ref().map(ChordSpec::as_str),
             cancel = config.cancel.as_str(),

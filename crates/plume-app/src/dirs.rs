@@ -59,6 +59,15 @@ impl AppDirs {
         self.local_data.join("history.json")
     }
 
+    /// macOS keeps app logs under ~/Library/Logs, where Console.app finds them.
+    pub fn log_path(&self) -> PathBuf {
+        #[cfg(target_os = "macos")]
+        if let Some(home) = dirs::home_dir() {
+            return home.join("Library/Logs/Plume/plume.log");
+        }
+        self.local_data.join("logs").join("plume.log")
+    }
+
     pub fn config(&self) -> &Path {
         &self.config
     }

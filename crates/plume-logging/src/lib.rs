@@ -1,14 +1,20 @@
 //! Shared logging setup for executable entry points. Libraries only emit events.
 
-use std::fs::OpenOptions;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::sync::Once;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::EnvFilter;
+
+/// A log file past this size is moved aside at startup, keeping one
+/// previous generation, so a long-lived install never grows without bound.
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 fn default_filter(development: bool) -> &'static str {
     if development {
         "warn,plume_app=debug,plume_audio=debug,plume_engine=debug,plume_session=debug,plume_overlay=debug,plume_hotkey=debug,plume_inject=debug,plume_shell=debug"
     } else {
-        "warn"
+        "warn,plume_app=info,plume_audio=info,plume_engine=info,plume_session=info,plume_overlay=info,plume_hotkey=info,plume_inject=info,plume_shell=info"
     }
 }
 
@@ -19,32 +25,57 @@ fn filter(value: Option<&str>, development: bool) -> EnvFilter {
         .unwrap_or_else(|| EnvFilter::new(default_filter(development)))
 }
 
-/// Development builds log app diagnostics; release builds log warnings/errors.
-/// RUST_LOG overrides either default. PLUME_LOG_FILE optionally appends to a file,
-/// including for Windows release builds that have no console. Safe to call twice
-/// or when the embedding application has already installed a subscriber.
+/// Development builds log app diagnostics; release builds log app milestones,
+/// warnings and errors. RUST_LOG overrides either default. Logs go to stderr.
+/// PLUME_LOG_FILE optionally appends to a file, including for Windows release
+/// builds that have no console. Safe to call twice or when the embedding
+/// application has already installed a subscriber.
 pub fn init() {
+    init_with_file(None);
+}
+
+/// Like [`init`], but also appends to `default_file` when PLUME_LOG_FILE is
+/// unset, so an app launched from Finder or a desktop entry still leaves a
+/// trace. Returns the file actually written, if any.
+pub fn init_with_file(default_file: Option<PathBuf>) -> Option<PathBuf> {
     static INIT: Once = Once::new();
+    let mut written = None;
     INIT.call_once(|| {
         let value = std::env::var("RUST_LOG").ok();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(filter(value.as_deref(), cfg!(debug_assertions)))
             .with_ansi(false);
-        match std::env::var_os("PLUME_LOG_FILE") {
-            Some(path) => match OpenOptions::new().create(true).append(true).open(path) {
-                Ok(file) => {
-                    let _ = subscriber.with_writer(file).try_init();
-                }
-                Err(error) => {
-                    let _ = subscriber.with_writer(std::io::stderr).try_init();
-                    tracing::warn!(%error, "Cannot open PLUME_LOG_FILE; logging to stderr");
-                }
-            },
-            None => {
+        let path = std::env::var_os("PLUME_LOG_FILE")
+            .map(PathBuf::from)
+            .or(default_file);
+        let Some(path) = path else {
+            let _ = subscriber.with_writer(std::io::stderr).try_init();
+            return;
+        };
+        match open_log(&path) {
+            Ok(file) => {
+                let _ = subscriber
+                    .with_writer(std::io::stderr.and(std::sync::Mutex::new(file)))
+                    .try_init();
+                written = Some(path);
+            }
+            Err(error) => {
                 let _ = subscriber.with_writer(std::io::stderr).try_init();
+                tracing::warn!(%error, path = %path.display(), "Cannot open the log file; logging to stderr");
             }
         }
     });
+    written
+}
+
+fn open_log(path: &Path) -> std::io::Result<File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_LOG_BYTES) {
+        let _ = fs::rename(path, path.with_extension("old.log"));
+    }
+    OpenOptions::new().create(true).append(true).open(path)
 }
 
 #[cfg(test)]
@@ -70,6 +101,14 @@ mod tests {
     fn defaults_and_overrides_filter_diagnostics_in_both_build_modes() {
         assert_eq!(levels(None, true), (true, true, false, false));
         assert_eq!(levels(None, false), (false, true, false, false));
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(filter(None, false))
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "plume_hotkey::macos", tracing::Level::INFO));
+            assert!(!tracing::enabled!(target: "third_party", tracing::Level::INFO));
+        });
         assert_eq!(
             levels(Some("warn,plume_session=trace"), false),
             (true, true, true, false)
@@ -80,6 +119,22 @@ mod tests {
             levels(Some("plume_session=invalid"), true),
             levels(None, true)
         );
+    }
+
+    #[test]
+    fn oversized_log_is_moved_aside_before_appending() {
+        let dir = std::env::temp_dir().join(format!("plume-logging-{}", std::process::id()));
+        let path = dir.join("nested").join("plume.log");
+        let _ = fs::remove_dir_all(&dir);
+        drop(open_log(&path).unwrap());
+        fs::write(&path, vec![b'x'; MAX_LOG_BYTES as usize + 1]).unwrap();
+        drop(open_log(&path).unwrap());
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+        assert_eq!(
+            fs::metadata(path.with_extension("old.log")).unwrap().len(),
+            MAX_LOG_BYTES + 1
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

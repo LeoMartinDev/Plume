@@ -35,7 +35,13 @@ use crate::settings::{
 
 /// Product entry. Model loading starts immediately; the compositor follows once proven.
 pub fn product_main() {
-    plume_logging::init();
+    let log_file = plume_logging::init_with_file(Some(crate::dirs::AppDirs::resolve().log_path()));
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        exe = ?std::env::current_exe().ok(),
+        log_file = ?log_file,
+        "plume-app: starting"
+    );
     let _lock = match AppLock::acquire() {
         Ok(lock) => lock,
         Err(AlreadyRunning(pid)) => {
@@ -157,7 +163,7 @@ fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
                 DrainPoll::Closed(batch) => (batch, true),
             };
             if !batch.is_empty() {
-                log_line(format!("plume-app: drain events={}", batch.len()));
+                tracing::debug!("plume-app: drain events={}", batch.len());
             }
             for event in batch {
                 if cx.update(|cx| handle_download_event(cx, event)).is_err() {
@@ -173,7 +179,7 @@ fn drain_download(cx: &mut App, rx: mpsc::Receiver<DownloadEvent>) {
 }
 
 fn log_line(msg: impl std::fmt::Display) {
-    tracing::debug!("{msg}");
+    tracing::info!("{msg}");
 }
 
 fn handle_download_event(cx: &mut App, event: DownloadEvent) {

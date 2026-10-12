@@ -122,7 +122,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
         let mut previous = None;
         loop {
             if previous != Some(self.controller.phase) {
-                tracing::debug!(state=?self.controller.phase,record_id=self.active.as_ref().map(|a|a.id),"dictation transition");
+                tracing::info!(state=?self.controller.phase,record_id=self.active.as_ref().map(|a|a.id),"dictation transition");
                 previous = Some(self.controller.phase);
             }
             // All physical edges are consumed in the phase in which they occurred.
@@ -216,9 +216,10 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
     fn drain_keys(&mut self) {
         while let Some(event) = self.hold.next_event() {
             if self.output_mode.load(Ordering::Acquire) == SessionMode::Suspended as u8 {
+                tracing::debug!(action = ?event.action, edge = ?event.edge, "dictation shortcut ignored while suspended");
                 continue;
             }
-            tracing::debug!(action = ?event.action, edge = ?event.edge, state = ?self.controller.phase, "dictation shortcut received");
+            tracing::info!(action = ?event.action, edge = ?event.edge, state = ?self.controller.phase, "dictation shortcut received");
             match self.controller.event(event) {
                 Some(Action::Start(mode)) => self.start_capture(mode),
                 Some(Action::Stop) => {

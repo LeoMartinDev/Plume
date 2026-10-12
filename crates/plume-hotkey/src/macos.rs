@@ -266,7 +266,13 @@ mod backend {
                     ) {
                         return;
                     }
+                    tracing::warn!(
+                        "plume-hotkey: macOS refused the {mode} keyboard tap; Accessibility or Input Monitoring is not granted to this binary"
+                    );
                 }
+                tracing::error!(
+                    "plume-hotkey: no keyboard tap available; global shortcuts are disabled until Plume is allowed in Accessibility and relaunched"
+                );
                 let _ = ready_tx.send(Err(HotkeyError::Os(
                     "CGEventTapCreate failed; grant Accessibility permission".to_string(),
                 )));
@@ -360,7 +366,7 @@ mod backend {
         };
         CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
         tap.enable();
-        tracing::debug!("plume-hotkey: macOS {mode} keyboard tap ready");
+        tracing::info!("plume-hotkey: macOS {mode} keyboard tap ready");
         let _ = ready_tx.send(Ok(CFRunLoop::get_current()));
         CFRunLoop::run_current();
         true
