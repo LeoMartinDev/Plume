@@ -27,6 +27,7 @@ pub(crate) struct RecordedCapture {
 pub(crate) fn start_recorded(
     writer: crate::recordings::RecordingWriter,
     vad_path: std::path::PathBuf,
+    microphone: Option<String>,
     levels: mpsc::SyncSender<f32>,
     cancel: plume_core::CancellationToken,
 ) -> Result<RecordedCapture, std::io::Error> {
@@ -54,7 +55,7 @@ pub(crate) fn start_recorded(
                 });
                 return;
             }
-            let mut mic = match Mic::open() {
+            let mut mic = match Mic::open(microphone.as_deref()) {
                 Ok(mic) => mic,
                 Err(error) => {
                     let _ = event_tx.send(CaptureEvent::Ended {

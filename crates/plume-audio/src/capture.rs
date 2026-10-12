@@ -42,6 +42,28 @@ pub fn default_input_name() -> Result<String, CaptureError> {
         .map_err(|_| CaptureError::NoInputDevice)
 }
 
+/// A microphone the user can choose. `id` survives restarts and reconnections.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputDevice {
+    pub id: String,
+    pub name: String,
+}
+
+/// The input devices currently connected, skipping any that cannot be identified.
+pub fn input_devices() -> Result<Vec<InputDevice>, CaptureError> {
+    let devices = cpal::default_host()
+        .input_devices()
+        .map_err(|err| CaptureError::Backend(err.to_string()))?;
+    Ok(devices
+        .filter_map(|device| {
+            Some(InputDevice {
+                id: device.id().ok()?.to_string(),
+                name: device.description().ok()?.name().to_owned(),
+            })
+        })
+        .collect())
+}
+
 enum RawSamples {
     F32(Vec<f32>),
     I16(Vec<i16>),
@@ -72,7 +94,10 @@ pub struct Mic {
 }
 
 impl Mic {
-    pub fn open() -> Result<Self, CaptureError> {
+    /// Open the device with this ID, or the system default input when it is
+    /// `None` or no longer connected.
+    pub fn open(device: Option<&str>) -> Result<Self, CaptureError> {
+        let device = device.map(str::to_owned);
         let (ready_tx, ready_rx) = mpsc::channel();
         let (chunk_tx, chunk_rx) = mpsc::sync_channel(256);
         let error = Arc::new(Mutex::new(None));
@@ -81,8 +106,8 @@ impl Mic {
         // The stream is owned by this thread and dropped when shutdown is requested.
         let thread = thread::Builder::new()
             .name("plume-audio-mic".into())
-            .spawn(
-                move || match bind_stream(chunk_tx, ready_tx.clone(), stream_error) {
+            .spawn(move || {
+                match bind_stream(device.as_deref(), chunk_tx, ready_tx.clone(), stream_error) {
                     Ok(stream) => {
                         let _ = shutdown_rx.recv();
                         let _ = stream.pause();
@@ -90,8 +115,8 @@ impl Mic {
                     Err(err) => {
                         let _ = ready_tx.send(Err(err));
                     }
-                },
-            )
+                }
+            })
             .map_err(|err| CaptureError::Backend(err.to_string()))?;
         // play() only schedules capture on WASAPI. Do not report readiness
         // until the device has actually delivered its first audio buffer.
@@ -152,14 +177,12 @@ impl Drop for Mic {
 }
 
 fn bind_stream(
+    device: Option<&str>,
     tx: mpsc::SyncSender<RawBuffer>,
     ready: mpsc::Sender<Result<(), CaptureError>>,
     error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, CaptureError> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or(CaptureError::NoInputDevice)?;
+    let device = input_device(&cpal::default_host(), device)?;
     let (config, sample_format) = preferred_or_default(&device)?;
     tracing::debug!(state = "opening", "microphone requested");
     let stream = build_stream(&device, config, sample_format, tx, ready, error)?;
@@ -167,6 +190,24 @@ fn bind_stream(
         .play()
         .map_err(|err| CaptureError::Backend(err.to_string()))?;
     Ok(stream)
+}
+
+fn input_device(host: &cpal::Host, id: Option<&str>) -> Result<cpal::Device, CaptureError> {
+    if let Some(id) = id {
+        if let Some(device) = id
+            .parse::<cpal::DeviceId>()
+            .ok()
+            .and_then(|id| host.device_by_id(&id))
+        {
+            return Ok(device);
+        }
+        tracing::warn!(
+            device = id,
+            "selected microphone unavailable, using the system default"
+        );
+    }
+    host.default_input_device()
+        .ok_or(CaptureError::NoInputDevice)
 }
 
 fn preferred_or_default(
@@ -351,6 +392,26 @@ mod tests {
         assert!(is_recoverable(cpal::ErrorKind::DeviceChanged));
         assert!(!is_recoverable(cpal::ErrorKind::DeviceNotAvailable));
         assert!(!is_recoverable(cpal::ErrorKind::StreamInvalidated));
+    }
+
+    #[test]
+    fn listed_devices_round_trip_through_their_id() {
+        let host = cpal::default_host();
+        for device in input_devices().unwrap_or_default() {
+            assert_ne!(device.name, "");
+            let found = input_device(&host, Some(&device.id)).unwrap();
+            assert_eq!(found.id().unwrap().to_string(), device.id);
+        }
+    }
+
+    #[test]
+    fn unknown_device_falls_back_to_the_system_default() {
+        let host = cpal::default_host();
+        for id in ["", "not a device id", "wasapi:missing", "coreaudio:missing"] {
+            let fallback = input_device(&host, Some(id)).map(|device| device.id().ok());
+            let default = input_device(&host, None).map(|device| device.id().ok());
+            assert_eq!(fallback.ok(), default.ok(), "{id}");
+        }
     }
 
     #[test]

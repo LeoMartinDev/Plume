@@ -376,12 +376,17 @@ impl SettingsView {
                 && setup.session_error.is_none()
             {
                 setup.microphone_checking = true;
+                let device = self
+                    .phase
+                    .prefs()
+                    .microphone()
+                    .map(|microphone| microphone.id.clone());
                 cx.spawn(async move |this, cx| {
                     let result = cx
                         .background_executor()
-                        .spawn(async {
-                            let microphone =
-                                plume_audio::Mic::open().map_err(|error| error.to_string())?;
+                        .spawn(async move {
+                            let microphone = plume_audio::Mic::open(device.as_deref())
+                                .map_err(|error| error.to_string())?;
                             drop(microphone);
                             Ok::<_, String>(())
                         })

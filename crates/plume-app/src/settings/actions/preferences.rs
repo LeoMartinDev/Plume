@@ -1,5 +1,5 @@
 use super::super::SettingsView;
-use crate::prefs::{AppearancePref, InterfaceLanguage, LanguagePref, Prefs};
+use crate::prefs::{AppearancePref, InterfaceLanguage, LanguagePref, Microphone, Prefs};
 use gpui::Context;
 use plume_engine::Language;
 use plume_session::{InsertionConfig, InsertionMode};
@@ -139,6 +139,33 @@ impl SettingsView {
         self.phase.prefs_mut().set_destination(next);
         self.save_prefs();
         self.retarget_insertion();
+        cx.notify();
+    }
+
+    /// `None` follows the system default input. Applies from the next dictation.
+    pub(in crate::settings) fn commit_microphone(
+        &mut self,
+        next: Option<Microphone>,
+        cx: &mut Context<Self>,
+    ) {
+        self.microphone_menu = None;
+        if self.phase.prefs().microphone() == next.as_ref() {
+            cx.notify();
+            return;
+        }
+        let previous = self.phase.prefs().microphone().cloned();
+        self.phase.prefs_mut().set_microphone(next);
+        self.save_prefs();
+        if self.save_error.is_some() {
+            self.phase.prefs_mut().set_microphone(previous);
+        } else if let Some(target) = &self.microphone_target {
+            target.set(
+                self.phase
+                    .prefs()
+                    .microphone()
+                    .map(|microphone| microphone.id.clone()),
+            );
+        }
         cx.notify();
     }
 

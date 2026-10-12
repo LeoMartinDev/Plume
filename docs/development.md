@@ -89,7 +89,15 @@ retention_days = 30
 max_entries = 500
 ```
 
-`appearance` accepts `auto`, `light` or `dark`; `language` accepts `auto`, `fr` or `en`; insertion accepts `auto`, `clipboard` or `typing`. Models are `nemotron-3.5-compact`, `whisper-base`, `whisper-small`, `parakeet-tdt-v3` and `whisper-large-v3-turbo`.
+`appearance` accepts `auto`, `light` or `dark`; `language` accepts `auto`, `fr` or `en`; insertion accepts `auto`, `clipboard` or `typing`. Without a `[microphone]` table, Plume records from the system default input. Choosing a device in Settings saves its stable cpal ID and name:
+
+```toml
+[microphone]
+id = "wasapi:{0.0.1.00000000}.{0d2cd11b-cba4-447f-84a2-571c11c596b9}"
+name = "Microphone (RODE NT-USB)"
+```
+
+The choice applies only to Plume, from the next dictation. If the device is disconnected, Plume records from the system default and the menu lists the saved device as disconnected. An invalid table uses the system default and produces a warning. Models are `nemotron-3.5-compact`, `whisper-base`, `whisper-small`, `parakeet-tdt-v3` and `whisper-large-v3-turbo`.
 
 History settings accept 1–3,650 days and 1–100,000 entries, or `"unlimited"` for either limit independently. Missing keys use 30 days and 500 entries. Invalid history fields individually use their default and produce a warning, preserving other preferences. The UI offers exactly three finite choices per setting: 7/30/90 days and 100/500/5,000 entries, plus Unlimited for each. A valid custom TOML value remains visible on the selector without adding another menu option.
 

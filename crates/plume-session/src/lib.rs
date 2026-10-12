@@ -20,7 +20,8 @@ pub use plume_core::{
 };
 pub use startup::{
     start, DictationResult, EngineTarget, HoldTarget, InsertionConfig, InsertionTarget,
-    LiveSession, PreparedSession, PreviewEvent, SessionControl, SessionMode, ShortcutEditGuard,
+    LiveSession, MicrophoneTarget, PreparedSession, PreviewEvent, SessionControl, SessionMode,
+    ShortcutEditGuard,
 };
 
 /// Startup failure with its process exit code: 4 for a missing or invalid

@@ -148,6 +148,13 @@ pub enum OnboardingStep {
     Try,
 }
 
+/// A chosen input device. The name is kept to show it while it is disconnected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Microphone {
+    pub id: String,
+    pub name: String,
+}
+
 /// Domain prefs. Wire TOML stays private.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prefs {
@@ -161,6 +168,8 @@ pub struct Prefs {
     destination: Destination,
     insertion_mode: InsertionMode,
     copy_on_failure: bool,
+    /// `None` follows the system default input.
+    microphone: Option<Microphone>,
     history: HistoryPolicy,
     pub onboarding_version: u32,
     pub onboarding_step: OnboardingStep,
@@ -179,6 +188,7 @@ impl Prefs {
             destination: Destination::FocusedField,
             insertion_mode: InsertionMode::Auto,
             copy_on_failure: true,
+            microphone: None,
             history: HistoryPolicy::default(),
             onboarding_version: 0,
             onboarding_step: OnboardingStep::Languages,
@@ -264,6 +274,14 @@ impl Prefs {
 
     pub fn set_copy_on_failure(&mut self, enabled: bool) {
         self.copy_on_failure = enabled;
+    }
+
+    pub fn microphone(&self) -> Option<&Microphone> {
+        self.microphone.as_ref()
+    }
+
+    pub fn set_microphone(&mut self, microphone: Option<Microphone>) {
+        self.microphone = microphone;
     }
 
     pub fn try_set_hold(&mut self, hold: &str) -> Result<(), plume_session::ConfigError> {
@@ -464,6 +482,30 @@ mod tests {
                 assert!(!loaded.copy_on_failure());
             }
             _ => panic!("saved insertion settings must load"),
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn microphone_round_trips_and_defaults_to_the_system_input() {
+        assert_eq!(Prefs::default_fresh().microphone(), None);
+        let path = temp_prefs("microphone-round");
+        let mut prefs = Prefs::default_fresh();
+        let microphone = Microphone {
+            id: "wasapi:{0.0.1.00000000}.{0d2cd11b}".into(),
+            name: "Microphone (RODE NT-USB)".into(),
+        };
+        prefs.set_microphone(Some(microphone.clone()));
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => assert_eq!(loaded.microphone(), Some(&microphone)),
+            _ => panic!("saved microphone must load"),
+        }
+        prefs.set_microphone(None);
+        save_at(&path, &prefs).unwrap();
+        match load_at(&path) {
+            PrefsLoad::Loaded(loaded) => assert_eq!(loaded.microphone(), None),
+            _ => panic!("system default microphone must load"),
         }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
