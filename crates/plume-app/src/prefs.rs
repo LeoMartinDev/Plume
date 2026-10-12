@@ -143,7 +143,9 @@ pub enum OnboardingStep {
     Languages,
     Model,
     Shortcuts,
+    /// macOS only: microphone and Accessibility, before the test.
     Permissions,
+    Try,
 }
 
 /// Domain prefs. Wire TOML stays private.
@@ -345,6 +347,7 @@ mod tests {
             OnboardingStep::Model,
             OnboardingStep::Shortcuts,
             OnboardingStep::Permissions,
+            OnboardingStep::Try,
         ] {
             prefs.onboarding_step = step;
             save_at(&path, &prefs).unwrap();

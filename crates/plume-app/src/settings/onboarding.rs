@@ -181,7 +181,7 @@ impl SettingsView {
         self.reset_for_phase();
         let previous_mode = self.session_control.as_ref().map(|control| control.mode());
         if let Some(control) = &self.session_control {
-            if step == OnboardingStep::Permissions {
+            if step == OnboardingStep::Try {
                 let prefs = self.phase.prefs();
                 let result = plume_session::Config::from_prefs(
                     prefs.hold(),
@@ -198,7 +198,7 @@ impl SettingsView {
                 }
                 self.onboarding.as_mut().unwrap().session_error = None;
             }
-            let mode = if step == OnboardingStep::Permissions {
+            let mode = if step == OnboardingStep::Try {
                 SessionMode::Preview
             } else {
                 SessionMode::Suspended
@@ -274,9 +274,7 @@ impl SettingsView {
         setup.visible = visible;
         if !setup.finished && !self.is_busy() {
             if let Some(control) = &self.session_control {
-                let mode = if visible
-                    && self.phase.prefs().onboarding_step == OnboardingStep::Permissions
-                {
+                let mode = if visible && self.phase.prefs().onboarding_step == OnboardingStep::Try {
                     SessionMode::Preview
                 } else {
                     SessionMode::Suspended
@@ -347,7 +345,7 @@ impl SettingsView {
                         .prefs()
                         .model
                         .supports(self.phase.prefs().language())
-                    && self.phase.prefs().onboarding_step == OnboardingStep::Permissions
+                    && self.phase.prefs().onboarding_step == OnboardingStep::Try
                 {
                     SessionMode::Preview
                 } else {
@@ -361,7 +359,7 @@ impl SettingsView {
         let setup = self.onboarding.as_mut().unwrap();
         if !self.settings_preview
             && visible
-            && self.phase.prefs().onboarding_step == OnboardingStep::Permissions
+            && self.phase.prefs().onboarding_step == OnboardingStep::Try
             && setup.model_ready
             && self
                 .phase
@@ -421,12 +419,31 @@ impl SettingsView {
     }
 }
 
-const STEPS: [(OnboardingStep, &str); 4] = [
+/// Only macOS asks for permissions; elsewhere they are always granted.
+#[cfg(target_os = "macos")]
+const STEPS: &[(OnboardingStep, &str)] = &[
     (OnboardingStep::Languages, "onboarding.step.languages"),
     (OnboardingStep::Model, "onboarding.step.model"),
     (OnboardingStep::Shortcuts, "onboarding.step.shortcuts"),
-    (OnboardingStep::Permissions, "onboarding.step.try"),
+    (OnboardingStep::Permissions, "onboarding.step.permissions"),
+    (OnboardingStep::Try, "onboarding.step.try"),
 ];
+#[cfg(not(target_os = "macos"))]
+const STEPS: &[(OnboardingStep, &str)] = &[
+    (OnboardingStep::Languages, "onboarding.step.languages"),
+    (OnboardingStep::Model, "onboarding.step.model"),
+    (OnboardingStep::Shortcuts, "onboarding.step.shortcuts"),
+    (OnboardingStep::Try, "onboarding.step.try"),
+];
+
+fn adjacent_step(step: OnboardingStep, offset: isize) -> OnboardingStep {
+    let index = STEPS
+        .iter()
+        .position(|(item, _)| *item == step)
+        .unwrap_or(0);
+    let index = index.saturating_add_signed(offset).min(STEPS.len() - 1);
+    STEPS[index].0
+}
 
 pub(super) fn render(
     view: &SettingsView,
@@ -462,7 +479,7 @@ pub(super) fn render(
         .when(view.settings_preview, |el| {
             el.on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
                 if !view.capture.is_listening() && event.keystroke.modifiers.control {
-                    if event.keystroke.key == "4" {
+                    if event.keystroke.key == "5" {
                         cx.stop_propagation();
                         window.prevent_default();
                         cx.defer(super::window::finish_onboarding_window);
@@ -473,6 +490,7 @@ pub(super) fn render(
                         "1" => Some(OnboardingStep::Model),
                         "2" => Some(OnboardingStep::Shortcuts),
                         "3" => Some(OnboardingStep::Permissions),
+                        "4" => Some(OnboardingStep::Try),
                         _ => None,
                     };
                     if let Some(step) = step {
@@ -491,6 +509,7 @@ pub(super) fn render(
         OnboardingStep::Model => model_screen(view, tokens, cx),
         OnboardingStep::Shortcuts => shortcuts_screen(view, tokens, cx),
         OnboardingStep::Permissions => permissions_screen(view, tokens, cx),
+        OnboardingStep::Try => try_screen(view, tokens, cx),
     };
     let busy = model_busy(&view.phase);
     let next_enabled = match step {
@@ -505,7 +524,8 @@ pub(super) fn render(
         OnboardingStep::Shortcuts => {
             !view.capture.is_listening() && view.capture.reject().is_none()
         }
-        OnboardingStep::Permissions => view.can_finish(),
+        OnboardingStep::Permissions => setup.permissions.granted(),
+        OnboardingStep::Try => view.can_finish(),
     } && !view.is_busy()
         && view.save_error.is_none();
     let downloads = step == OnboardingStep::Model && !setup.model_ready && !busy;
@@ -521,7 +541,7 @@ pub(super) fn render(
                 tr("ui.download")
             }
         }
-        OnboardingStep::Permissions => tr("common.finish"),
+        OnboardingStep::Try => tr("common.finish"),
         _ => tr("common.next"),
     };
     let next = Button::new(*tokens, "onboarding-next", next_label)
@@ -531,20 +551,18 @@ pub(super) fn render(
         .map(|button| {
             if downloads {
                 button.icon("ui/download.svg")
-            } else if step == OnboardingStep::Permissions {
+            } else if step == OnboardingStep::Try {
                 button
             } else {
                 button.trailing_icon("ui/arrow-right.svg")
             }
         })
         .on_click(cx, move |view, _, cx| match step {
-            OnboardingStep::Languages => view.change_step(OnboardingStep::Model, cx),
             OnboardingStep::Model if !view.onboarding.as_ref().unwrap().model_ready => {
                 view.download_model(cx)
             }
-            OnboardingStep::Model => view.change_step(OnboardingStep::Shortcuts, cx),
-            OnboardingStep::Shortcuts => view.change_step(OnboardingStep::Permissions, cx),
-            OnboardingStep::Permissions => view.finish_setup(cx),
+            OnboardingStep::Try => view.finish_setup(cx),
+            _ => view.change_step(adjacent_step(step, 1), cx),
         });
     let back = (step != OnboardingStep::Languages).then(|| {
         Button::new(*tokens, "onboarding-back", tr("common.back"))
@@ -553,14 +571,7 @@ pub(super) fn render(
             .icon("ui/arrow-left.svg")
             .enabled(!view.is_busy() && !setup.session_starting)
             .on_click(cx, move |view, _, cx| {
-                view.change_step(
-                    match step {
-                        OnboardingStep::Permissions => OnboardingStep::Shortcuts,
-                        OnboardingStep::Shortcuts => OnboardingStep::Model,
-                        _ => OnboardingStep::Languages,
-                    },
-                    cx,
-                )
+                view.change_step(adjacent_step(step, -1), cx)
             })
     });
     let header = div()
@@ -1329,11 +1340,7 @@ enum StagePill {
     Done,
 }
 
-fn permissions_screen(
-    view: &SettingsView,
-    tokens: &Tokens,
-    cx: &mut Context<SettingsView>,
-) -> AnyElement {
+fn try_screen(view: &SettingsView, tokens: &Tokens, cx: &mut Context<SettingsView>) -> AnyElement {
     let setup = view.onboarding.as_ref().unwrap();
     let ready = view.can_finish();
     let microphone = if setup.permissions.microphone == Permission::Granted {
@@ -1362,23 +1369,8 @@ fn permissions_screen(
         )
         .size(ButtonSize::Small)
         .icon("ui/mic.svg")
-        .enabled(
-            !setup.microphone_checking
-                && setup.microphone_prompt.is_none()
-                && !view.is_busy()
-                && !view.settings_preview,
-        )
-        .on_click(cx, |view, _, cx| {
-            let setup = view.onboarding.as_mut().unwrap();
-            if setup.permissions.microphone == Permission::NotRequested {
-                setup.microphone_prompt = Some(permissions::request_microphone());
-            } else if setup.permissions.microphone == Permission::Denied {
-                cx.open_url(permissions::microphone_settings_url());
-            }
-            setup.session_error = None;
-            setup.microphone_ready = false;
-            cx.notify();
-        })
+        .enabled(view.can_request_microphone())
+        .on_click(cx, |view, _, cx| view.request_microphone(cx))
         .into_any_element()
     };
     let accessibility = cfg!(target_os = "macos").then(|| {
@@ -1462,15 +1454,18 @@ fn permissions_screen(
                     tr("onboarding.try.serif"),
                     28.,
                 )))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_end()
-                        .gap(px(8.))
-                        .child(microphone)
-                        .children(accessibility),
-                ),
+                // Granted on the previous step; shown again only if revoked since.
+                .when(!setup.permissions.granted(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_end()
+                            .gap(px(8.))
+                            .child(microphone)
+                            .children(accessibility),
+                    )
+                }),
         )
         .child(test_stage(
             tokens,
@@ -1511,6 +1506,199 @@ fn permissions_screen(
             );
     }
     body.into_any_element()
+}
+
+impl SettingsView {
+    fn can_request_microphone(&self) -> bool {
+        self.onboarding
+            .as_ref()
+            .is_some_and(|setup| !setup.microphone_checking && setup.microphone_prompt.is_none())
+            && !self.is_busy()
+            && !self.settings_preview
+    }
+
+    /// The native prompt the first time, System Settings once refused.
+    fn request_microphone(&mut self, cx: &mut Context<Self>) {
+        let setup = self.onboarding.as_mut().unwrap();
+        if setup.permissions.microphone == Permission::NotRequested {
+            setup.microphone_prompt = Some(permissions::request_microphone());
+        } else if setup.permissions.microphone == Permission::Denied {
+            cx.open_url(permissions::microphone_settings_url());
+        }
+        setup.session_error = None;
+        setup.microphone_ready = false;
+        cx.notify();
+    }
+}
+
+/// macOS only: each permission gets a card saying why, before the test needs it.
+fn permissions_screen(
+    view: &SettingsView,
+    tokens: &Tokens,
+    cx: &mut Context<SettingsView>,
+) -> AnyElement {
+    let setup = view.onboarding.as_ref().unwrap();
+    let microphone = setup.permissions.microphone;
+    let accessibility = setup.permissions.accessibility;
+    let microphone_action = Button::new(
+        *tokens,
+        "onboarding-microphone",
+        if microphone == Permission::Denied {
+            tr("ui.open_settings")
+        } else {
+            tr("ui.allow")
+        },
+    )
+    .primary()
+    .size(ButtonSize::Small)
+    .enabled(view.can_request_microphone())
+    .on_click(cx, |view, _, cx| view.request_microphone(cx));
+    // The primary action moves to Accessibility once the microphone is allowed.
+    let accessibility_action =
+        Button::new(*tokens, "onboarding-accessibility", tr("ui.open_settings"))
+            .when(microphone == Permission::Granted, |button| button.primary())
+            .size(ButtonSize::Small)
+            .enabled(!view.settings_preview)
+            .on_click(cx, |_, _, cx| {
+                cx.open_url(permissions::accessibility_settings_url())
+            });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(20.))
+        .child(step_heading(
+            tokens,
+            tr("onboarding.permissions.headline"),
+            tr("onboarding.permissions.serif"),
+            None,
+        ))
+        .child(
+            div()
+                .flex()
+                .gap(px(12.))
+                .child(permission_card(
+                    tokens,
+                    "onboarding-microphone-card",
+                    1,
+                    "ui/mic.svg",
+                    tr("ui.microphone"),
+                    tr("onboarding.permissions.microphone_text"),
+                    microphone == Permission::Granted,
+                    microphone_action,
+                ))
+                .child(permission_card(
+                    tokens,
+                    "onboarding-accessibility-card",
+                    2,
+                    "ui/keyboard.svg",
+                    tr("ui.accessibility"),
+                    tr("onboarding.permissions.accessibility_text"),
+                    accessibility == Permission::Granted,
+                    accessibility_action,
+                )),
+        )
+        .into_any_element()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn permission_card(
+    tokens: &Tokens,
+    id: &'static str,
+    number: usize,
+    icon: &'static str,
+    title: &'static str,
+    text: &'static str,
+    granted: bool,
+    action: Button,
+) -> AnyElement {
+    div()
+        .id(id)
+        .flex_1()
+        .min_w_0()
+        .h(px(236.))
+        .pt(px(22.))
+        .px(px(20.))
+        .pb(px(16.))
+        .flex()
+        .flex_col()
+        .rounded(px(20.))
+        .border_1()
+        .border_color(tokens.border)
+        .bg(tokens.surface)
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .child(
+                    div()
+                        .size(px(44.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(12.))
+                        .bg(tokens.surface_2)
+                        .child(svg().path(icon).size(px(20.)).text_color(tokens.text)),
+                )
+                .child(if granted {
+                    div()
+                        .size(px(22.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(tokens.accent)
+                        .child(
+                            svg()
+                                .path("ui/check.svg")
+                                .size(px(12.))
+                                .text_color(tokens.on_accent),
+                        )
+                        .into_any_element()
+                } else {
+                    div()
+                        .font_family(FONT_MONO)
+                        .text_size(px(12.))
+                        .text_color(tokens.faint)
+                        .child(format!("{number:02}"))
+                        .into_any_element()
+                }),
+        )
+        .child(
+            div()
+                .mt(px(20.))
+                .text_size(px(19.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(
+            div()
+                .mt(px(5.))
+                .min_h(px(39.))
+                .text_size(px(13.))
+                .line_height(px(19.5))
+                .text_color(tokens.muted)
+                .child(prose(text)),
+        )
+        .child(div().flex_1())
+        .child(div().mt(px(16.)).flex().items_center().map(|row| {
+            if granted {
+                row.h(px(28.))
+                    .gap(px(6.))
+                    .text_size(px(13.))
+                    .text_color(tokens.accent_text)
+                    .child(
+                        svg()
+                            .path("ui/check.svg")
+                            .size(px(12.))
+                            .text_color(tokens.accent_text),
+                    )
+                    .child(tr("ui.allowed"))
+            } else {
+                row.child(action)
+            }
+        }))
+        .into_any_element()
 }
 
 fn permission_allowed(

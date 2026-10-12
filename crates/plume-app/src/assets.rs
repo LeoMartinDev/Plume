@@ -28,6 +28,7 @@ impl AssetSource for Assets {
             "ui/download.svg" => Some(include_bytes!("../assets/ui/download.svg")),
             "ui/history.svg" => Some(include_bytes!("../assets/ui/history.svg")),
             "ui/info.svg" => Some(include_bytes!("../assets/ui/info.svg")),
+            "ui/keyboard.svg" => Some(include_bytes!("../assets/ui/keyboard.svg")),
             "ui/mic.svg" => Some(include_bytes!("../assets/ui/mic.svg")),
             "ui/reset.svg" => Some(include_bytes!("../assets/ui/reset.svg")),
             "ui/theme.svg" => Some(include_bytes!("../assets/ui/theme.svg")),

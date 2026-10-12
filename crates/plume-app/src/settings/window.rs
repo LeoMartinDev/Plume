@@ -143,6 +143,12 @@ fn open_settings_window(
     {
         phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Model;
     }
+    // Only macOS has a permissions step; other platforms resume at the test.
+    if !cfg!(target_os = "macos")
+        && phase.prefs().onboarding_step == crate::prefs::OnboardingStep::Permissions
+    {
+        phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Try;
+    }
     let height = if onboarding {
         ONBOARDING_CONTENT_HEIGHT
     } else {

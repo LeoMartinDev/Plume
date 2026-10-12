@@ -14,6 +14,7 @@ fn main() {
         Some("languages") => OnboardingStep::Languages,
         Some("shortcuts") => OnboardingStep::Shortcuts,
         Some("permissions") => OnboardingStep::Permissions,
+        Some("try") => OnboardingStep::Try,
         _ => OnboardingStep::Model,
     };
     if std::env::args().any(|arg| arg == "--french") {
