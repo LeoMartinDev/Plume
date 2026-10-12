@@ -70,6 +70,8 @@ Icon sources and platform exports are kept in `crates/plume-app/assets/brand`. R
 
 The app stores `prefs.toml` under the OS configuration root in `plume`, and `history.json` and model packs under the OS local-data root in `plume`. On macOS both roots normally resolve to `~/Library/Application Support/plume`; on Linux they normally resolve to `~/.config/plume` and `~/.local/share/plume`; on Windows configuration and local data use the respective roaming and local app-data directories.
 
+Saved recordings are mono 16 kHz PCM16 WAV files in `plume/recordings` under the local-data root (`%LOCALAPPDATA%/plume/recordings` on Windows). They are kept independently of text-history limits, without time expiration; clearing history also deletes them. Silence produces no insertion or saved audio. Speech detection is prepared when downloading a model; dictation never downloads it.
+
 Example preferences:
 
 ```toml
@@ -100,6 +102,14 @@ A settings preview keeps the sidebar, uses temporary storage and disables model/
 ```sh
 cargo run -p plume-app --example settings_preview -- /tmp/plume-settings-preview
 ```
+
+## Insertion behavior
+
+Text is delivered to the field active when transcription finishes; Plume never returns focus to an earlier field. Known password and read-only fields are refused. When macOS Accessibility or Windows UI Automation supplies reliable adjacent characters, Plume adjusts only boundary spaces. Other fields, including X11, receive the exact transcription.
+
+Paste temporarily replaces the clipboard and restores supported content after 300 ms if its native ownership/version still belongs to Plume. A new user copy is preserved. Empty content, text, HTML with text and images are supported; unsupported formats use typing in Automatic mode, or produce a compatibility error in Paste mode. Configured recovery copies intentionally keep the transcription in the clipboard. A dispatched keyboard shortcut confirms dispatch, not universal receipt by every application.
+
+Recovered recordings are retranscribed with the currently selected model and language; recovered text is available for copying and is never inserted automatically.
 
 ## Logging
 
