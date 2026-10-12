@@ -7,8 +7,9 @@ on:
     # Website-only changes are built and deployed by Cloudflare.
     # (Path filters never apply to tag pushes, so releases always build.)
     paths-ignore: ['website/**', '.github/workflows/website.yml']
+  # Every pull request runs so the required ci-passed check always reports;
+  # the changes job skips the app jobs when only the website changed.
   pull_request:
-    paths-ignore: ['website/**', '.github/workflows/website.yml']
   workflow_dispatch:
     inputs:
       release_tag:
@@ -28,6 +29,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      # A pull request checks out its merge commit, whose first parent is the base.
+      - id: diff
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] ||
+            git diff --name-only HEAD^1 HEAD | grep -qvE '^(website/|\.github/workflows/website\.yml$)'; then
+            echo app=true >> "$GITHUB_OUTPUT"
+          else
+            echo app=false >> "$GITHUB_OUTPUT"
+          fi
   release-check:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -51,6 +70,8 @@ jobs:
           git fetch origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor HEAD origin/main
   build:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +120,8 @@ jobs:
       - if: runner.os == 'Linux'
         run: dbus-run-session cargo test --locked -p plume-app --lib tray::linux::tests::missing_tray_host_refuses_background_mode -- --ignored
   lint:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +133,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo fmt --check
+  # The only required check on main: passes when build and lint pass or were
+  # skipped for a website-only change, fails if any of them failed.
+  ci-passed:
+    needs: [changes, build, lint]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
   installers:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     needs: [release-check, build, lint]
