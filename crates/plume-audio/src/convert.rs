@@ -4,6 +4,7 @@ use plume_core::AudioChunk;
 pub enum InputBuffer<'a> {
     F32(&'a [f32]),
     I16(&'a [i16]),
+    I32(&'a [i32]),
     U16(&'a [u16]),
 }
 
@@ -14,6 +15,12 @@ pub fn to_audio_chunk(buffer: InputBuffer<'_>, sample_rate: u32, channels: u16) 
         InputBuffer::I16(frames) => {
             downmix(frames.iter().map(|&s| f32::from(s) / 32768.0), channels)
         }
+        InputBuffer::I32(frames) => downmix(
+            frames
+                .iter()
+                .map(|&s| (f64::from(s) / 2_147_483_648.0) as f32),
+            channels,
+        ),
         InputBuffer::U16(frames) => downmix(
             frames.iter().map(|&s| (f32::from(s) - 32768.0) / 32768.0),
             channels,
@@ -61,6 +68,18 @@ mod tests {
             AudioChunk {
                 samples: vec![0.0, 32767.0 / 32768.0, -1.0],
                 sample_rate: 16_000,
+            }
+        );
+    }
+
+    #[test]
+    fn i32_mono_scales_by_2_pow_31() {
+        let chunk = to_audio_chunk(InputBuffer::I32(&[0, 1 << 30, i32::MIN]), 48_000, 1);
+        assert_eq!(
+            chunk,
+            AudioChunk {
+                samples: vec![0.0, 0.5, -1.0],
+                sample_rate: 48_000,
             }
         );
     }
