@@ -27,6 +27,7 @@
     "onboarding.permissions.microphone_text": "Pour que Plume vous entende pendant la dictée. La transcription se fait sur votre Mac.",
     "onboarding.permissions.old_build": "Si Plume est déjà activé dans Accessibilité, l’entrée peut correspondre à une ancienne version. Quittez Plume, supprimez l’entrée, ajoutez l’application actuelle, puis relancez-la.",
     "onboarding.permissions.serif": "puis on essaie.",
+    "onboarding.permissions.stale_entry": "Déjà activé dans Accessibilité ? Retirez Plume avec –, puis ajoutez-le à nouveau.",
     "onboarding.shortcuts.headline": "Deux façons de parler,",
     "onboarding.shortcuts.hold_text": "Maintenez les touches, parlez, relâchez : le texte arrive.",
     "onboarding.shortcuts.lead": "Cliquez sur « Modifier », puis appuyez sur la combinaison de votre choix.",

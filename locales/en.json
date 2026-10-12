@@ -27,6 +27,7 @@
     "onboarding.permissions.microphone_text": "So Plume can hear you while you dictate. Speech is transcribed on your Mac.",
     "onboarding.permissions.old_build": "If Plume is already enabled in Accessibility, the entry may belong to an older build. Quit Plume, remove that entry, add the current Plume app again, then relaunch.",
     "onboarding.permissions.serif": "then try it out.",
+    "onboarding.permissions.stale_entry": "Already turned on in Accessibility? Remove Plume with –, then add it again.",
     "onboarding.shortcuts.headline": "Two ways to talk,",
     "onboarding.shortcuts.hold_text": "Hold the keys, speak, release: the text appears.",
     "onboarding.shortcuts.lead": "Click Change, then press the keys you want.",

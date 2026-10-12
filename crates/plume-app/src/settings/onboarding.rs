@@ -37,10 +37,12 @@ pub(super) struct OnboardingState {
     transcript: String,
     finished: bool,
     visible: bool,
+    /// Onboarding was done before; macOS no longer grants what it needs.
+    permissions_lost: bool,
 }
 
 impl OnboardingState {
-    pub fn new(_prefs: &Prefs) -> Self {
+    pub fn new(_prefs: &Prefs, permissions_lost: bool) -> Self {
         Self {
             engine: None,
             model_ready: false,
@@ -54,6 +56,7 @@ impl OnboardingState {
             transcript: String::new(),
             finished: false,
             visible: true,
+            permissions_lost,
         }
     }
 }
@@ -1596,6 +1599,17 @@ fn permissions_screen(
                     accessibility == Permission::Granted,
                     accessibility_action,
                 )),
+        )
+        .when(
+            setup.permissions_lost && accessibility != Permission::Granted,
+            |el| {
+                el.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(tokens.subtle)
+                        .child(tr("onboarding.permissions.stale_entry")),
+                )
+            },
         )
         .into_any_element()
 }

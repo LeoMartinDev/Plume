@@ -136,6 +136,19 @@ fn open_settings_window(
         })
         .flatten();
     let onboarding = onboarding_preview || (!settings_preview && phase.prefs().needs_onboarding());
+    // An update can leave macOS permissions behind: an ad-hoc signed build
+    // gets a new identity, and the Accessibility entry still names the old
+    // one. Without them no shortcut works, so ask again before going live.
+    let permissions_lost = !onboarding && !settings_preview && cfg!(target_os = "macos") && {
+        let permissions = crate::permissions::snapshot();
+        tracing::info!(?permissions, "plume-app: permissions at launch");
+        !permissions.granted()
+    };
+    if permissions_lost {
+        tracing::warn!("plume-app: permissions missing after onboarding; asking again");
+        phase.prefs_mut().onboarding_step = crate::prefs::OnboardingStep::Permissions;
+    }
+    let onboarding = onboarding || permissions_lost;
     if onboarding
         && !onboarding_preview
         && phase.prefs().onboarding_step != crate::prefs::OnboardingStep::Languages
@@ -213,8 +226,9 @@ fn open_settings_window(
                     let _appearance = cx.observe_window_appearance(window, |_, _, cx| {
                         cx.notify();
                     });
-                    let setup =
-                        onboarding.then(|| super::onboarding::OnboardingState::new(phase.prefs()));
+                    let setup = onboarding.then(|| {
+                        super::onboarding::OnboardingState::new(phase.prefs(), permissions_lost)
+                    });
                     let mut view = SettingsView {
                         onboarding: setup,
                         phase,
