@@ -8,6 +8,9 @@ pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(1600);
 pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(900);
 // Copied also shows the paste shortcut, so it stays a little longer.
 pub(crate) const COPIED_DURATION: Duration = Duration::from_millis(1600);
+// A failed insertion whose text is on the clipboard: long enough to switch to
+// the right field and paste. The text also stays in History.
+pub(crate) const COPIED_NOTICE_DURATION: Duration = Duration::from_secs(15);
 // A built-in microphone opens in 100 to 350 ms: the pill then appears straight
 // at Listening instead of flashing "Opening mic…" first.
 pub(crate) const STARTING_GRACE: Duration = Duration::from_millis(400);
@@ -29,6 +32,16 @@ pub(crate) struct Recovery {
     pub text: String,
     pub copied: bool,
     pub copy_failed: bool,
+    /// When the text last reached the clipboard.
+    pub since: Instant,
+}
+
+impl Recovery {
+    /// Copied text no longer needs the notice once it had time to be pasted;
+    /// text that is not on the clipboard waits for Copy or dismiss.
+    fn expired(&self, now: Instant) -> bool {
+        self.copied && now.duration_since(self.since) >= COPIED_NOTICE_DURATION
+    }
 }
 
 pub(crate) struct FeedbackState {
@@ -57,6 +70,7 @@ impl FeedbackState {
                 text: text.clone(),
                 copied: *copied,
                 copy_failed: false,
+                since: now,
             });
         }
         if bubble.capture_id < self.bubble.capture_id {
@@ -82,6 +96,7 @@ impl FeedbackState {
             self.bubble = self.pending.take().unwrap();
             self.since = now;
         }
+        self.recoveries.retain(|recovery| !recovery.expired(now));
         if self
             .lifetime()
             .is_some_and(|lifetime| now.duration_since(self.since) >= lifetime)
@@ -203,6 +218,33 @@ mod tests {
         dictation.cancel();
         state.receive(Bubble::from_dictation(&dictation), now);
         assert_eq!(state.phase(), Phase::Hidden);
+    }
+
+    #[test]
+    fn a_copied_failure_hides_itself_but_an_uncopied_one_waits() {
+        let now = Instant::now();
+        let mut state = FeedbackState::new(Bubble::feedback(0, Feedback::Empty), now);
+        for (id, copied) in [(0, true), (1, false)] {
+            state.receive(
+                Bubble::feedback(
+                    id,
+                    Feedback::InsertionFailed {
+                        text: format!("Text {id}"),
+                        copied,
+                    },
+                ),
+                now,
+            );
+        }
+        // A later insertion succeeds; the copied notice comes back after it.
+        state.receive(Bubble::feedback(2, Feedback::Success), now);
+        state.tick(now + SUCCESS_DURATION);
+        assert_eq!(state.phase(), Phase::Attention);
+        assert_eq!(state.recoveries.front().unwrap().text, "Text 0");
+        state.tick(now + COPIED_NOTICE_DURATION);
+        assert_eq!(state.recoveries.front().unwrap().text, "Text 1");
+        state.tick(now + COPIED_NOTICE_DURATION * 4);
+        assert_eq!(state.phase(), Phase::Attention);
     }
 
     #[test]

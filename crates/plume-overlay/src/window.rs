@@ -180,6 +180,7 @@ impl Render for BubbleView {
                     .and_then(|mut clipboard| clipboard.set_text(recovery.text.clone()));
                 recovery.copied = result.is_ok();
                 recovery.copy_failed = result.is_err();
+                recovery.since = Instant::now();
             }
             cx.notify();
         });
