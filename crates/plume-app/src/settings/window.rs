@@ -520,6 +520,10 @@ pub(super) fn finish_onboarding_window(cx: &mut App) {
     if let Some(old) = old {
         let _ = old.update(cx, |_, window, _| window.remove_window());
     }
+    // Settings stays hidden behind the tray icon: leave the Dock with it.
+    if crate::tray::is_available() {
+        let _ = handle.update(cx, |_, window, cx| crate::tray::hide_window(window, cx));
+    }
 }
 
 fn print_opened_line() {

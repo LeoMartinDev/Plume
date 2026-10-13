@@ -43,7 +43,7 @@ fn keep_alive<T: 'static>(cx: &mut gpui::App, tray: T) {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use macos::{hide_window, install};
+pub(crate) use macos::{hide_window, install, show_window};
 
 #[cfg(windows)]
 mod windows;
@@ -54,9 +54,6 @@ pub(crate) use windows::{hide_window, install, show_window};
 mod linux;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::{hide_window, install, show_window};
-
-#[cfg(target_os = "macos")]
-pub(crate) fn show_window(_window: &gpui::Window, _cx: &gpui::App) {}
 
 /// The Plume mark on a black tile, visible on light and dark trays.
 #[cfg(any(windows, target_os = "linux", test))]
@@ -317,22 +314,57 @@ mod macos {
         super::keep_alive(cx, Tray::new());
     }
 
-    pub(crate) fn hide_window(window: &Window, _cx: &App) {
-        let Ok(handle) = HasWindowHandle::window_handle(window) else {
-            return;
-        };
+    fn native_window(window: &Window) -> Option<id> {
+        let handle = HasWindowHandle::window_handle(window).ok()?;
         let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return;
+            return None;
         };
-        // SAFETY: GPUI owns the NSView for the lifetime of this Window. Only
-        // order out settings; hiding the whole app would also hide dictation.
+        // SAFETY: GPUI owns the NSView for the lifetime of this Window.
         unsafe {
             let view = handle.ns_view.as_ptr() as id;
-            if let Ok(native) = (&*view).send_message::<_, id>(Sel::register("window"), ()) {
-                if !native.is_null() {
-                    native.orderOut_(nil);
-                }
+            let native = (&*view)
+                .send_message::<_, id>(Sel::register("window"), ())
+                .ok()?;
+            (!native.is_null()).then_some(native)
+        }
+    }
+
+    /// Settings shows in the Dock and the app switcher while it is open, so it
+    /// can be found again behind other apps; the menu bar icon is enough once
+    /// it is closed.
+    fn set_regular(regular: bool) {
+        let policy = if regular {
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular
+        } else {
+            NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory
+        };
+        // SAFETY: GPUI calls this on the AppKit main thread.
+        unsafe {
+            NSApplication::sharedApplication(nil).setActivationPolicy_(policy);
+        }
+    }
+
+    pub(crate) fn show_window(window: &Window, _cx: &App) {
+        set_regular(true);
+        // SAFETY: called on the main thread for a window GPUI keeps alive.
+        // Activation is only a request: a system prompt, such as the
+        // microphone one, can hand focus back to the previous app. Order the
+        // window front regardless so it never ends up behind that app.
+        unsafe {
+            NSApplication::sharedApplication(nil).activateIgnoringOtherApps_(cocoa::base::YES);
+            if let Some(native) = native_window(window) {
+                native.orderFrontRegardless();
             }
         }
+    }
+
+    pub(crate) fn hide_window(window: &Window, _cx: &App) {
+        // SAFETY: called on the main thread for a window GPUI keeps alive.
+        // Only order out settings; hiding the whole app would also hide
+        // dictation.
+        if let Some(native) = native_window(window) {
+            unsafe { native.orderOut_(nil) };
+        }
+        set_regular(false);
     }
 }
