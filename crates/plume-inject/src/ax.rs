@@ -14,6 +14,7 @@ struct Range {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateSystemWide() -> Element;
+    fn AXUIElementCreateApplication(pid: i32) -> Element;
     fn AXUIElementCopyAttributeValue(
         element: Element,
         attribute: CFTypeRef,
@@ -28,6 +29,8 @@ extern "C" {
     fn AXValueGetValue(value: CFTypeRef, kind: i32, output: *mut c_void) -> u8;
     fn AXValueGetTypeID() -> usize;
 }
+#[link(name = "AppKit", kind = "framework")]
+extern "C" {}
 struct Owned(CFTypeRef);
 impl Drop for Owned {
     fn drop(&mut self) {
@@ -48,16 +51,50 @@ fn string(value: &Owned) -> Option<String> {
             .then(|| CFString::wrap_under_get_rule(value.0.cast()).to_string())
     }
 }
-fn focused() -> Option<Owned> {
+/// The frontmost app's own Accessibility element and its name. Some Macs
+/// answer every system-wide focus query with kAXErrorCannotComplete while the
+/// app itself still answers, so focus is asked of the app as a fallback.
+fn frontmost_app() -> Option<(Owned, Option<String>)> {
+    use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+    unsafe {
+        let pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let app: *mut Object = msg_send![workspace, frontmostApplication];
+        let found = (!app.is_null()).then(|| {
+            let pid: i32 = msg_send![app, processIdentifier];
+            let name: *mut Object = msg_send![app, localizedName];
+            let name = (!name.is_null())
+                .then(|| CFString::wrap_under_get_rule(name.cast_const().cast()).to_string());
+            (Owned(AXUIElementCreateApplication(pid)), name)
+        });
+        let _: () = msg_send![pool, drain];
+        found
+    }
+}
+fn focused_in(app: Option<&Owned>) -> Option<Owned> {
     let system = Owned(unsafe { AXUIElementCreateSystemWide() });
-    attr(system.0, "AXFocusedUIElement")
+    attr(system.0, "AXFocusedUIElement").or_else(|| attr(app?.0, "AXFocusedUIElement"))
+}
+fn focused() -> Option<Owned> {
+    focused_in(frontmost_app().as_ref().map(|(app, _)| app))
 }
 pub(crate) fn target() -> (Option<String>, TargetAssessment) {
-    // No focused element at all: the desktop, or an app without a window.
-    let Some(element) = focused() else {
-        return (None, TargetAssessment::NoFocus);
+    let (app, name) = frontmost_app().unzip();
+    let name = name.flatten();
+    if let Some(element) = focused_in(app.as_ref()) {
+        return (name, assessment(&element));
+    }
+    // Chromium and Electron apps (Claude, Slack, VS Code) may expose no focused
+    // element until an assistive app turns their tree on, so a focused window
+    // is the best sign left that the user is typing somewhere. No window at
+    // all: the desktop, or an app without a window.
+    let window = app.and_then(|app| attr(app.0, "AXFocusedWindow"));
+    let target = if window.is_some() {
+        TargetAssessment::Unknown
+    } else {
+        TargetAssessment::NoFocus
     };
-    (None, assessment(&element))
+    (name, target)
 }
 /// Roles that never take typed or pasted text. Web areas, groups and custom
 /// views stay Unknown: terminals and editors draw their text there.
