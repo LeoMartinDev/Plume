@@ -49,6 +49,9 @@ const BAR_WIDTH: f32 = 3.;
 const BAR_GAP: f32 = 3.;
 const BAR_MIN: f32 = 4.;
 const BAR_MAX: f32 = 22.;
+const SWEEP_PERIOD: f32 = 1.2;
+const SWEEP_WIDTH: f32 = 1.5;
+const SWEEP_RISE: f32 = 6.;
 const WAVE_WIDTH: f32 = WAVE_BARS as f32 * BAR_WIDTH + (WAVE_BARS - 1) as f32 * BAR_GAP;
 
 pub(crate) struct Colors {
@@ -103,8 +106,11 @@ pub(crate) fn colors(palette: Palette) -> Colors {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Lead {
-    /// Grey dot: ready, starting, cancelling, no speech.
+    /// Grey dot: ready, cancelling, no speech.
     Idle,
+    /// Listening's shape in grey, a sweep running over resting bars: the
+    /// microphone is still opening.
+    Warming,
     /// Pulsing accent dot plus the live waveform.
     Listening,
     /// Three accent dots blinking in turn.
@@ -225,7 +231,7 @@ pub(crate) struct Measure {
 fn lead_width(lead: Lead) -> f32 {
     match lead {
         Lead::Idle => DOT_SIZE,
-        Lead::Listening => PULSE_SIZE + GAP + WAVE_WIDTH,
+        Lead::Warming | Lead::Listening => PULSE_SIZE + GAP + WAVE_WIDTH,
         Lead::Thinking => THINKING_DOT * 3. + THINKING_GAP * 2.,
         Lead::Done | Lead::Caution | Lead::Alert => BADGE_SIZE,
     }
@@ -440,6 +446,21 @@ fn lead(lead: Lead, frame: &Frame, colors: &Colors) -> Div {
             .size(px(DOT_SIZE))
             .rounded_full()
             .bg(colors.dot),
+        Lead::Warming => div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(GAP))
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .size(px(PULSE_SIZE))
+                    .child(div().size(px(DOT_SIZE)).rounded_full().bg(colors.dot)),
+            )
+            .child(sweep(frame, colors.dot)),
         Lead::Listening => div()
             .flex()
             .flex_shrink_0()
@@ -525,6 +546,37 @@ fn wave(bars: &[f32; WAVE_BARS], color: Rgba) -> Div {
         }))
 }
 
+/// A bump crossing the resting bars from left to right, then starting over.
+fn sweep(frame: &Frame, color: Rgba) -> Div {
+    let span = WAVE_BARS as f32 + SWEEP_WIDTH * 4.;
+    let center = if frame.animate {
+        (frame.time / SWEEP_PERIOD).rem_euclid(1.) * span - SWEEP_WIDTH * 2.
+    } else {
+        f32::NEG_INFINITY
+    };
+    div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(BAR_GAP))
+        .h(px(BAR_MAX))
+        .children((0..WAVE_BARS).map(|index| {
+            let bump = sweep_bump(index, center);
+            div()
+                .w(px(BAR_WIDTH))
+                .h(px(BAR_MIN + bump * SWEEP_RISE))
+                .rounded(px(BAR_WIDTH / 2.))
+                .bg(color)
+                .opacity(0.45 + 0.55 * bump)
+        }))
+}
+
+/// 1 on the bar under the sweep, fading to 0 a few bars away.
+fn sweep_bump(index: usize, center: f32) -> f32 {
+    let distance = (index as f32 - center) / SWEEP_WIDTH;
+    (-distance * distance).exp()
+}
+
 /// The dismiss cross, drawn from the button's own center: a "×" glyph sits
 /// on the font's baseline and lands off-center in the round hover state.
 fn cross(color: Rgba) -> impl IntoElement {
@@ -591,6 +643,13 @@ mod tests {
             assert_eq!(WAVE_SHAPE[i], WAVE_SHAPE[WAVE_BARS - 1 - i]);
         }
         const { assert!(WAVE_SHAPE[WAVE_BARS / 2] > WAVE_SHAPE[0]) };
+    }
+
+    #[test]
+    fn warming_sweep_rises_under_its_center_only() {
+        assert_eq!(sweep_bump(5, 5.), 1.);
+        assert!(sweep_bump(0, 5.) < 0.01);
+        assert_eq!(sweep_bump(5, f32::NEG_INFINITY), 0.);
     }
 
     #[test]
