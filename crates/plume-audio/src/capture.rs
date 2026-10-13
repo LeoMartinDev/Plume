@@ -363,6 +363,27 @@ fn send_buffer(
 mod tests {
     use super::*;
 
+    /// cpal creates its single WASAPI enumerator in the COM apartment of the
+    /// first thread that uses it. Each test runs on its own thread, and the
+    /// apartment dies with that thread, so a later test would call a released
+    /// object. Create it on a thread that outlives the tests, as the app's UI
+    /// thread does.
+    fn host() -> cpal::Host {
+        static AUDIO_THREAD: std::sync::Once = std::sync::Once::new();
+        AUDIO_THREAD.call_once(|| {
+            let (ready, started) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = cpal::default_host().default_input_device();
+                ready.send(()).unwrap();
+                loop {
+                    thread::park();
+                }
+            });
+            started.recv().unwrap();
+        });
+        cpal::default_host()
+    }
+
     #[test]
     fn microphone_is_ready_only_after_a_nonempty_buffer_is_queued() {
         let (tx, rx) = mpsc::sync_channel(8);
@@ -396,7 +417,7 @@ mod tests {
 
     #[test]
     fn listed_devices_round_trip_through_their_id() {
-        let host = cpal::default_host();
+        let host = host();
         for device in input_devices().unwrap_or_default() {
             assert_ne!(device.name, "");
             let found = input_device(&host, Some(&device.id)).unwrap();
@@ -406,7 +427,7 @@ mod tests {
 
     #[test]
     fn unknown_device_falls_back_to_the_system_default() {
-        let host = cpal::default_host();
+        let host = host();
         for id in ["", "not a device id", "wasapi:missing", "coreaudio:missing"] {
             let fallback = input_device(&host, Some(id)).map(|device| device.id().ok());
             let default = input_device(&host, None).map(|device| device.id().ok());
@@ -416,6 +437,7 @@ mod tests {
 
     #[test]
     fn default_input_name_is_graceful_without_a_device() {
+        host();
         match default_input_name() {
             Ok(name) => assert_ne!(name, ""),
             Err(CaptureError::NoInputDevice) => {}
