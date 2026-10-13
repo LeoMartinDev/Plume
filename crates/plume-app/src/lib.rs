@@ -78,6 +78,15 @@ pub fn product_main() {
             downloads,
         );
         tray::install(cx);
+        // whisper.cpp keeps its Metal device in a C++ static whose destructor
+        // aborts while the session threads still hold the model. Once gpui has
+        // run its quit work, leave without running the process exit handlers.
+        #[cfg(target_os = "macos")]
+        cx.on_app_quit(|_| async {
+            tracing::info!("plume-app: quitting");
+            unsafe { libc::_exit(0) }
+        })
+        .detach();
         // Installing the macOS tray changes the activation policy. Reveal the
         // actual window afterward, rather than only activating the application.
         cx.defer(settings::show_settings);
