@@ -265,6 +265,23 @@ fn prune(entries: &mut Vec<HistoryEntry>, now: u64, policy: HistoryPolicy) {
     }
 }
 
+// SystemTime only has microsecond resolution on macOS, so parallel tests need
+// the counter to get distinct directories.
+#[cfg(test)]
+fn test_root(prefix: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,14 +323,7 @@ mod tests {
 
     #[test]
     fn save_and_load_round_trip() {
-        let root = std::env::temp_dir().join(format!(
-            "plume-history-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_root("plume-history");
         let path = root.join("history.json");
         let mut store = HistoryStore::empty(path.clone(), HistoryPolicy::default());
         store.entries.push(entry(1, now_secs()));
@@ -323,14 +333,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
     fn temp_root() -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "plume-history-policy-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let path = test_root("plume-history-policy");
         std::fs::create_dir_all(&path).unwrap();
         path
     }
@@ -508,13 +511,7 @@ mod recording_history_tests {
     use super::*;
     #[test]
     fn retry_keeps_insertion_status() {
-        let root = std::env::temp_dir().join(format!(
-            "plume-history-retry-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = test_root("plume-history-retry");
         let mut store = HistoryStore::empty(root.join("history.json"), HistoryPolicy::default());
         let first = DictationResult {
             text: "old".into(),

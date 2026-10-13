@@ -4,6 +4,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 const RELEASE_TAIL: Duration = Duration::from_millis(120);
 const MIC_POLL: Duration = Duration::from_millis(10);
+/// Bluetooth headsets deliver digital silence while they switch to their
+/// microphone profile, about 1.5 s for AirPods. Past this, a muted microphone
+/// records anyway, as before.
+const MIC_WARMUP_LIMIT: Duration = Duration::from_secs(3);
 pub(crate) enum CaptureCommand {
     Finish,
     Limit,
@@ -65,8 +69,8 @@ pub(crate) fn start_recorded(
                     return;
                 }
             };
-            let started = Instant::now();
-            let _ = event_tx.send(CaptureEvent::Ready(started));
+            let opened = Instant::now();
+            let mut started = None;
             let mut normalizer = plume_audio::Normalizer::default();
             let mut gate = plume_engine::SpeechGate::default();
             let mut pending = std::collections::VecDeque::<f32>::new();
@@ -107,7 +111,7 @@ pub(crate) fn start_recorded(
                         error = Some(format!("microphone: {e}"));
                         break;
                     }
-                    if started.elapsed() >= Duration::from_secs(600) {
+                    if started.is_some_and(|at: Instant| at.elapsed() >= Duration::from_secs(600)) {
                         break;
                     }
                     while let Ok(command) = command_rx.try_recv() {
@@ -123,13 +127,23 @@ pub(crate) fn start_recorded(
                         break;
                     }
                     match mic.recv_timeout(MIC_POLL) {
-                        Ok(chunk) => match normalizer.push(chunk).and_then(&mut publish) {
-                            Ok(()) => {}
-                            Err(e) => {
+                        // Only ask the user to speak once the microphone
+                        // really listens: anything said before is lost.
+                        Ok(chunk)
+                            if started.is_none()
+                                && chunk.samples.iter().all(|sample| *sample == 0.0)
+                                && opened.elapsed() < MIC_WARMUP_LIMIT => {}
+                        Ok(chunk) => {
+                            if started.is_none() {
+                                let at = Instant::now();
+                                started = Some(at);
+                                let _ = event_tx.send(CaptureEvent::Ready(at));
+                            }
+                            if let Err(e) = normalizer.push(chunk).and_then(&mut publish) {
                                 error = Some(format!("audio capture: {e}"));
                                 break;
                             }
-                        },
+                        }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                         Err(mpsc::RecvTimeoutError::Disconnected) => {
                             error = Some("microphone disconnected".into());

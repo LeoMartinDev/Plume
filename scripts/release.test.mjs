@@ -17,6 +17,13 @@ function git(cwd, ...args) {
   assert.equal(r.status, 0, r.stderr);
   return r.stdout.trim();
 }
+// Commits and pushes otherwise spawn a detached `git maintenance run --auto`
+// that can still be writing when the fixture is removed. This must be repo
+// config: local transport strips GIT_CONFIG_* before running receive-pack.
+function disableAutoMaintenance(repo) {
+  git(repo, 'config', 'maintenance.auto', 'false');
+  git(repo, 'config', 'gc.auto', '0');
+}
 function fixture(t, inherited = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plume-release-'));
   // Git/filesystem background work can briefly keep fixture directories busy.
@@ -29,6 +36,7 @@ function fixture(t, inherited = false) {
   git(repo, 'config', 'core.autocrlf', 'false');
   git(repo, 'config', 'commit.gpgsign', 'false');
   git(repo, 'config', 'tag.gpgsign', 'false');
+  disableAutoMaintenance(repo);
   fs.writeFileSync(path.join(repo, 'Cargo.toml'), '[workspace]\nresolver = "2"\nmembers = ["crates/*"]\n' + (inherited ? '\n[workspace.package]\nversion = "1.2.3"\n' : ''));
   for (const name of ['one', 'two']) {
     fs.mkdirSync(path.join(repo, 'crates', name, 'src'), { recursive: true });
@@ -193,6 +201,7 @@ test('failed commit restores original bytes and index, removes new notes', t => 
 function remote(f) {
   const bare = path.join(f.dir, 'origin.git');
   git(f.dir, 'init', '--bare', bare);
+  disableAutoMaintenance(bare);
   git(f.repo, 'remote', 'add', 'origin', bare);
   git(f.repo, 'push', '-u', 'origin', 'main');
   return bare;

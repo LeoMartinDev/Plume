@@ -64,6 +64,11 @@ fn main() {
         } else {
             let mut dictation = Dictation::new();
             dictation.hold();
+            // Bluetooth headsets take about 2 s to open their microphone.
+            bubbles
+                .send(Bubble::feedback(0, Feedback::Starting))
+                .unwrap();
+            std::thread::sleep(Duration::from_secs(2));
             bubbles
                 .send(Bubble::feedback(
                     0,

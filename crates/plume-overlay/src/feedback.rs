@@ -8,6 +8,9 @@ pub(crate) const NO_SPEECH_DURATION: Duration = Duration::from_millis(1600);
 pub(crate) const SUCCESS_DURATION: Duration = Duration::from_millis(900);
 // Copied also shows the paste shortcut, so it stays a little longer.
 pub(crate) const COPIED_DURATION: Duration = Duration::from_millis(1600);
+// A built-in microphone opens in 100 to 350 ms: the pill then appears straight
+// at Listening instead of flashing "Opening mic…" first.
+pub(crate) const STARTING_GRACE: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -31,6 +34,7 @@ pub(crate) struct Recovery {
 pub(crate) struct FeedbackState {
     pub bubble: Bubble,
     pub since: Instant,
+    now: Instant,
     pending: Option<Bubble>,
     pub recoveries: VecDeque<Recovery>,
 }
@@ -40,12 +44,14 @@ impl FeedbackState {
         Self {
             bubble,
             since: now,
+            now,
             pending: None,
             recoveries: VecDeque::new(),
         }
     }
 
     pub fn receive(&mut self, bubble: Bubble, now: Instant) {
+        self.now = now;
         if let Feedback::InsertionFailed { text, copied } = &bubble.feedback {
             self.recoveries.push_back(Recovery {
                 text: text.clone(),
@@ -71,6 +77,7 @@ impl FeedbackState {
     }
 
     pub fn tick(&mut self, now: Instant) {
+        self.now = now;
         if self.pending.is_some() && now.duration_since(self.since) >= Duration::from_millis(150) {
             self.bubble = self.pending.take().unwrap();
             self.since = now;
@@ -95,6 +102,9 @@ impl FeedbackState {
 
     pub fn phase(&self) -> Phase {
         match &self.bubble.feedback {
+            Feedback::Starting if self.now.duration_since(self.since) < STARTING_GRACE => {
+                Phase::Hidden
+            }
             Feedback::Starting => Phase::Starting,
             Feedback::Transcribing => Phase::Transcribing,
             Feedback::Cancelling => Phase::Cancelling,
@@ -147,6 +157,15 @@ mod tests {
         state.dismiss();
         assert_eq!(state.phase(), Phase::Hidden);
     }
+    #[test]
+    fn a_microphone_that_opens_at_once_never_shows_opening() {
+        let now = Instant::now();
+        let mut state = FeedbackState::new(Bubble::feedback(0, Feedback::Starting), now);
+        assert_eq!(state.phase(), Phase::Hidden);
+        state.tick(now + STARTING_GRACE);
+        assert_eq!(state.phase(), Phase::Starting);
+    }
+
     #[test]
     fn insertion_and_success_have_bounded_display_times() {
         let now = Instant::now();

@@ -52,7 +52,7 @@ impl BubbleView {
     fn spec(&self) -> PillSpec {
         match self.feedback.phase() {
             Phase::Hidden => PillSpec::new(Lead::Idle, "Ready"),
-            Phase::Starting => PillSpec::new(Lead::Idle, "Starting…"),
+            Phase::Starting => PillSpec::new(Lead::Warming, "Opening mic…"),
             Phase::Cancelling => PillSpec::new(Lead::Idle, "Cancelling…"),
             Phase::NoSpeech => PillSpec::new(Lead::Idle, "No speech detected"),
             Phase::Recording => {
@@ -431,7 +431,8 @@ pub fn attach(cx: &mut App, bubbles: mpsc::Receiver<Bubble>, levels: mpsc::Recei
                 if !view.reduced_motion
                     && matches!(
                         phase,
-                        Phase::Recording
+                        Phase::Starting
+                            | Phase::Recording
                             | Phase::Transcribing
                             | Phase::Inserting
                             | Phase::NoSpeech
