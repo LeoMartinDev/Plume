@@ -147,7 +147,7 @@ impl TextInjector for NativeInjector {
     ) -> Result<plume_core::InjectionReport, BoxError> {
         let context = self.field_context();
         let (application, target) = self.target_info();
-        reject_target(target)?;
+        reject_target(application.as_deref(), target)?;
         let mut transaction = DeliveryTarget {
             injector: self,
             context,
@@ -171,7 +171,16 @@ impl TextInjector for NativeInjector {
     }
 }
 
-fn reject_target(target: plume_core::TargetAssessment) -> Result<(), BoxError> {
+fn reject_target(
+    application: Option<&str>,
+    target: plume_core::TargetAssessment,
+) -> Result<(), BoxError> {
+    if matches!(
+        target,
+        plume_core::TargetAssessment::Sensitive | plume_core::TargetAssessment::NonEditable
+    ) {
+        tracing::info!(?target, ?application, "plume-inject: insertion refused");
+    }
     match target {
         plume_core::TargetAssessment::Sensitive => {
             Err(InjectError::Message("focused field is sensitive".into()).into())
@@ -197,7 +206,7 @@ impl transaction::Target for DeliveryTarget<'_> {
     fn prepare(&mut self, text: &str) -> Result<Option<String>, BoxError> {
         let current = self.injector.field_context();
         (self.application, self.target) = self.injector.target_info();
-        reject_target(self.target)?;
+        reject_target(self.application.as_deref(), self.target)?;
         if self.target == plume_core::TargetAssessment::NoFocus {
             return Ok(None);
         }
