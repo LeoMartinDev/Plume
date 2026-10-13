@@ -8,8 +8,6 @@ const KVK_RETURN: u16 = 0x24;
 const KVK_TAB: u16 = 0x30;
 const KVK_DELETE: u16 = 0x33;
 #[cfg(target_os = "macos")]
-const KVK_COMMAND: u16 = 0x37;
-#[cfg(target_os = "macos")]
 const KVK_V: u16 = 0x09;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,20 +45,25 @@ fn push_key(out: &mut Vec<MacStroke>, keycode: u16, unicode: Option<char>) {
 
 #[cfg(target_os = "macos")]
 mod sys {
-    use core_graphics::event::{CGEvent, CGEventTapLocation};
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use plume_core::BoxError;
 
     use super::MacStroke;
     use crate::InjectError;
 
-    pub(super) fn post(strokes: &[MacStroke]) -> Result<(), BoxError> {
+    /// `command` holds Command on every stroke. A posted Command key event
+    /// does not, so the app would see a bare V and type it.
+    pub(super) fn post(strokes: &[MacStroke], command: bool) -> Result<(), BoxError> {
         let mut events = Vec::with_capacity(strokes.len());
         for stroke in strokes {
             let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
                 .map_err(|()| InjectError::Message("CGEventSource::new failed".into()))?;
             let event = CGEvent::new_keyboard_event(source, stroke.keycode, stroke.down)
                 .map_err(|()| InjectError::Message("CGEvent::new_keyboard_event failed".into()))?;
+            if command {
+                event.set_flags(CGEventFlags::CGEventFlagCommand);
+            }
             if let Some(ch) = stroke.unicode {
                 let mut utf8 = [0u8; 4];
                 event.set_string(ch.encode_utf8(&mut utf8));
@@ -84,28 +87,9 @@ pub(crate) struct MacInjector;
 #[cfg(target_os = "macos")]
 impl MacInjector {
     pub(crate) fn paste(&mut self) -> Result<(), plume_core::BoxError> {
-        sys::post(&[
-            MacStroke {
-                keycode: KVK_COMMAND,
-                down: true,
-                unicode: None,
-            },
-            MacStroke {
-                keycode: KVK_V,
-                down: true,
-                unicode: None,
-            },
-            MacStroke {
-                keycode: KVK_V,
-                down: false,
-                unicode: None,
-            },
-            MacStroke {
-                keycode: KVK_COMMAND,
-                down: false,
-                unicode: None,
-            },
-        ])
+        let mut strokes = Vec::new();
+        push_key(&mut strokes, KVK_V, None);
+        sys::post(&strokes, true)
     }
 
     pub(crate) fn target_info(&self) -> (Option<String>, plume_core::TargetAssessment) {
@@ -116,11 +100,11 @@ impl MacInjector {
 #[cfg(target_os = "macos")]
 impl plume_core::TextInjector for MacInjector {
     fn insert(&mut self, text: &str) -> Result<(), plume_core::BoxError> {
-        sys::post(&mac_strokes(&insert_strokes(text)))
+        sys::post(&mac_strokes(&insert_strokes(text)), false)
     }
 
     fn replace_last(&mut self, old: &str, new: &str) -> Result<(), plume_core::BoxError> {
-        sys::post(&mac_strokes(&replace_strokes(old, new)))
+        sys::post(&mac_strokes(&replace_strokes(old, new)), false)
     }
 }
 
