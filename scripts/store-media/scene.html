@@ -1,0 +1,791 @@
+<!doctype html>
+<!--
+  Store media (AlternativeTo, Product Hunt, YouTube…): screenshots and a promo video.
+  Nothing moves on its own. render(t) draws the exact frame at t milliseconds of the video,
+  and ?scene=<name> freezes one scene for a screenshot. ?theme=light|dark picks the scheme.
+  The Plume windows in app/ are real captures of the settings and onboarding previews.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plume store media</title>
+    <style>
+      @font-face { font-family: 'Geist'; font-weight: 400; src: url('../../crates/plume-ui/assets/fonts/Geist-400.ttf'); }
+      @font-face { font-family: 'Geist'; font-weight: 500; src: url('../../crates/plume-ui/assets/fonts/Geist-500.ttf'); }
+      @font-face { font-family: 'Geist'; font-weight: 600; src: url('../../crates/plume-ui/assets/fonts/Geist-600.ttf'); }
+      @font-face { font-family: 'Geist Mono'; src: url('../../crates/plume-ui/assets/fonts/GeistMono-400.ttf'); }
+      @font-face { font-family: 'Instrument Serif'; font-style: italic; src: url('../../crates/plume-ui/assets/fonts/InstrumentSerif-Italic.ttf'); }
+
+      /* Tokens from website/src/styles/global.css */
+      :root {
+        --accent: #3b6dff;
+        --accent-text: #2d57e0;
+        --bg: #f4f4f2;
+        --bg-2: #ecebe6;
+        --surface: #ffffff;
+        --border: #e8e8e4;
+        --border-strong: #dcdcd7;
+        --text: #141414;
+        --muted: #55555a;
+        --subtle: #6b6b70;
+        --title-dim: #7c7c82;
+        --dots: rgba(20, 20, 20, 0.07);
+        --highlight: 230, 236, 255;
+        --highlight-alpha: 1;
+        --glow: 0.16;
+        --stage-bg: #141414;
+        --stage-dots: rgba(255, 255, 255, 0.07);
+        --window-bg: #fbfbfa;
+        --window-border: #ecece8;
+        --window-text: #2a2a2e;
+        --window-title: #141414;
+        --window-faint: #9a9aa0;
+        --window-chrome: #dcdcd7;
+        --app-shadow: 0 40px 90px -20px rgba(20, 20, 30, 0.28), 0 12px 30px -10px rgba(20, 20, 30, 0.14);
+        --app-ring: rgba(20, 20, 20, 0.08);
+        --pill-bg: #141414;
+        --pill-fg: #ffffff;
+        --pill-muted: #c9c9ce;
+        --pill-chip: #2a2a2e;
+        --pill-chip-fg: #e4e4e8;
+        --pill-idle: #6e6e76;
+        --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+        --btn-bg: #141414;
+        --btn-fg: #ffffff;
+      }
+      :root[data-theme='dark'] {
+        --accent-text: #8fa9ff;
+        --bg: #0b0b0c;
+        --bg-2: #111114;
+        --surface: #131315;
+        --border: #1f1f22;
+        --border-strong: #2a2a2e;
+        --text: #f2f2f0;
+        --muted: #a3a3aa;
+        --subtle: #8a8a92;
+        --title-dim: #b4b4bc;
+        --dots: rgba(255, 255, 255, 0.05);
+        --highlight: 59, 109, 255;
+        --highlight-alpha: 0.24;
+        --glow: 0.34;
+        --stage-bg: #101012;
+        --stage-dots: rgba(255, 255, 255, 0.05);
+        --window-bg: #161618;
+        --window-border: #2a2a2e;
+        --window-text: #c9c9ce;
+        --window-title: #f2f2f0;
+        --window-faint: #6e6e76;
+        --window-chrome: #2e2e33;
+        --app-shadow: 0 40px 90px -20px rgba(0, 0, 0, 0.7), 0 12px 30px -10px rgba(0, 0, 0, 0.5);
+        --app-ring: rgba(255, 255, 255, 0.09);
+        --pill-bg: #f2f2f0;
+        --pill-fg: #0b0b0c;
+        --pill-muted: #45454b;
+        --pill-chip: #e2e2df;
+        --pill-chip-fg: #2a2a2e;
+        --pill-idle: #8a8a90;
+        --pill-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        --btn-bg: #f2f2f0;
+        --btn-fg: #0b0b0c;
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Geist', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      .backdrop {
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(var(--dots) 1px, transparent 1px);
+        background-size: 24px 24px;
+        -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 45%, #000 20%, transparent 85%);
+      }
+      .glow {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(110px);
+        background: var(--accent);
+        opacity: var(--glow);
+        pointer-events: none;
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+      }
+
+      /* Copy column */
+      .copy {
+        position: absolute;
+        left: 80px;
+        top: 50%;
+        width: 360px;
+        transform: translateY(-50%);
+      }
+      .copy--right { left: auto; right: 56px; width: 380px; }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: 'Geist Mono', monospace;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent-text);
+        margin-bottom: 22px;
+      }
+      .eyebrow::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      h1, h2 {
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: -0.05em;
+        line-height: 0.98;
+      }
+      h2 { font-size: 54px; }
+      .serif {
+        font-family: 'Instrument Serif', serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 1.1em;
+        letter-spacing: -0.02em;
+        color: var(--title-dim);
+      }
+      .lead {
+        margin: 24px 0 0;
+        font-size: 18px;
+        line-height: 1.5;
+        color: var(--muted);
+        letter-spacing: -0.01em;
+      }
+      .chips {
+        margin-top: 28px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        font-size: 13.5px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        color: var(--text);
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .chip--accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .chip svg { flex: none; }
+      kbd {
+        font-family: 'Geist Mono', monospace;
+        font-size: 13px;
+        padding: 3px 9px;
+        border-radius: 6px;
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-bottom-width: 2px;
+        color: var(--text);
+      }
+      .stats {
+        margin-top: 32px;
+        display: grid;
+        grid-template-columns: repeat(3, auto);
+        justify-content: start;
+        gap: 28px;
+      }
+      .stat b {
+        display: block;
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      .stat span { display: block; margin-top: 6px; font-size: 13.5px; color: var(--subtle); line-height: 1.35; }
+
+      /* Plume windows: real captures, framed like a floating window */
+      .app {
+        position: absolute;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: var(--app-shadow), 0 0 0 1px var(--app-ring);
+        background: var(--window-bg);
+      }
+      .app img { display: block; }
+
+      /* Generic third-party windows */
+      .window {
+        position: relative;
+        background: var(--window-bg);
+        border: 1px solid var(--window-border);
+        border-radius: 14px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+        text-align: left;
+      }
+      .chrome {
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--window-border);
+      }
+      .chrome span { width: 10px; height: 10px; border-radius: 50%; background: var(--window-chrome); }
+      .chrome em { margin-left: 10px; font-style: normal; font-size: 12.5px; color: var(--subtle); white-space: nowrap; }
+      .chrome em b { font-weight: 500; color: var(--window-title); }
+      mark {
+        border-radius: 4px;
+        padding: 1px 2px;
+        margin: 0 -2px;
+        color: var(--window-title);
+        background: transparent;
+      }
+      mark:empty { padding: 0; margin: 0; }
+      .rest { color: transparent; }
+      .caret {
+        display: inline-block;
+        width: 2px;
+        height: 1.1em;
+        vertical-align: -0.18em;
+        margin-left: 2px;
+        margin-right: -4px;
+        background: var(--accent);
+      }
+
+      /* Voice pill, from website/src/components/VoicePill.astro */
+      .pill-slot { position: absolute; display: grid; place-items: center; }
+      .pill-frame { grid-area: 1 / 1; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        height: 46px;
+        padding: 0 8px 0 15px;
+        border-radius: 999px;
+        white-space: nowrap;
+        font-size: 13px;
+        background: var(--pill-bg);
+        color: var(--pill-fg);
+        box-shadow: var(--pill-shadow);
+      }
+      .label { color: var(--pill-muted); }
+      .label--end { padding-right: 8px; }
+      .pill kbd {
+        font-family: inherit;
+        font-size: 11px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        border: 0;
+        background: var(--pill-chip);
+        color: var(--pill-chip-fg);
+      }
+      .keys { display: flex; gap: 4px; }
+      .dot { position: relative; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+      .dot--idle { background: var(--pill-idle); }
+      .dot--live { background: var(--accent); }
+      .ping { position: absolute; inset: 0; border-radius: 50%; background: var(--accent); }
+      .wave { display: flex; align-items: center; gap: 3px; height: 22px; }
+      .wave span { width: 3px; border-radius: 3px; background: var(--pill-fg); }
+      .thinking { display: flex; gap: 4px; }
+      .thinking span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+      .check {
+        width: 20px; height: 20px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--accent); flex: none;
+      }
+
+      /* 1. Hero */
+      .hero-head { position: absolute; top: 46px; left: 0; right: 0; text-align: center; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px 6px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+      }
+      .badge i { width: 7px; height: 7px; border-radius: 50%; background: #22a35a; box-shadow: 0 0 0 3px rgba(34, 163, 90, 0.18); }
+      .hero-head h1 { margin-top: 20px; font-size: 62px; }
+      .hint { margin-top: 18px; display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: var(--subtle); }
+      .hint kbd { transition: none; }
+      .stage {
+        position: absolute;
+        left: 64px;
+        right: 64px;
+        top: 318px;
+        bottom: 0;
+        border-radius: 28px 28px 0 0;
+        background-color: var(--stage-bg);
+        background-image: radial-gradient(var(--stage-dots) 1px, transparent 1px);
+        background-size: 22px 22px;
+        overflow: hidden;
+      }
+      .stage .window { position: absolute; left: 50%; top: 40px; bottom: -2px; width: 820px; transform: translateX(-50%); border-bottom: 0; border-radius: 14px 14px 0 0; }
+      .doc { padding: 26px 34px 0; font-size: 17px; line-height: 1.65; color: var(--window-text); display: grid; gap: 10px; }
+      .doc-title { margin: 0 0 2px; font-size: 24px; font-weight: 600; letter-spacing: -0.03em; color: var(--window-title); }
+      .doc p { margin: 0; }
+      .stage .pill-slot { left: 50%; bottom: 30px; transform: translateX(-50%); }
+
+      /* 2. Any app */
+      .apps {
+        position: absolute;
+        left: 520px;
+        top: 70px;
+        width: 700px;
+        height: 580px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 20px;
+      }
+      .apps .window { box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.3); }
+      .card-body { padding: 18px 20px; font-size: 14.5px; line-height: 1.55; color: var(--window-text); display: grid; gap: 10px; align-content: start; }
+      .msg { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+      .avatar { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: #fff; }
+      .who { font-size: 13px; font-weight: 600; color: var(--window-title); }
+      .who small { font-weight: 400; color: var(--window-faint); margin-left: 6px; font-size: 11.5px; }
+      .faint { color: var(--window-faint); }
+      .code { font-family: 'Geist Mono', monospace; font-size: 12.5px; line-height: 1.75; }
+      .code .k { color: #c2410c; }
+      :root[data-theme='dark'] .code .k { color: #fb923c; }
+      .code .f { color: var(--accent-text); }
+      .code .ln { display: inline-block; width: 22px; color: var(--window-faint); opacity: 0.7; }
+      .code mark { font-family: inherit; }
+      .prompt-box { margin-top: 4px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 12px 14px 40px; background: var(--surface); }
+      .apps .pill-slot { left: 50%; bottom: 16px; transform: translateX(-50%) scale(0.86); transform-origin: 50% 100%; }
+
+      /* 3–7: Plume windows */
+      .sk { position: absolute; }
+
+      /* 8. End card */
+      .end { display: grid; place-items: center; text-align: center; }
+      .mark {
+        width: 84px; height: 84px; border-radius: 22px;
+        background: var(--btn-bg); color: var(--btn-fg);
+        display: inline-flex; align-items: center; justify-content: center;
+        box-shadow: 0 20px 50px -10px rgba(59, 109, 255, 0.45);
+      }
+      .end h2 { font-size: 64px; margin-top: 26px; }
+      .end .lead { margin-top: 18px; font-size: 20px; }
+      .url {
+        margin-top: 30px;
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 12px 22px; border-radius: 999px;
+        background: var(--btn-bg); color: var(--btn-fg);
+        font-size: 17px; font-weight: 500; letter-spacing: -0.01em;
+      }
+      .platforms { margin-top: 22px; font-size: 14px; color: var(--subtle); display: flex; gap: 18px; justify-content: center; }
+    </style>
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <div class="glow" id="glow"></div>
+
+    <!-- 1. Dictation, the hero -->
+    <section class="scene" data-scene="hero">
+      <div class="hero-head">
+        <span class="badge" data-in="0"><i></i>Runs 100% on your computer · macOS, Windows &amp; Linux</span>
+        <h1 data-in="1">Speak. Release.<br /><span class="serif">Keep writing.</span></h1>
+        <div class="hint" data-in="2">Hold <kbd data-key>Ctrl</kbd> + <kbd data-key>Space</kbd> to talk, in any app</div>
+      </div>
+      <div class="stage" data-rise>
+        <div class="window">
+          <div class="chrome"><span></span><span></span><span></span><em>Notes — Product sync</em></div>
+          <div class="doc">
+            <p class="doc-title">Product sync</p>
+            <p>Ship the onboarding behind a flag first, then open it to everyone once the copy is final.</p>
+            <p data-line><mark data-typed></mark><span class="caret" data-caret></span><span class="rest" data-rest></span></p>
+          </div>
+        </div>
+        <div class="pill-slot" data-pill-slot></div>
+      </div>
+    </section>
+
+    <!-- 2. Works in every app -->
+    <section class="scene" data-scene="apps">
+      <div class="copy">
+        <div class="eyebrow" data-in="0">Works everywhere</div>
+        <h2 data-in="1">Any app.<br /><span class="serif">Any text field.</span></h2>
+        <p class="lead" data-in="2">Messages, emails, code, AI prompts. Plume types your words right where your cursor is.</p>
+        <div class="chips" data-in="3">
+          <span class="chip">Slack</span><span class="chip">Mail</span><span class="chip">Notion</span><span class="chip">VS Code</span><span class="chip">Claude</span><span class="chip">Google Docs</span><span class="chip chip--accent">any text field</span>
+        </div>
+      </div>
+      <div class="apps" data-rise>
+        <div class="window" data-card>
+          <div class="chrome"><span></span><span></span><span></span><em><b># design</b></em></div>
+          <div class="card-body">
+            <div class="msg"><span class="avatar" style="background:#e0567a">M</span><div><div class="who">Mira<small>10:42</small></div>New pricing page is up on staging, have a look.</div></div>
+            <div class="msg"><span class="avatar" style="background:#3b6dff">L</span><div><div class="who">You<small>10:44</small></div><span data-line><mark data-typed></mark><span class="caret" data-caret></span><span class="rest" data-rest></span></span></div></div>
+          </div>
+          <div class="pill-slot" data-pill-slot></div>
+        </div>
+        <div class="window" data-card>
+          <div class="chrome"><span></span><span></span><span></span><em><b>Re: Q3 planning</b></em></div>
+          <div class="card-body">
+            <div class="faint">To: Sam Carter</div>
+            <div>Hi Sam,</div>
+            <div data-line><mark data-typed></mark><span class="caret" data-caret></span><span class="rest" data-rest></span></div>
+          </div>
+          <div class="pill-slot" data-pill-slot></div>
+        </div>
+        <div class="window" data-card>
+          <div class="chrome"><span></span><span></span><span></span><em><b>retry.rs</b></em></div>
+          <div class="card-body code">
+            <div><span class="ln">12</span><span class="k">fn</span> <span class="f">send</span>(req: Request) {</div>
+            <div><span class="ln">13</span>&nbsp;&nbsp;&nbsp;&nbsp;<span data-line><mark data-typed></mark><span class="caret" data-caret></span><span class="rest" data-rest></span></span></div>
+            <div><span class="ln">14</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">let</span> res = client.<span class="f">call</span>(req);</div>
+            <div><span class="ln">15</span>}</div>
+          </div>
+          <div class="pill-slot" data-pill-slot></div>
+        </div>
+        <div class="window" data-card>
+          <div class="chrome"><span></span><span></span><span></span><em><b>New chat</b></em></div>
+          <div class="card-body">
+            <div class="faint">How can I help you today?</div>
+            <div class="prompt-box"><span data-line><mark data-typed></mark><span class="caret" data-caret></span><span class="rest" data-rest></span></span></div>
+          </div>
+          <div class="pill-slot" data-pill-slot></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Privacy and models -->
+    <section class="scene" data-scene="private">
+      <div class="copy">
+        <div class="eyebrow" data-in="0">Private by design</div>
+        <h2 data-in="1">Your voice<br /><span class="serif">stays yours.</span></h2>
+        <p class="lead" data-in="2">Speech models run locally, even offline. No account to create, no audio sent anywhere.</p>
+        <div class="stats" data-in="3">
+          <div class="stat"><b>0</b><span>accounts<br />required</span></div>
+          <div class="stat"><b>0</b><span>bytes of audio<br />uploaded</span></div>
+          <div class="stat"><b>5</b><span>local speech<br />models</span></div>
+        </div>
+      </div>
+      <div class="app sk" data-rise style="left: 480px; top: 110px"><img data-src="onboarding-{theme}-model.png" width="760" height="500" /></div>
+    </section>
+
+    <!-- 4. Shortcuts -->
+    <section class="scene" data-scene="shortcuts">
+      <div class="app sk" data-rise style="left: 48px; top: 110px"><img data-src="onboarding-{theme}-shortcuts.png" width="760" height="500" /></div>
+      <div class="copy copy--right">
+        <div class="eyebrow" data-in="0">Push to talk</div>
+        <h2 data-in="1">Hold, speak,<br /><span class="serif">let go.</span></h2>
+        <p class="lead" data-in="2">Hold the shortcut while you talk, or go hands-free for longer thoughts. Both are yours to change.</p>
+        <div class="chips" data-in="3" style="flex-direction: column; align-items: flex-start; gap: 10px">
+          <span class="chip"><kbd>Ctrl</kbd>+<kbd>Space</kbd>&nbsp;hold to talk</span>
+          <span class="chip"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>&nbsp;hands free</span>
+          <span class="chip"><kbd>Esc</kbd>&nbsp;cancel</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. History -->
+    <section class="scene" data-scene="history">
+      <div class="copy">
+        <div class="eyebrow" data-in="0">History</div>
+        <h2 data-in="1">Never lose<br /><span class="serif">a single take.</span></h2>
+        <p class="lead" data-in="2">Recent dictations and your last 8 recordings stay on your computer. Copy them, or transcribe them again.</p>
+        <div class="chips" data-in="3"><span class="chip">Retention controls</span><span class="chip">One-click clear</span></div>
+      </div>
+      <div class="app sk" data-rise style="left: 480px; top: 120px"><img data-src="{theme}-history.png" width="760" height="480" /></div>
+    </section>
+
+    <!-- 6. Models -->
+    <section class="scene" data-scene="models">
+      <div class="app sk" data-rise style="left: 48px; top: 120px"><img data-src="{theme}-models.png" width="760" height="480" /></div>
+      <div class="copy copy--right">
+        <div class="eyebrow" data-in="0">Models</div>
+        <h2 data-in="1">Pick your<br /><span class="serif">trade-off.</span></h2>
+        <p class="lead" data-in="2">Whisper, Parakeet and Nemotron, from 142 MB to 1.5 GB. Download once, switch anytime.</p>
+        <div class="chips" data-in="3"><span class="chip">99 languages</span><span class="chip">Auto-detect</span><span class="chip">Offline</span></div>
+      </div>
+    </section>
+
+    <!-- 7. Native, light and dark -->
+    <section class="scene" data-scene="themes">
+      <div class="copy">
+        <div class="eyebrow" data-in="0">Native &amp; fast</div>
+        <h2 data-in="1">Small app.<br /><span class="serif">Out of your way.</span></h2>
+        <p class="lead" data-in="2">Built in Rust, no Electron. Plume waits quietly in your menu bar or system tray, in light or dark.</p>
+      </div>
+      <div class="app sk" data-rise style="left: 470px; top: 64px"><img data-src="light-interface.png" width="646" height="408" /></div>
+      <div class="app sk" data-rise style="left: 590px; top: 248px"><img data-src="dark-dictation.png" width="646" height="408" /></div>
+    </section>
+
+    <!-- 8. End card -->
+    <section class="scene end" data-scene="end">
+      <div>
+        <span class="mark" data-in="0">
+          <svg width="42" height="54" viewBox="420 350 440 570"><path fill="currentColor" fill-rule="evenodd" d="M432 908V550C432 435 524 361 638 361C684 361 713 374 748 404L817 463L764 459C813 470 842 514 842 571C842 684 750 774 638 774C605 774 577 766 551 751V908Z M728 574A91 90 0 1 0 546 574A91 90 0 1 0 728 574Z" /></svg>
+        </span>
+        <h2 data-in="1">Plume</h2>
+        <p class="lead" data-in="2">Offline voice dictation. <span class="serif" style="font-size: 1.2em">Speak, release, keep writing.</span></p>
+        <div data-in="3"><span class="url">speakplume.com</span></div>
+        <div class="platforms" data-in="4"><span>macOS</span><span>·</span><span>Windows</span><span>·</span><span>Linux</span></div>
+      </div>
+    </section>
+
+    <template id="pill">
+      <span class="pill-frame" data-pill="idle">
+        <span class="pill"><span class="dot dot--idle"></span><span class="label">Ready</span><span class="keys"><kbd>Ctrl</kbd><kbd>Space</kbd></span></span>
+      </span>
+      <span class="pill-frame" data-pill="listening">
+        <span class="pill"><span class="dot dot--live"><span class="ping"></span></span><span class="wave"></span><span class="label">Listening</span><kbd>Esc</kbd></span>
+      </span>
+      <span class="pill-frame" data-pill="transcribing">
+        <span class="pill"><span class="thinking"><span></span><span></span><span></span></span><span class="label label--end">Transcribing on-device</span></span>
+      </span>
+      <span class="pill-frame" data-pill="inserted">
+        <span class="pill">
+          <span class="check"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>
+          <span class="label label--end">Inserted</span>
+        </span>
+      </span>
+    </template>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = theme;
+      for (const img of document.querySelectorAll('img[data-src]')) {
+        img.src = 'app/' + img.dataset.src.replace('{theme}', theme);
+      }
+
+      const clamp = (v) => Math.min(1, Math.max(0, v));
+      const ease = (v) => v * v * (3 - 2 * v);
+      const out = (v) => 1 - Math.pow(1 - clamp(v), 3);
+      const style = getComputedStyle(document.documentElement);
+      const highlight = style.getPropertyValue('--highlight').trim();
+      const highlightAlpha = parseFloat(style.getPropertyValue('--highlight-alpha'));
+
+      // A dictation: a pill and a line of text that gets typed in.
+      const BARS = [6, 16, 20, 12, 18, 8, 20, 14, 7, 17, 11, 6];
+      function dictation(root, text, seed) {
+        const slot = root.querySelector('[data-pill-slot]');
+        slot.append(document.getElementById('pill').content.cloneNode(true));
+        const wave = slot.querySelector('.wave');
+        for (const _ of BARS) wave.append(document.createElement('span'));
+        const words = text.match(/\S+\s*/g);
+        const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+        const at = [];
+        let t = 0;
+        for (let i = 0; i < words.length; i++) at.push((t += 45 + random() * 27));
+        return {
+          slot,
+          frames: [...slot.querySelectorAll('[data-pill]')],
+          wave,
+          ping: slot.querySelector('.ping'),
+          thinking: [...slot.querySelector('.thinking').children],
+          typed: root.querySelector('[data-typed]'),
+          rest: root.querySelector('[data-rest]'),
+          caret: root.querySelector('[data-caret]'),
+          words,
+          at,
+          typingEnd: at[at.length - 1],
+        };
+      }
+
+      // Draws a dictation at local time t (ms). Phases: idle, listening from `listen`,
+      // transcribing from `transcribe`, typing from `insert`, highlight gone at `settle`,
+      // pill back to idle (or hidden) at `idle`.
+      function drawDictation(d, t, abs, p) {
+        const spans = {
+          idle: p.hideIdle ? [Infinity, Infinity] : [p.idle, Infinity],
+          listening: [p.listen, p.transcribe],
+          transcribing: [p.transcribe, p.insert],
+          inserted: [p.insert, p.idle],
+        };
+        if (!p.hideIdle && t < p.listen) spans.idle = [-Infinity, p.listen];
+        const FADE = 300;
+        let any = 0;
+        for (const frame of d.frames) {
+          const [from, to] = spans[frame.dataset.pill];
+          const o = t < from ? 0 : t < to ? (from === -Infinity ? 1 : ease(clamp((t - from) / FADE))) : 1 - ease(clamp((t - to) / FADE));
+          any = Math.max(any, o);
+          frame.style.opacity = o;
+          frame.style.transform = `translateY(${4 * (1 - o)}px) scale(${0.96 + 0.04 * o})`;
+        }
+        const s = abs / 1000;
+        const ph = (s % 1.6) / 1.6;
+        const po = 1 - (1 - ph) * (1 - ph);
+        d.ping.style.transform = `scale(${1 + 1.4 * po})`;
+        d.ping.style.opacity = 0.5 * (1 - po);
+        d.wave.childNodes.forEach((bar, i) => {
+          const dur = 0.8 + (i % 5) * 0.1;
+          const off = -(i % 4) * 0.25;
+          const phase = ((((s - off) % dur) + dur) % dur) / dur;
+          bar.style.height = `${BARS[i] * (0.4 + 0.7 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase)))}px`;
+        });
+        d.thinking.forEach((dot, i) => {
+          const phase = (((s - 0.2 * i) % 1) + 1) % 1;
+          dot.style.opacity = 1 - 0.75 * (0.5 - 0.5 * Math.cos(2 * Math.PI * phase));
+        });
+        const count = t < p.insert ? 0 : d.at.filter((w) => w <= t - p.insert).length;
+        d.typed.textContent = d.words.slice(0, count).join('');
+        d.rest.textContent = d.words.slice(count).join('');
+        const settle = ease(clamp((t - p.settle) / 800));
+        d.typed.style.background = `rgba(${highlight}, ${highlightAlpha * (1 - settle)})`;
+        const active = t >= p.listen - 200 && (p.caretAfter ? true : t < p.settle + 800);
+        d.caret.style.visibility = active && s % 1 < 0.5 ? 'visible' : 'hidden';
+      }
+
+      // Scenes, in video order, with their length in ms.
+      const hero = document.querySelector('[data-scene="hero"]');
+      const heroDictation = dictation(
+        hero,
+        "Let's also add a short video on the download page so people see how the shortcut works before they install it.",
+        7,
+      );
+      const heroKeys = [...hero.querySelectorAll('[data-key]')];
+      const HERO = { listen: 1400, transcribe: 3900, insert: 4800, settle: 6900, idle: 7500 };
+
+      const cards = [...document.querySelectorAll('[data-card]')];
+      const cardTexts = [
+        'Looks great, ship it after lunch.',
+        'Thanks, Thursday works for me. I will bring the numbers.',
+        '// Retry once, then fail',
+        'Summarize this thread in three bullet points.',
+      ];
+      const cardDictations = cards.map((card, i) => dictation(card, cardTexts[i], 11 + i));
+      const CARD_START = 900;
+      const CARD_STEP = 1400;
+      const cardPhases = (i) => {
+        const base = CARD_START + i * CARD_STEP;
+        const insert = base + 1000;
+        const typed = insert + cardDictations[i].typingEnd;
+        return { listen: base, transcribe: base + 700, insert, settle: typed + 700, idle: typed + 900, hideIdle: true };
+      };
+
+      const scenes = [
+        { name: 'hero', ms: 8600, still: 6200 },
+        { name: 'apps', ms: 6800, still: CARD_START + 3 * CARD_STEP + 380 },
+        { name: 'private', ms: 4200 },
+        { name: 'shortcuts', ms: 4200 },
+        { name: 'history', ms: 4200 },
+        { name: 'models', ms: 4200 },
+        { name: 'themes', ms: 4400 },
+        { name: 'end', ms: 4600 },
+      ];
+      const XFADE = 700;
+      let start = 0;
+      for (const scene of scenes) {
+        scene.el = document.querySelector(`[data-scene="${scene.name}"]`);
+        scene.start = start;
+        scene.ins = [...scene.el.querySelectorAll('[data-in]')];
+        scene.rises = [...scene.el.querySelectorAll('[data-rise]')];
+        start += scene.ms;
+      }
+      window.DURATION = start;
+      window.SCENES = scenes.map((s) => s.name);
+
+      // Glow position per scene, drifting slowly.
+      const glow = document.getElementById('glow');
+      const glows = {
+        hero: [640, 210, 900, 360],
+        apps: [870, 360, 760, 520],
+        private: [850, 360, 760, 480],
+        shortcuts: [440, 360, 760, 480],
+        history: [850, 360, 760, 480],
+        models: [440, 360, 760, 480],
+        themes: [880, 380, 800, 520],
+        end: [640, 360, 700, 420],
+      };
+
+      function drawScene(scene, lt, abs, opacity, still) {
+        const el = scene.el;
+        el.style.opacity = opacity;
+        el.style.visibility = opacity > 0 ? 'visible' : 'hidden';
+        if (opacity <= 0) return;
+        // Leaving scenes drift up a little, entering ones settle in.
+        const leaving = lt > scene.ms - XFADE ? ease(clamp(((lt - (scene.ms - XFADE)) / XFADE) * 2)) : 0;
+        el.style.transform = `translateY(${-14 * leaving}px)`;
+        el.style.filter = leaving > 0 ? `blur(${3 * leaving}px)` : '';
+        scene.ins.forEach((node) => {
+          const k = still ? 1 : out((lt - 120 - 110 * Number(node.dataset.in)) / 650);
+          node.style.opacity = k;
+          node.style.transform = `translateY(${18 * (1 - k)}px)`;
+          node.style.filter = k < 1 ? `blur(${4 * (1 - k)}px)` : '';
+        });
+        scene.rises.forEach((node, i) => {
+          const k = still ? 1 : out((lt - 200 - 180 * i) / 900);
+          const drift = still ? 0 : (lt / scene.ms) * 6;
+          node.style.opacity = node.classList.contains('stage') ? 1 : k;
+          node.style.transform = `translateY(${40 * (1 - k) - drift}px) scale(${0.97 + 0.03 * k})`;
+        });
+
+        if (scene.name === 'hero') {
+          drawDictation(heroDictation, lt, abs, { ...HERO, caretAfter: true });
+          const down = lt >= HERO.listen && lt < HERO.transcribe;
+          for (const key of heroKeys) {
+            key.style.transform = down ? 'translateY(1px)' : '';
+            key.style.background = down ? `rgba(${highlight}, ${highlightAlpha})` : '';
+            key.style.borderColor = down ? 'var(--accent)' : '';
+            key.style.color = down ? 'var(--accent-text)' : '';
+          }
+        }
+        if (scene.name === 'apps') {
+          cardDictations.forEach((d, i) => drawDictation(d, lt, abs, cardPhases(i)));
+        }
+      }
+
+      window.render = (time, stillName) => {
+        if (stillName) {
+          const scene = scenes.find((s) => s.name === stillName);
+          for (const s of scenes) if (s !== scene) drawScene(s, 0, 0, 0, true);
+          const lt = scene.still ?? scene.ms / 2;
+          drawScene(scene, lt, scene.start + lt, 1, true);
+          const g = glows[scene.name];
+          glow.style.cssText = `left:${g[0] - g[2] / 2}px;top:${g[1] - g[3] / 2}px;width:${g[2]}px;height:${g[3]}px`;
+          document.body.style.opacity = 1;
+          return;
+        }
+        const t = Math.min(Math.max(time, 0), window.DURATION - 1);
+        let gx = 0, gy = 0, gw = 0, gh = 0, gsum = 0;
+        for (const scene of scenes) {
+          const lt = t - scene.start;
+          // Scenes dip through the background: the old one fades out, then the new one fades in.
+          let o = 0;
+          if (lt >= -XFADE && lt < scene.ms) {
+            o = scene.start === 0 ? 1 : lt < 0 ? ease(clamp(((lt + XFADE) / XFADE) * 2 - 1)) : 1;
+          }
+          const next = scenes[scenes.indexOf(scene) + 1];
+          if (next && t >= next.start) o = 0;
+          if (next && lt >= scene.ms - XFADE && lt < scene.ms) o *= 1 - ease(clamp(((lt - (scene.ms - XFADE)) / XFADE) * 2));
+          drawScene(scene, Math.max(lt, 0), t, o, false);
+          if (o > 0) {
+            const g = glows[scene.name];
+            gx += g[0] * o; gy += g[1] * o; gw += g[2] * o; gh += g[3] * o; gsum += o;
+          }
+        }
+        if (gsum > 0) {
+          const wob = Math.sin(t / 1800) * 24;
+          gx /= gsum; gy /= gsum; gw /= gsum; gh /= gsum;
+          glow.style.cssText = `left:${gx - gw / 2 + wob}px;top:${gy - gh / 2}px;width:${gw}px;height:${gh}px`;
+        }
+        // Global fade in and out, so the video loops cleanly.
+        document.body.style.opacity = Math.min(1, t / 400, (window.DURATION - t) / 500);
+      };
+
+      const still = params.get('scene');
+      window.render(Number(params.get('t') ?? 0), still);
+    </script>
+  </body>
+</html>

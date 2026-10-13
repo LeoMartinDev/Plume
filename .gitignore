@@ -3,3 +3,4 @@
 /release-assets/
 /.worktrees/
 .DS_Store
+/docs/images/store/
