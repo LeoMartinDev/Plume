@@ -37,9 +37,10 @@ impl Drop for Owned {
 fn attr(element: Element, name: &str) -> Option<Owned> {
     let name = CFString::new(name);
     let mut value = std::ptr::null();
+    // Lazy on purpose: an eager Owned(null) would be dropped, and CFRelease(NULL) aborts.
     (unsafe { AXUIElementCopyAttributeValue(element, name.as_CFTypeRef(), &mut value) } == 0
         && !value.is_null())
-    .then_some(Owned(value))
+    .then(|| Owned(value))
 }
 fn string(value: &Owned) -> Option<String> {
     unsafe {
