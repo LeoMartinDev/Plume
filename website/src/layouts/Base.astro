@@ -6,6 +6,8 @@ import '@fontsource/geist-mono/latin-400.css';
 import '@fontsource/instrument-serif/latin-400-italic.css';
 import '../styles/global.css';
 import { t, type Lang } from '../i18n/strings';
+import ogEn from '../assets/og-en.png';
+import ogFr from '../assets/og-fr.png';
 
 interface Props {
   lang: Lang;
@@ -16,7 +18,9 @@ const site = Astro.site ?? new URL('https://speakplume.com');
 const canonical = new URL(lang === 'en' ? '/' : '/fr/', site).href;
 const enUrl = new URL('/', site).href;
 const frUrl = new URL('/fr/', site).href;
-const ogImage = new URL(`/og-${lang}.png`, site).href;
+// Bundled so the URL carries a content hash: X caches card images by URL,
+// including failed fetches, and a new image must get a new URL.
+const ogImage = new URL((lang === 'fr' ? ogFr : ogEn).src, site).href;
 ---
 
 <!doctype html>
