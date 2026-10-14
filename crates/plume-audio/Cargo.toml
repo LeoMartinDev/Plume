@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 tracing.workspace = true
-cpal = "0.15"
+cpal = "0.18"
 plume-core = { path = "../plume-core" }

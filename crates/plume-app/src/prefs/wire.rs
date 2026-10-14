@@ -1,4 +1,6 @@
-use super::{AppearancePref, InterfaceLanguage, LanguagePref, Prefs, PrefsError, Scheme};
+use super::{
+    AppearancePref, InterfaceLanguage, LanguagePref, Microphone, Prefs, PrefsError, Scheme,
+};
 use crate::catalog::ModelId;
 use crate::history_policy::HistoryPolicy;
 use plume_session::{Destination, InsertionMode};
@@ -68,6 +70,9 @@ struct WireIn {
     destination: toml::Value,
     insertion_mode: String,
     copy_on_failure: bool,
+    /// Absent in files written before microphone selection: the system default.
+    #[serde(default)]
+    microphone: Option<toml::Value>,
 }
 
 #[derive(Serialize)]
@@ -85,6 +90,14 @@ struct WireOut {
     destination: &'static str,
     insertion_mode: &'static str,
     copy_on_failure: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    microphone: Option<MicrophoneWire>,
+}
+
+#[derive(Serialize)]
+struct MicrophoneWire {
+    id: String,
+    name: String,
 }
 
 pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
@@ -93,7 +106,14 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
         .ok_or_else(|| format!("prefs model {} is unknown", wire.model))?;
     plume_session::Config::from_prefs(&wire.hold, &wire.cancel, PathBuf::from("/"))
         .map_err(|err| format!("prefs chords rejected: {err}"))?;
-    let (history, warnings) = parse_history(wire.history);
+    let (history, mut warnings) = parse_history(wire.history);
+    let microphone = wire.microphone.and_then(|value| {
+        let microphone = parse_microphone(&value);
+        if microphone.is_none() {
+            warnings.push("microphone must have an id and a name; using the system default".into());
+        }
+        microphone
+    });
     let toggle = if wire.toggle.is_empty() {
         None
     } else {
@@ -124,6 +144,7 @@ pub(super) fn parse_wire(raw: &str) -> Result<(Prefs, Vec<String>), String> {
                 _ => InsertionMode::Auto,
             },
             copy_on_failure: wire.copy_on_failure,
+            microphone,
             history,
         },
         warnings,
@@ -165,6 +186,10 @@ pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
         destination: prefs.destination().as_str(),
         insertion_mode: prefs.insertion_mode().as_str(),
         copy_on_failure: prefs.copy_on_failure(),
+        microphone: prefs.microphone().map(|microphone| MicrophoneWire {
+            id: microphone.id.clone(),
+            name: microphone.name.clone(),
+        }),
         history: HistoryWireOut {
             retention_days: HistoryLimitWire::from_limit(
                 prefs.history().retention_days().map(u64::from),
@@ -175,6 +200,20 @@ pub(super) fn encode(prefs: &Prefs) -> Result<String, PrefsError> {
         },
     };
     toml::to_string_pretty(&wire).map_err(|err| PrefsError::Encode(err.to_string()))
+}
+
+fn parse_microphone(value: &toml::Value) -> Option<Microphone> {
+    let field = |key| {
+        value
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    Some(Microphone {
+        id: field("id")?,
+        name: field("name")?,
+    })
 }
 
 fn parse_history(value: toml::Value) -> (HistoryPolicy, Vec<String>) {
@@ -290,6 +329,38 @@ mod tests {
                 table.remove(field);
             });
             assert!(parse_wire(&raw).is_err(), "{field}");
+        }
+    }
+    #[test]
+    fn missing_microphone_follows_the_system_default() {
+        let raw = fields_with(|table| {
+            table.remove("microphone");
+        });
+        let (prefs, warnings) = parse_wire(&raw).unwrap();
+        assert_eq!(prefs.microphone(), None);
+        assert!(warnings.is_empty());
+    }
+    #[test]
+    fn invalid_microphone_warns_and_keeps_other_preferences() {
+        for invalid in [
+            "\"usb\"",
+            "42",
+            "{ id = \"wasapi:x\" }",
+            "{ id = \"\", name = \"Mic\" }",
+            "{ id = 1, name = \"Mic\" }",
+        ] {
+            let raw = format!(
+                "microphone = {invalid}
+{}",
+                prefs_without_history()
+            ) + "
+[history]
+retention_days = 7
+";
+            let (prefs, warnings) = parse_wire(&raw).unwrap();
+            assert_eq!(prefs.microphone(), None, "{invalid}");
+            assert_eq!(prefs.history().retention_days(), Some(7), "{invalid}");
+            assert_eq!(warnings.len(), 1, "{invalid}");
         }
     }
     #[test]

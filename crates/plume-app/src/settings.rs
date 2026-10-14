@@ -4,6 +4,7 @@ mod dictation;
 mod history_view;
 mod i18n;
 mod languages;
+mod microphone;
 mod model;
 mod onboarding;
 mod release_notes;
@@ -17,14 +18,14 @@ use crate::prefs::Prefs;
 use crate::shortcut_capture::ShortcutCapture;
 use gpui::{Context, FocusHandle, ScrollHandle, Subscription};
 use plume_engine::LanguageTarget;
-use plume_session::{EngineTarget, HoldTarget, InsertionTarget};
+use plume_session::{EngineTarget, HoldTarget, InsertionTarget, MicrophoneTarget};
 
 pub use window::{
     open_onboarding_preview, open_settings, open_settings_preview,
     settings_window_accepts_download, settings_window_engine_target, settings_window_prefs,
     settings_window_record_result, settings_window_register_download, settings_window_set_phase,
     settings_window_show_fetch_failed, settings_window_show_live, settings_window_show_progress,
-    settings_window_show_refused, settings_window_show_swapped, show_settings,
+    settings_window_show_refused, settings_window_show_swapped, show_settings, LiveTargets,
 };
 
 pub(crate) use window::{onboarding_model_loaded, onboarding_preview_event};
@@ -97,6 +98,9 @@ pub struct SettingsView {
     engine_target: Option<EngineTarget>,
     language_target: Option<LanguageTarget>,
     insertion_target: Option<InsertionTarget>,
+    microphone_target: Option<MicrophoneTarget>,
+    /// Devices listed when the microphone menu opened; `None` while it is closed.
+    microphone_menu: Option<Vec<plume_audio::InputDevice>>,
     downloads: DownloadRequestTracker,
     history: crate::history::HistoryStore,
     history_error: Option<String>,
@@ -113,6 +117,7 @@ impl SettingsView {
         self.shortcut_edit.take();
         self.language_menu = None;
         self.insertion_open = false;
+        self.microphone_menu = None;
         self.history_menu = None;
     }
 

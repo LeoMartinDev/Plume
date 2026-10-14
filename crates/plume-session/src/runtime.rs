@@ -18,6 +18,7 @@ pub(crate) struct RuntimeConfig<E> {
     pub hold: Chord,
     pub engine: E,
     pub insertion: InsertionConfig,
+    pub microphone: Option<String>,
     pub recordings: SharedRecordings,
     pub vad_path: std::path::PathBuf,
 }
@@ -25,6 +26,7 @@ pub(crate) struct RuntimeUpdates<E> {
     pub hold: mpsc::Receiver<String>,
     pub engine: mpsc::Receiver<E>,
     pub insertion: mpsc::Receiver<InsertionConfig>,
+    pub microphone: mpsc::Receiver<Option<String>>,
     pub toggle: mpsc::Receiver<Option<String>>,
     pub commands: mpsc::Receiver<SessionCommand>,
     pub busy: Arc<AtomicBool>,
@@ -83,6 +85,7 @@ pub(crate) struct SessionRuntime<E: AsrEngine, I: TextInjector> {
     hold: Chord,
     engine: E,
     insertion: InsertionConfig,
+    microphone: Option<String>,
     updates: RuntimeUpdates<E>,
     outputs: SessionOutputs,
     decoder: Decoder<E>,
@@ -107,6 +110,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
             hold: config.hold,
             engine: config.engine,
             insertion: config.insertion,
+            microphone: config.microphone,
             recordings: config.recordings,
             vad_path: config.vad_path,
             updates,
@@ -296,6 +300,7 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
         let capture = match capture::start_recorded(
             writer,
             self.vad_path.clone(),
+            self.microphone.clone(),
             self.outputs.levels.clone(),
             cancel.clone(),
         ) {
@@ -829,6 +834,9 @@ impl<E: AsrEngine + Send + Sync + Clone + 'static, I: TextInjector> SessionRunti
         }
         while let Ok(insertion) = self.updates.insertion.try_recv() {
             self.insertion = insertion;
+        }
+        while let Ok(microphone) = self.updates.microphone.try_recv() {
+            self.microphone = microphone;
         }
         let mut next = self.config.clone();
         let mut changed = false;

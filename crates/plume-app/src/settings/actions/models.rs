@@ -5,7 +5,7 @@ use crate::phase::{AppPhase, OnboardStatus, Progress};
 use crate::prefs::Prefs;
 use gpui::Context;
 use plume_engine::LanguageTarget;
-use plume_session::{EngineTarget, HoldTarget, InsertionTarget};
+use plume_session::EngineTarget;
 
 impl SettingsView {
     pub(in crate::settings) fn register_download(&mut self, model: ModelId) -> DownloadRequest {
@@ -65,20 +65,14 @@ impl SettingsView {
         cx.notify();
     }
 
-    pub fn show_live(
-        &mut self,
-        hold_target: HoldTarget,
-        engine_target: EngineTarget,
-        language_target: LanguageTarget,
-        insertion_target: InsertionTarget,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn show_live(&mut self, targets: super::super::LiveTargets, cx: &mut Context<Self>) {
         self.reset_for_phase();
         self.downloads.clear();
-        self.hold_target = Some(hold_target);
-        self.engine_target = Some(engine_target);
-        self.language_target = Some(language_target);
-        self.insertion_target = Some(insertion_target);
+        self.hold_target = Some(targets.hold);
+        self.engine_target = Some(targets.engine);
+        self.language_target = Some(targets.language);
+        self.insertion_target = Some(targets.insertion);
+        self.microphone_target = Some(targets.microphone);
         self.active_model = Some(self.phase.prefs().model);
         self.phase = AppPhase::Live {
             prefs: self.phase.prefs().clone(),

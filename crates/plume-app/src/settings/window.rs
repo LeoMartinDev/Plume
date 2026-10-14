@@ -6,7 +6,7 @@ use gpui::{
     WindowHandle, WindowKind, WindowOptions,
 };
 use plume_engine::LanguageTarget;
-use plume_session::{EngineTarget, HoldTarget, InsertionTarget};
+use plume_session::{EngineTarget, HoldTarget, InsertionTarget, MicrophoneTarget};
 
 use crate::catalog::ModelId;
 use crate::download::{DownloadRequest, DownloadRequestTracker};
@@ -273,6 +273,8 @@ fn open_settings_window(
                         engine_target: None,
                         language_target: None,
                         insertion_target: None,
+                        microphone_target: None,
+                        microphone_menu: None,
                         downloads,
                         history,
                         history_error,
@@ -370,12 +372,18 @@ pub fn settings_window_show_fetch_failed(cx: &mut App, err: impl std::fmt::Displ
     }
 }
 
+/// Channels the settings window uses to apply changes to the running session.
+pub struct LiveTargets {
+    pub hold: HoldTarget,
+    pub engine: EngineTarget,
+    pub language: LanguageTarget,
+    pub insertion: InsertionTarget,
+    pub microphone: MicrophoneTarget,
+}
+
 pub fn settings_window_show_live(
     cx: &mut App,
-    hold_target: HoldTarget,
-    engine_target: EngineTarget,
-    language_target: LanguageTarget,
-    insertion_target: InsertionTarget,
+    targets: LiveTargets,
     control: plume_session::SessionControl,
     recordings: plume_session::SharedRecordings,
 ) {
@@ -407,13 +415,7 @@ pub fn settings_window_show_live(
                 setup.session_starting = false;
                 setup.session_error = None;
             }
-            view.show_live(
-                hold_target,
-                engine_target,
-                language_target,
-                insertion_target,
-                cx,
-            );
+            view.show_live(targets, cx);
         });
     }
 }

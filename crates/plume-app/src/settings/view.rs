@@ -825,8 +825,9 @@ pub(super) fn menu_option(
         .cursor_pointer()
         .when(highlighted, |el| el.bg(tokens.hover))
         .hover(move |style| style.bg(tokens.hover))
+        .gap(px(8.))
         .when(selected, |el| el.font_weight(FontWeight::MEDIUM))
-        .child(label.into())
+        .child(div().min_w_0().truncate().child(label.into()))
         .children(selected.then(|| {
             svg()
                 .path("ui/check.svg")

@@ -62,6 +62,7 @@ pub struct PreparedSession {
     config: Config,
     engine: Engine,
     insertion: InsertionConfig,
+    microphone: Option<String>,
     recordings_path: Option<std::path::PathBuf>,
     vad_path: Option<std::path::PathBuf>,
     mode: SessionMode,
@@ -73,6 +74,7 @@ impl PreparedSession {
             config,
             engine,
             insertion: InsertionConfig::default(),
+            microphone: None,
             recordings_path: None,
             vad_path: None,
             mode: SessionMode::System,
@@ -90,6 +92,11 @@ impl PreparedSession {
     }
     pub fn with_insertion(mut self, insertion: InsertionConfig) -> Self {
         self.insertion = insertion;
+        self
+    }
+    /// Record from this device ID instead of the system default input.
+    pub fn with_microphone(mut self, microphone: Option<String>) -> Self {
+        self.microphone = microphone;
         self
     }
 }
@@ -116,6 +123,7 @@ pub struct LiveSession {
     pub hold: HoldTarget,
     pub engine: EngineTarget,
     pub insertion: InsertionTarget,
+    pub microphone: MicrophoneTarget,
     pub results: mpsc::Receiver<DictationResult>,
     pub control: SessionControl,
     pub recordings: crate::SharedRecordings,
@@ -129,6 +137,18 @@ pub struct InsertionTarget {
 impl InsertionTarget {
     pub fn set(&self, config: InsertionConfig) {
         let _ = self.tx.send(config);
+    }
+}
+
+/// Selects the input device for the next capture. `None` follows the system default.
+#[derive(Clone)]
+pub struct MicrophoneTarget {
+    tx: mpsc::Sender<Option<String>>,
+}
+
+impl MicrophoneTarget {
+    pub fn set(&self, microphone: Option<String>) {
+        let _ = self.tx.send(microphone);
     }
 }
 
@@ -281,6 +301,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
         config,
         engine,
         insertion,
+        microphone,
         recordings_path,
         vad_path,
         mode,
@@ -297,6 +318,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
     let (hold_tx, hold_rx) = mpsc::channel();
     let (engine_tx, engine_rx) = mpsc::channel();
     let (insertion_tx, insertion_rx) = mpsc::channel();
+    let (microphone_tx, microphone_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
     let (preview_tx, preview_rx) = mpsc::channel();
     let output_mode = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(mode as u8));
@@ -324,6 +346,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
             hold,
             engine,
             insertion,
+            microphone,
             recordings: recordings.clone(),
             vad_path,
         },
@@ -331,6 +354,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
             hold: hold_rx,
             engine: engine_rx,
             insertion: insertion_rx,
+            microphone: microphone_rx,
             commands,
             toggle,
             busy,
@@ -353,6 +377,7 @@ pub fn start(ready: PreparedSession) -> Result<LiveSession, StartupError> {
         hold: HoldTarget { tx: hold_tx },
         engine: EngineTarget { tx: engine_tx },
         insertion: InsertionTarget { tx: insertion_tx },
+        microphone: MicrophoneTarget { tx: microphone_tx },
         results: result_rx,
         control,
         recordings,

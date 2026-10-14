@@ -75,6 +75,11 @@ pub(super) fn dictation_page(
             ))
             .child(settings_section(
                 tokens,
+                tr("ui.microphone"),
+                settings_group(tokens).child(super::microphone::microphone_row(view, tokens, cx)),
+            ))
+            .child(settings_section(
+                tokens,
                 tr("ui.text_output"),
                 settings_group(tokens)
                     .child(destination_row(tokens, prefs.destination(), cx))

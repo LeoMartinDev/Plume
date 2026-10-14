@@ -272,13 +272,13 @@ pub(crate) fn start_session(
             return;
         }
     };
-    let ready = plume_session::PreparedSession::from_open(config, engine).with_insertion(
-        plume_session::InsertionConfig {
+    let ready = plume_session::PreparedSession::from_open(config, engine)
+        .with_insertion(plume_session::InsertionConfig {
             destination: prefs.destination(),
             mode: prefs.insertion_mode(),
             copy_on_failure: prefs.copy_on_failure(),
-        },
-    );
+        })
+        .with_microphone(prefs.microphone().map(|microphone| microphone.id.clone()));
     let dirs = crate::dirs::AppDirs::resolve();
     let ready = ready
         .with_recordings(dirs.recordings_path(), dirs.vad_path())
@@ -290,10 +290,13 @@ pub(crate) fn start_session(
             plume_overlay::attach(cx, live.bubbles, live.levels);
             settings_window_show_live(
                 cx,
-                live.hold,
-                live.engine,
-                language_target,
-                live.insertion,
+                settings::LiveTargets {
+                    hold: live.hold,
+                    engine: live.engine,
+                    language: language_target,
+                    insertion: live.insertion,
+                    microphone: live.microphone,
+                },
                 live.control,
                 live.recordings,
             );
